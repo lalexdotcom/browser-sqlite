@@ -30,6 +30,8 @@ A private `#transaction(storeNames, mode = 'readonly')` starts every transaction
 
 PR [#385][pr385], opened 2026-10-21 from `lalexdotcom:idbmirror-close-settle` on `master` at `6238f532`: the test (`07a72609`), then the change (`086200d7`). The body, validated by the user, carries no measurement. At the user's request it says that the Safari bug is the only consequence found, that WebKit has fixed it but only in Technology Preview so far, and that the change has no known effect once the Safari versions in use carry the fix. It has a short "Relation to #384" (same change, different files, no conflict). It does not mention this library.
 
+**Merged 2026-10-23** (`66336807`, squashed, the file byte for byte our head) and pinned the same night with the repin to `66336807`.
+
 ## What stays ours
 
 - Carry #384 and #385 as a `pnpm patch`; the library then calls `await vfs.close()` on its pool's `close` path (it never closes its VFS there today) and keeps it in the delete worker, instead of the two waits before `closed` and `deleted`. Whether the forced-kill quiesce also closes the VFS, and `src/worker/idb-transactions.ts` goes, is open (`mem:follow-ups/safari-idb-stranded`).

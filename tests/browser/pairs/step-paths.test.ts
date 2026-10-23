@@ -8,15 +8,15 @@ import {
 } from '../helpers';
 
 /**
- * The worker's fast step (src/worker/step.ts) takes a different path per
- * build: the raw call on `sync` and `jspi` (a promise on `jspi`), a `ccall`
- * that returns a number or a promise on `async`. These tests pin what every
- * path must keep: every row arrives, and the worker serves the next query.
+ * The worker steps through wa-sqlite's `step_asap()`, which takes a different
+ * path per build: the raw call on `sync`, a `ccall` that returns a number or a
+ * promise on `async`, a promise on every call on `jspi`. These tests pin what
+ * every path must keep: every row arrives, and the worker serves the next query.
  */
 
 const ROWS = 300_000;
 
-describe('the fast step', {
+describe('stepping on every build', {
   tags: ['standalone', 'excludes:shared-storage', 'requires:every-build'],
 }, () => {
   // 300 000 rows exceed PROGRESS_OPS several times, so `async` and `jspi`
@@ -68,7 +68,7 @@ describe('the fast step', {
 describe('a checkpoint on the write-ahead VFS', () => {
   // A regression pin of a checkpoint through the worker. The VFS queues its
   // checkpoint at prepare (SQLITE_FCNTL_PRAGMA), where wa-sqlite's prepare retry() settles it, so
-  // the step's `pendingOps` branch is covered by tests/unit/lib/step.test.ts only.
+  // the step's `pendingOps` branch is covered by wa-sqlite's own step_asap() test only.
   it('a wal_checkpoint on OPFSWriteAheadVFS completes and the data stays readable', {
     tags: ['vfs:OPFSWriteAheadVFS'],
   }, async () => {

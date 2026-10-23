@@ -6,7 +6,10 @@ Part of `mem:stack-and-build`. Moved here from it on 2026-10-08; the chain of ea
 
 `wa-sqlite` is a devDependency only, vendored into `dist/worker/worker.js` at build time so it
 never reaches a consumer lockfile. **Pinned by commit SHA, not by tag, since 2026-09-15 (user)**:
-`github:rhashimoto/wa-sqlite#8a8bc2eecdb8c553f9e1b1631b97f62d52153194` since the evening of 2026-10-23,
+`github:rhashimoto/wa-sqlite#663368072ad30a4a90c36ec4214ab43d15ea2639` since the night of 2026-10-23
+(branch `build/repin-wa-sqlite-6633680`), upstream `master` with our #382, #384 and #385 merged, each file byte
+for byte the PR head the patch carried (`d6dd6ba0`, `97d0f192`, `086200d7`); only those three files moved in `src/`
+across it, `dist/` not at all. Before it, `8a8bc2ee` (2026-10-23 evening),
 upstream `master` with our #381 merged (squashed, `OPFSCoopSyncVFS.js` byte for byte the review head
 `42bfb903` the patch carried): the installed `src/` and the built `worker.js` are byte-identical across
 that repin. Before it, `6b59b231` (2026-10-23), upstream `master` with #380 merged (darshanp40: `getRoot`/`prefix` on `AccessHandlePoolVFS`, `OPFSCoopSyncVFS`,
@@ -34,15 +37,17 @@ as well as a release and nothing waits for one.
   `unable to open database file` instead of the function name (CHANGELOG under Changed). It also
   stops a failed `sqlite3_open_v2` leaking the database handle SQLite allocates for it —
   `openWithRetry` can make 25 attempts, each of which leaked before.
-- **A repin re-reads what the fast step reproduces** (2026-10-16) — `src/worker/step.ts` copies
-  wa-sqlite's `step()`, `retry()`, `check()`, each build's `ccall`, `jspi`'s promising exports and
-  the use of `retryOps`/`pendingOps`; compare them between the old pin and the new, update the fast
-  step if anything moved, then the fingerprints in `tests/unit/lib/wa-sqlite-pin.test.ts`, which
-  fail otherwise.
+- **The fast step is gone (2026-10-23, repin to `66336807`)**: `src/worker/step.ts`, its unit
+  test and the fingerprints of `tests/unit/lib/wa-sqlite-pin.test.ts` were deleted, and the worker
+  steps through wa-sqlite's `sqlite3.step_asap()` — our #388, carried in the patch until it merges.
+  rhashimoto agreed to the API, so a revision of #388 keeps it (user). What the worker relies on:
+  `step_asap()` returns a number when the call completed synchronously, a Promise otherwise (always
+  on `jspi`), and throws synchronously when it returns directly; `tests/browser/pairs/step-paths.test.ts`
+  checks every build through the worker.
 
 ## The patch
 
-**Since the repin to `8a8bc2ee` (2026-10-23, #381 merged) it carries five PRs:** #382 `d6dd6ba0`, #384 `97d0f192`, #385 `086200d7`, #386 `c4f832ea` (rebased onto `8a8bc2ee`), #387 `7805bb2f`; same procedure as below, every diff applied clean, the combined `src/` identical to the previous pin's combined tree (`diff -r`), new patch hash `5e460f16…`, `pnpm test` 371/371 files. **Before it, from the repin of 2026-10-23 to `6b59b231`, six PRs, rebuilt from their heads:** #381 `42bfb903` (its review head), #382 `d6dd6ba0`, #384 `97d0f192`, #385 `086200d7`, #386 `a21e9d45`, #387 `7805bb2f`. Files: `WebLocksMixin.js` (#387) and `OPFSAdaptiveVFS.js` (#382), byte for byte their heads; `IDBBatchAtomicVFS.js` (#384 + #387), `IDBMirrorVFS.js` (#385 + #387) and `OPFSCoopSyncVFS.js` (#381 + #386, over #380), every line of each PR's diff present. Made in a detached worktree of the pin by `git apply --3way` of each head's `git diff $(merge-base) <head> -- src/`, all clean; upstream's suite green on that tree (Chrome, 15/15 files, 6 443); the patch written as `git diff --full-index`, round-tripped through `pnpm patch --edit-dir` / `patch -p1` / `patch-commit` (same content, hash `0f0313c2…`); installed `src/` identical to the tree (`diff -r`, build sources aside), `dist/` identical; after clearing the rspack caches the bundle shows #386's check, `getIDBFactory`, the prefixed `mirror:` channel and #381's retry. Library: `pnpm test` 371/371 files. The paragraphs below describe the patch before that repin.
+**Since the repin to `66336807` (2026-10-23 night, #382, #384, #385 merged) it carries three PRs:** #386 `c4f832ea`, #387 `7805bb2f`, #388 `947a3996` (`step_asap()`, added at that repin). Made in a detached worktree of the pin (`.work/wa-sqlite-repin`) by `git apply --3way` of each head's `git diff $(merge-base) <head> -- src/`, all clean; that tree's `src/` differs from the previous installed one by #388's two files only (`sqlite-api.js`, `types/index.d.ts`); upstream's suite green on it with #388's test (Chrome, 16/16 files, 8 023); the patch written as `git diff --full-index`, round-tripped through `pnpm patch --edit-dir` / `patch -p1` / `patch-commit` (same content, hash `d24a86e4…`); installed `src/` identical to the tree (`diff -r`), `dist/` identical to the previous pin's. **Before it, from the repin to `8a8bc2ee` (2026-10-23, #381 merged), it carried five PRs:** #382 `d6dd6ba0`, #384 `97d0f192`, #385 `086200d7`, #386 `c4f832ea` (rebased onto `8a8bc2ee`), #387 `7805bb2f`; same procedure as below, every diff applied clean, the combined `src/` identical to the previous pin's combined tree (`diff -r`), new patch hash `5e460f16…`, `pnpm test` 371/371 files. **Before it, from the repin of 2026-10-23 to `6b59b231`, six PRs, rebuilt from their heads:** #381 `42bfb903` (its review head), #382 `d6dd6ba0`, #384 `97d0f192`, #385 `086200d7`, #386 `a21e9d45`, #387 `7805bb2f`. Files: `WebLocksMixin.js` (#387) and `OPFSAdaptiveVFS.js` (#382), byte for byte their heads; `IDBBatchAtomicVFS.js` (#384 + #387), `IDBMirrorVFS.js` (#385 + #387) and `OPFSCoopSyncVFS.js` (#381 + #386, over #380), every line of each PR's diff present. Made in a detached worktree of the pin by `git apply --3way` of each head's `git diff $(merge-base) <head> -- src/`, all clean; upstream's suite green on that tree (Chrome, 15/15 files, 6 443); the patch written as `git diff --full-index`, round-tripped through `pnpm patch --edit-dir` / `patch -p1` / `patch-commit` (same content, hash `0f0313c2…`); installed `src/` identical to the tree (`diff -r`, build sources aside), `dist/` identical; after clearing the rspack caches the bundle shows #386's check, `getIDBFactory`, the prefixed `mirror:` channel and #381's retry. Library: `pnpm test` 371/371 files. The paragraphs below describe the patch before that repin.
 
 **Since 2026-10-21 it also carries #384 (`IDBBatchAtomicVFS.js`, head `97d0f192`) and #385 (`IDBMirrorVFS.js`, head `086200d7`)**, the four installed files byte for byte their PR heads (`cmp`), on branch `fix/idb-vfs-close`.
 

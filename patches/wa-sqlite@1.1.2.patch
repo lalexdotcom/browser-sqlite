@@ -24,7 +24,7 @@ index e5fd48f9ad54d1484c4f6282b5af56801c3b8ba5..c470c46164f34db41b4890332b5b334b
          if (lock) {
            return new Promise(release => {
 diff --git a/src/examples/IDBBatchAtomicVFS.js b/src/examples/IDBBatchAtomicVFS.js
-index 4b9193705ba5e5525f3e77af64c47b4507200503..b5298221405318a8584ca312b4ae6563ba9defa5 100644
+index 0d03347d8ac61bcf0cfa90419e8597360719c09a..b5298221405318a8584ca312b4ae6563ba9defa5 100644
 --- a/src/examples/IDBBatchAtomicVFS.js
 +++ b/src/examples/IDBBatchAtomicVFS.js
 @@ -16,6 +16,22 @@ const RETRYABLE_ERRORS = new Set([
@@ -50,7 +50,7 @@ index 4b9193705ba5e5525f3e77af64c47b4507200503..b5298221405318a8584ca312b4ae6563
  class File {
    /** @type {string} */ path;
    /** @type {number} */ flags;
-@@ -46,23 +62,39 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
+@@ -46,19 +62,35 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
    /** @type {Promise} */ #isReady;
    /** @type {IDBContext} */ #idb;
  
@@ -88,16 +88,7 @@ index 4b9193705ba5e5525f3e77af64c47b4507200503..b5298221405318a8584ca312b4ae6563
    }
  
    close() {
--    this.#idb.close();
-+    return this.#idb.close();
-   }
-   
-   async isReady() {
-@@ -632,12 +664,17 @@ export class IDBContext {
-   /** @type {Promise<any>} */ #txComplete = Promise.resolve();
-   /** @type {IDBRequest?} */ #request = null;
-   /** @type {WeakSet<IDBTransaction>} */ #txPending = new WeakSet();
-+  /** @type {Set<Promise<void>>} */ #txSettled = new Set();
+@@ -636,9 +668,13 @@ export class IDBContext {
    
    log = null;
  
@@ -113,35 +104,8 @@ index 4b9193705ba5e5525f3e77af64c47b4507200503..b5298221405318a8584ca312b4ae6563
        request.onupgradeneeded = async event => {
          const db = request.result;
          if (event.oldVersion) {
-@@ -699,8 +736,13 @@ export class IDBContext {
-     this.#database = database;
-   }
- 
--  close() {
-+  async close() {
-+    // Let queued calls make their requests, then wait for every
-+    // transaction to finish. sync() does not wait for the last commit
-+    // unless durable, and reset() forgets it.
-+    await this.#chain?.catch(() => {});
-     this.#database.close();
-+    await Promise.all(this.#txSettled);
-   }
- 
-   /**
-@@ -761,6 +803,11 @@ export class IDBContext {
-         tx = this.#database.transaction(this.#database.objectStoreNames, mode, options);
-         this.log?.('IDBTransaction open', mode);
-         this.#txPending.add(tx);
-+        const settled = new Promise(resolve => {
-+          tx.addEventListener('complete', resolve);
-+          tx.addEventListener('abort', resolve);
-+        }).then(() => { this.#txSettled.delete(settled); });
-+        this.#txSettled.add(settled);
-         this.#txComplete = new Promise((resolve, reject) => {
-           tx.addEventListener('complete', () => {
-             this.log?.('IDBTransaction complete');
 diff --git a/src/examples/IDBMirrorVFS.js b/src/examples/IDBMirrorVFS.js
-index 20b788aa75579ae871edd5190855b9d9ebc65cbd..d482ecc8cfed3f0d149cd75a430c0c3c0cb5ff4a 100644
+index eb4691325ec355c9148c3cfc43689ccef4de003b..d482ecc8cfed3f0d149cd75a430c0c3c0cb5ff4a 100644
 --- a/src/examples/IDBMirrorVFS.js
 +++ b/src/examples/IDBMirrorVFS.js
 @@ -17,6 +17,19 @@ const contextId = Math.random().toString(36).slice(2);
@@ -187,13 +151,7 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..d482ecc8cfed3f0d149cd75a430c0c3c
        this.broadcastReceived = [];
        this.commitsInFlight = new Set();
        this.lockState = VFS.SQLITE_LOCK_NONE;
-@@ -75,26 +93,44 @@ export class IDBMirrorVFS extends FacadeVFS {
-   #lastError = null;
- 
-   /** @type {IDBDatabase} */ #idb;
-+  /** @type {Set<Promise<void>>} */ #txSettled = new Set();
- 
-   log = null; // console.log;
+@@ -81,21 +99,38 @@ export class IDBMirrorVFS extends FacadeVFS {
  
    /** @type {Promise} */ #isReady;
  
@@ -233,49 +191,16 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..d482ecc8cfed3f0d149cd75a430c0c3c
        request.onupgradeneeded = (event) => {
          const db = request.result;
          switch (event.oldVersion) {
-@@ -109,8 +145,27 @@ export class IDBMirrorVFS extends FacadeVFS {
-     });
-   }
- 
--  close() {
--    return this.#idb.close();
-+  async close() {
-+    // Transactions already started still run to completion. Wait for
-+    // them, so a context ended right after leaves none behind.
-+    this.#idb.close();
-+    await Promise.all(this.#txSettled);
-+  }
-+
-+  /**
-+   * Start an IndexedDB transaction that close() waits for.
-+   * @param {string[]} storeNames 
-+   * @param {IDBTransactionMode} [mode] 
-+   * @returns {IDBTransaction}
-+   */
-+  #transaction(storeNames, mode = 'readonly') {
-+    const idbTx = this.#idb.transaction(storeNames, mode);
-+    const settled = new Promise(resolve => {
-+      idbTx.addEventListener('complete', resolve);
-+      idbTx.addEventListener('abort', resolve);
-+    }).then(() => { this.#txSettled.delete(settled); });
-+    this.#txSettled.add(settled);
-+    return idbTx;
-   }
- 
-   async isReady() {
-@@ -133,9 +188,9 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -153,7 +188,7 @@ export class IDBMirrorVFS extends FacadeVFS {
        let file;
        if (flags & VFS.SQLITE_OPEN_MAIN_DB) {
          // TODO
 -        file = new File(path, flags);
 +        file = new File(path, flags, this.options.prefix);
  
--        const idbTx = this.#idb.transaction(['blocks', 'tx'], 'readwrite');
-+        const idbTx = this.#transaction(['blocks', 'tx'], 'readwrite');
+         const idbTx = this.#transaction(['blocks', 'tx'], 'readwrite');
          const blocks = idbTx.objectStore('blocks');
-         if (await idbX(blocks.count([path, 0])) === 0) {
-           // File does not yet exist.
-@@ -165,7 +220,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -185,7 +220,7 @@ export class IDBMirrorVFS extends FacadeVFS {
          file = this.#mapPathToFile.get(path);
          if (!file) {
            if (flags & VFS.SQLITE_OPEN_CREATE) {
@@ -284,43 +209,7 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..d482ecc8cfed3f0d149cd75a430c0c3c
              file.blocks.set(0, new Uint8Array(0));
            } else {
              throw new Error('File not found');
-@@ -428,7 +483,7 @@ export class IDBMirrorVFS extends FacadeVFS {
-         // In order to write, our view of the database must be up to date.
-         // To check this, first fetch all transactions in IndexedDB equal to
-         // or greater than our view.
--        const idbTx = this.#idb.transaction(['blocks', 'tx']);
-+        const idbTx = this.#transaction(['blocks', 'tx']);
-         const range = IDBKeyRange.bound(
-           [file.path, file.viewTx.txId],
-           [file.path, Infinity]);
-@@ -681,7 +736,7 @@ export class IDBMirrorVFS extends FacadeVFS {
-     const oldestTxId = await this.#getOldestTxInUse(file);
- 
-     const tx = file.txActive;
--    const idbTx = this.#idb.transaction(['blocks', 'tx'], 'readwrite');
-+    const idbTx = this.#transaction(['blocks', 'tx'], 'readwrite');
-     const complete = new Promise(async (resolve, reject) => {
-       idbTx.oncomplete = () => {
-         file.commitsPending--;
-@@ -801,7 +856,7 @@ export class IDBMirrorVFS extends FacadeVFS {
-    * @param {File} file 
-    */
-   async #reloadFile(file) {
--    await this.#loadFile(file, this.#idb.transaction(['blocks', 'tx']));
-+    await this.#loadFile(file, this.#transaction(['blocks', 'tx']));
-     file.txActive = null;
-     file.abortController = new AbortController();
-     await this.#setView(file, file.viewTx);
-@@ -842,7 +897,7 @@ export class IDBMirrorVFS extends FacadeVFS {
-     // Only main databases are stored in IndexedDB and SQLite never
-     // deletes main databases, but delete blocks here anyway for
-     // standalone use.
--    const request = this.#idb.transaction(['blocks'], 'readwrite')
-+    const request = this.#transaction(['blocks'], 'readwrite')
-       .objectStore('blocks')
-       .delete(IDBKeyRange.bound([path, 0], [path, Infinity]));
-     await new Promise((resolve, reject) => {
-@@ -866,7 +921,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -886,7 +921,7 @@ export class IDBMirrorVFS extends FacadeVFS {
      const locks = await navigator.locks.query();
      for (const { name } of locks.held) {
        const m = TX_LOCK_REGEX.exec(name);
@@ -329,7 +218,7 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..d482ecc8cfed3f0d149cd75a430c0c3c
          oldestTxId = Math.min(oldestTxId, Number(m[2]));
        }
      }
-@@ -882,7 +937,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -902,7 +937,7 @@ export class IDBMirrorVFS extends FacadeVFS {
     */
    #lock(file, name, options = {}) {
      return new Promise(resolve => {
@@ -338,7 +227,7 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..d482ecc8cfed3f0d149cd75a430c0c3c
        navigator.locks.request(lockName, options, lock => {
          if (lock) {
            return new Promise(release => {
-@@ -947,7 +1002,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -967,7 +1002,7 @@ export class IDBMirrorVFS extends FacadeVFS {
      // the transaction id. As long as we hold the lock, no other connection
      // will overwrite data we are using.
      file.viewTx = tx;
@@ -347,63 +236,6 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..d482ecc8cfed3f0d149cd75a430c0c3c
      const newReleaser = await new Promise(resolve => {
        navigator.locks.request(lockName, SHARED, lock => {
          return new Promise(release => {
-diff --git a/src/examples/OPFSAdaptiveVFS.js b/src/examples/OPFSAdaptiveVFS.js
-index 38ff140c9642759971aed46b359f8de413e42daa..824fee33c0cbd5b2b94d98f0ac51890860024843 100644
---- a/src/examples/OPFSAdaptiveVFS.js
-+++ b/src/examples/OPFSAdaptiveVFS.js
-@@ -5,6 +5,19 @@ import { WebLocksMixin } from '../WebLocksMixin.js';
- 
- const LOCK_NOTIFY_INTERVAL = 1000;
- 
-+// A connection terminated mid-call releases its Web Lock at once and its
-+// access handle only later: from a few ms to about a second, depending on
-+// the engine, the platform and what the worker was doing. The next lock
-+// holder sees the file as held meanwhile, so creating its handle is
-+// retried, within this bound.
-+const HELD_RETRY_TIMEOUT = 5000;
-+const HELD_RETRY_INTERVAL = 10;
-+
-+// What createSyncAccessHandle() throws on a file another handle holds:
-+// NoModificationAllowedError in Chromium and Firefox, InvalidStateError in
-+// WebKit.
-+const HELD_ERRORS = new Set(['NoModificationAllowedError', 'InvalidStateError']);
-+
- const hasUnsafeAccessHandle =
-   globalThis.FileSystemSyncAccessHandle?.prototype.hasOwnProperty('mode');
- 
-@@ -359,8 +372,30 @@ export class OPFSAdaptiveVFS extends WebLocksMixin(FacadeVFS) {
-           });
-         });
- 
--        // The access handle should now be available.
--        file.accessHandle = await file.fileHandle.createSyncAccessHandle();
-+        // The access handle should now be available, unless the previous
-+        // holder let go of the lock before its handle.
-+        try {
-+          const deadline = performance.now() + HELD_RETRY_TIMEOUT;
-+          while (true) {
-+            try {
-+              file.accessHandle = await file.fileHandle.createSyncAccessHandle();
-+              break;
-+            } catch (e) {
-+              if (!HELD_ERRORS.has(e?.name) || performance.now() >= deadline) throw e;
-+              this.log?.('access handle held, retrying');
-+              await new Promise(resolve => setTimeout(resolve, HELD_RETRY_INTERVAL));
-+            }
-+          }
-+        } catch (e) {
-+          // Give the lock back rather than keep it with no handle, which
-+          // would leave every other connection waiting on it.
-+          this.lastError = e;
-+          file.handleRequestChannel.onmessage = null;
-+          file.handleLockReleaser();
-+          file.handleLockReleaser = null;
-+          file.isFileLocked = false;
-+          return VFS.SQLITE_IOERR_LOCK;
-+        }
-         this.log?.('access handle acquired');
-       }
- 
 diff --git a/src/examples/OPFSCoopSyncVFS.js b/src/examples/OPFSCoopSyncVFS.js
 index f196f80b640083d268f80aa43e93af0e4e11e53b..2d9845883ca312abe43147dbf1c34390cf4f16e9 100644
 --- a/src/examples/OPFSCoopSyncVFS.js
@@ -424,3 +256,150 @@ index f196f80b640083d268f80aa43e93af0e4e11e53b..2d9845883ca312abe43147dbf1c34390
              });
            } else {
              this.log?.(`Temporary directory ${entry.name} is in use`);
+diff --git a/src/sqlite-api.js b/src/sqlite-api.js
+index 12e59a14f63a63589cc3ccf5c6205a6f143a347c..533a90f6977249dc90fde7d702deb359536df826 100644
+--- a/src/sqlite-api.js
++++ b/src/sqlite-api.js
+@@ -767,16 +767,36 @@ export function Factory(Module) {
+     })();
+   };
+ 
+-  sqlite3.step = (function() {
++  sqlite3.step = function(stmt) {
++    // Always a Promise, without awaiting the one step_asap() may return.
++    try {
++      return Promise.resolve(sqlite3.step_asap(stmt));
++    } catch (e) {
++      return Promise.reject(e);
++    }
++  };
++
++  sqlite3.step_asap = (function() {
+     const fname = 'sqlite3_step';
+-    const f = Module.cwrap(fname, ...decl('n:n'), { async });
+-    return async function(stmt) {
++    // A build that cannot suspend (no handleAsync) calls the export
++    // directly. The others use ccall without the async option, which
++    // returns a Promise only when the call did not complete synchronously
++    // (always with JSPI); passing options keeps cwrap from returning the
++    // bare export, which on the Asyncify build cannot tell that the call
++    // unwound.
++    const f = Module.handleAsync ?
++      Module.cwrap(fname, ...decl('n:n'), {}) :
++      Module.cwrap(fname, ...decl('n:n'));
++    const allowed = [SQLite.SQLITE_ROW, SQLite.SQLITE_DONE];
++    const done = (rc, stmt) => {
++      if (rc === SQLite.SQLITE_ROW || rc === SQLite.SQLITE_DONE) return rc;
++      return check(fname, rc, mapStmtToDB.get(stmt), allowed);
++    };
++    return function(stmt) {
+       verifyStatement(stmt);
+ 
+       // Allow retry operations.
+-      const rc = await retry(() => f(stmt));
+-
+-      return check(fname, rc, mapStmtToDB.get(stmt), [SQLite.SQLITE_ROW, SQLite.SQLITE_DONE]);
++      return retry(f, stmt, done);
+     };
+   })();
+ 
+@@ -909,36 +929,39 @@ export function Factory(Module) {
+ 
+   // This function is used to automatically retry failed calls that
+   // have pending retry operations that should allow the retry to
+-  // succeed.
+-  async function retry(f) {
+-    let rc;
+-    for (let retryCount = 0; retryCount < 2; ++retryCount) {
+-      // Wait for all pending retry operations to complete. This is
+-      // normally empty on the first loop iteration.
+-      if (Module.retryOps.length) {
+-        try { 
+-          await Promise.all(Module.retryOps);
+-        } finally {
+-          Module.retryOps = [];
+-        }
+-      }
+-      
+-      rc = await f();
+-      if (rc === SQLite.SQLITE_OK || Module.retryOps.length === 0) {
+-        if (Module.pendingOps.length) {
+-          try {
+-            await Promise.all(Module.pendingOps);
+-          } catch (e) {
++  // succeed. The final result of f(arg) is passed to done(rc, arg),
++  // whose return value is returned directly when f returned a number
++  // and left nothing pending, otherwise through a Promise.
++  function retry(f, arg, done = rc => rc, retryCount = 0) {
++    // Wait for all pending retry operations to complete. This is
++    // normally empty on the first attempt.
++    if (Module.retryOps.length) {
++      return Promise.all(Module.retryOps)
++        .finally(() => { Module.retryOps = []; })
++        .then(() => retry(f, arg, done, retryCount));
++    }
++
++    // Never assume the call was synchronous; look at what it returned.
++    const rc = f(arg);
++    return typeof rc === 'number' ?
++      retryResult(f, arg, done, retryCount, rc) :
++      rc.then(rc => retryResult(f, arg, done, retryCount, rc));
++  }
++
++  function retryResult(f, arg, done, retryCount, rc) {
++    if (rc === SQLite.SQLITE_OK || Module.retryOps.length === 0) {
++      if (Module.pendingOps.length) {
++        return Promise.all(Module.pendingOps)
++          .then(() => rc, e => {
+             console.error('Error in pendingOps:', e);
+             return e.code || SQLite.SQLITE_ERROR;
+-          } finally {
+-            Module.pendingOps = [];
+-          }
+-        }
+-        return rc;
++          })
++          .finally(() => { Module.pendingOps = []; })
++          .then(rc => done(rc, arg));
+       }
++      return done(rc, arg);
+     }
+-    return rc;
++    return retryCount === 0 ? retry(f, arg, done, 1) : done(rc, arg);
+   }
+ 
+   return sqlite3;
+diff --git a/src/types/index.d.ts b/src/types/index.d.ts
+index d880188b89e6b8320fb817fb19ae67a308d52463..fc82a522ed6b4703049eb1ecfcee76d7168489bc 100644
+--- a/src/types/index.d.ts
++++ b/src/types/index.d.ts
+@@ -764,6 +764,29 @@ declare interface SQLiteAPI {
+    */
+   step(stmt: number): Promise<number>;
+ 
++  /**
++   * Evaluate an SQL statement, As Synchronous As Possible
++   *
++   * Like {@link step}, but returns the result directly when the call
++   * completed synchronously, and a Promise only when it did not (e.g.
++   * a VFS operation suspended, or a retry or pending operation had to
++   * be awaited). Which one comes back is decided on each call. This
++   * spares a Promise per row where no operation suspends:
++   * ```javascript
++   * while (true) {
++   *   let rc = sqlite3.step_asap(stmt);
++   *   if (typeof rc !== 'number') rc = await rc;
++   *   if (rc !== SQLite.SQLITE_ROW) break;
++   *   // Collect row data here.
++   * }
++   * ```
++   * @see https://www.sqlite.org/c3ref/step.html
++   * @param stmt prepared statement pointer
++   * @returns `SQLITE_ROW` or `SQLITE_DONE`, or a Promise resolving to
++   * one of them (throws on error, or the Promise rejects)
++   */
++  step_asap(stmt: number): number | Promise<number>;
++
+    /**
+    * Register an update hook
+    *

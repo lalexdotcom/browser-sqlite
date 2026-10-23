@@ -863,7 +863,7 @@ export const createPoolWorker = (deps: {
         // stepping rows. Tell it to stop, then wait for the reply it always sends,
         // so the worker is genuinely idle before the lease goes back to the pool.
         // Without this wait, the second half of B1 stands: a released worker still
-        // inside the worker's fast step.
+        // inside the worker's step loop.
         if (deferredChunk && !dead) {
           worker.status = 'ABORTING';
           // Spec §5.1: the worker may be parked waiting for a credit that this

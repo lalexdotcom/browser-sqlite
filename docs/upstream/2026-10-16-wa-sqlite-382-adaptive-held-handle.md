@@ -46,6 +46,8 @@ PR [#382][pr382], opened 2026-10-16 from `lalexdotcom:opfsadaptive-retry-held-ha
 
 **Approved by rhashimoto on 2026-10-23** ("LGTM"), who holds the merge until #381's review is addressed, in case a change there applies here too. Neither of #381's two points does — one handle in a `try`/`catch`, nothing else to undo and no `Promise.allSettled` search to type — which we said the same day ([issuecomment-6370214957](https://github.com/rhashimoto/wa-sqlite/pull/382#issuecomment-6370214957)). No change to the branch.
 
+**Merged 2026-10-23** (`010eeb50`, squashed, the file byte for byte our head) and pinned the same night with the repin to `66336807`.
+
 ## What stays ours
 
 - **Carried since 2026-10-16.** [`patches/`](../../patches) holds #381's and #382's `src/` hunks, the installed files byte for byte the two PR heads; the library's matrix and Windows run green with them.
