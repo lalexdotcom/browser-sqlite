@@ -109,6 +109,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A stub on `PATH` is checked before the script under test runs (2026-10-06)
 - A script that runs on Linux is not a script that runs on Windows: four traps, each paid for once (2026-10-15, `ci/windows-macos`)
 - `git commit -a` hands its hook an absolute `GIT_INDEX_FILE`, and every git the hook's tests start inherits it (2026-10-16)
+- An edit that reports a failure may still have written the file: check `git diff` (2026-10-23)
 
 ## `mem:lessons/design` — design of the library
 

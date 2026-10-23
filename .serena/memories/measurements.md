@@ -28,6 +28,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - SAFARI-IDB-STRAND — what strands an IndexedDB connection on Safari 26 (a worker ended before its last transaction's `complete`), the library path that does it (the delete worker), the wait that removes it (0/71), its cost (none detectable), STP 27.0 clean
 - SAFARI-IDB-LIB — the library's pair suite on Safari 26's IndexedDB VFS, one session per file: stock 45/75 files strand on IDBBatchAtomicVFS, fix 0/75; forced kills strand 3-22 % per kill with the fix, 0/800 with the quiesce; the two non-IndexedDB failures
 - SAFARI-LIB-SUITE — the whole suite on Safari 26.6.2 / 27.0.1 through the planner: 7 failures per OS, all a killed worker and its file (`InvalidStateError`), conformance green; the two wiring defects found on the way
+- SAFARI-TERMINATE-WASM — Safari's `terminate()` lets a worker's WASM loop run to its end, its OPFS handles held meanwhile (7-9 s for an 8 s spin, 26 and 27); a JS loop or an idle worker frees them in ~10 ms; Chrome stops both after ~2 s
 
 ## `mem:measurements/ci-runners` — the library's suites on CI runners, from macOS 26/27 on
 

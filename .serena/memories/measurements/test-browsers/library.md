@@ -137,3 +137,19 @@ Located (`VITE_SPIKE_PROBE=1`, `lifecycle` ×20, 2 hits): **"reports a slot that
 On these figures `runPool` takes a free Safari job before any other since the end of the branch (user, 2026-10-22); not re-run on GitHub (user: the next runs will show it).
 
 **Found on the way, in the wiring** (fixed on the branch): one `safaridriver` per Node process — WebdriverIO kills it at session end but the `safaridriver` package keeps it as its instance and refuses a second start ("There is already a Safaridriver instance running on port …"), so the planner's second Safari probe failed on both OS (runs 39759771424, 39759776694, 39760717396); and a `safaridriver` started from a missing path has no pid on macOS (posix_spawn fails before any fork), so the package's `kill()` signalled the unit job's process group (`exit 143`, no blob, runs 39761649148, 39761652893).
+
+## SAFARI-TERMINATE-WASM — how long a terminated worker keeps its OPFS sync access handles, 2026-10-22, GitHub `macos-26` (Safari 26.6.2) / `xcode-27` (Safari 27.0.1), this container (Chrome 153 headless)
+
+**Method.** Throwaway branch `spike/safari-held` (`spike/held/`, runs 39777993007 and 39780488318): a page served on `localhost` through safaridriver; per round a holder worker opens 1 or 3 fresh OPFS files with `createSyncAccessHandle()` and either closes them (control), stays idle, writes and flushes in a JS loop, or spins ~8 s without yielding in a JS loop or a WASM loop (a hand-assembled `i64` counter, calibrated before the handles exist); the page waits 50 ms, calls `terminate()`, and a prober worker retries `createSyncAccessHandle()` on each file every 10 ms up to 60 s. Time from `terminate()` to each file free, `Date.now()` on both sides.
+
+| holder at `terminate()` | Safari 26.6.2 | Safari 27.0.1 | Chrome 153 (local) |
+|---|---|---|---|
+| handles closed first (control) | 6-69 ms | 5-21 ms | 6-10 ms |
+| idle (1 or 3 files) | 6-17 ms | 4-22 ms | 10-14 ms |
+| writing and flushing in a JS loop | 6-13 ms | 5-10 ms | 2.5-2.8 s |
+| spinning in a JS loop | 6-18 ms | 7-17 ms | ≈ 2.0 s |
+| **spinning in a WASM loop** | **7.2-9.3 s** (10/10 rounds) | **6.7-9.3 s** (10/10) | ≈ 2.0 s |
+
+**Reading.** WebKit stops a JS loop at `terminate()` but lets a WASM loop run to its end (~8 s here, the rest of the spin), the files held meanwhile — the prober met ~17 000-19 000 `InvalidStateError` per cell. Chrome stops both after ~2 s. The suite's failures fit: `lifecycle`, `debug`, `second-client` kill a worker inside `longQuery(20_000_000)`, a WASM loop, and its replacement's 2.5 s open retry runs out; `AccessHandlePoolVFS`'s 10 s budget outlasts that query, so its tests pass once `InvalidStateError` is matched (`fix/safari-held-file`, runs 39773104130 and 39773107818). What follows: `mem:follow-ups/safari-suite`.
+
+**Outside WebDriver, the JS loop is not stopped either (2026-10-22, the user's MacBook Pro M4 Max, macOS 27.0.1, `spike/held/repro.html` served from this container on `localhost:8765`, 3 rounds per loop, ~5 s spin, ms until the Web Lock / the file is free):** Safari 27.0.1 JS 4819-5122 / 4825-5121, WASM 4893-5240 / 4898-5238; Safari Technology Preview 255 JS 11-12 / 1-2, WASM 4939-5119 / 4945-5121. Under safaridriver (runs 39782753650) the same page gave Safari 26.6.2 JS 12-28 / 6-40, WASM 4258-6248; 27.0.1 JS 14-28 / 8-35, WASM 4541-5526; Technology Preview 254 (Homebrew, build 21627.1.2.1) JS 34-111 / 40-107, WASM 5042-5154. So WebDriver sessions stop a JS loop that ordinary Safari 27.0.1 does not; trunk (STP 255) stops it too; the WASM loop runs to its end everywhere. **Reported by the user as [WebKit 328618](https://bugs.webkit.org/show_bug.cgi?id=328618)** (2026-10-22, component WebAssembly, version Safari Technology Preview; WASM only, the JS case appearing fixed on trunk). WebKit 301520 (a worker's `self.close()` leaving OPFS locked) is a different mechanism.
