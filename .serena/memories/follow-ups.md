@@ -59,7 +59,7 @@ Before opening it, measure reliability: about 10 runs per environment, through `
 - Linux Firefox lost two files at the launcher once in 8 runs, unexplained — on the Linux-only target, so to watch in the reliability runs.
 - Windows Firefox has only one complete run.
 - iOS 27 simulators refuse WebDriver sessions; the image `20261006` with Safari 27.0.1 is untried.
-- The fork's `probe/stock-browsers` (head `437e6de1`) and `probe/webkit-opfs` are throwaway.
+- The fork's `probe/stock-browsers` (head `437e6de1`, the working WebDriver harness) and `probe/webkit-opfs` (the fork's main clone sits on it, with uncommitted Safari/WebKit probes and results) are throwaway: kept until this PR is sent, then deleted, branches and worktrees (user, 2026-10-23).
 
 **History, compressed.**
 - **2026-10-03:** asked, about Firefox.

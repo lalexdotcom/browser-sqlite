@@ -21,7 +21,7 @@ Part of `mem:follow-ups`. Comes before `mem:follow-ups/safari-suite` (user, 2026
 
 ## Left
 
-- Delete `spike/safari` (local, origin, worktree `.work/spike-safari-wt`) when the user says so — kept for now, its reproducers may serve `mem:follow-ups/safari-suite`.
+- `spike/safari` was deleted on 2026-10-23 (local, origin, its worktree; user): the Safari suite it might have served is merged and green on Safari 26 and 27.
 - Follow #384 and #385; at their merge, repin and drop their hunks from the patch.
 - Not covered: a worker that never answers stays alive up to 300 ms after a forced kill; a forced kill of a worker inside one long computing step still strands if it had a transaction live (not measured).
 - For `mem:follow-ups/safari-suite`: `lifecycle.test.ts` "fails the client permanently once the restart budget is spent" times out its 5 s wait for the replacement on Safari (8/20, 3/9, 2/6 runs).
@@ -34,4 +34,4 @@ Part of `mem:follow-ups`. Comes before `mem:follow-ups/safari-suite` (user, 2026
 
 ## The spike branch
 
-`spike/safari` on origin: the reproducers (`spike/idb/`, `tests/browser/setup/spike-idb-trace.ts` registered after the wipe and before the guard, `tests/browser/conformance/spike-perf.test.ts`, `tests/browser/pairs/spike-kill.test.ts`) and `.github/workflows/spike-safari.yaml`, whose jobs run when the commit message carries their tag (`[micro]`, `[suite]`, `[locate]`, `[ab]`, `[perf]`, `[stp]`, `[pairs]`, `[forced]`, `[lifeloc]`, `[kill]`, `[one]`). It has `fix/safari-idb-stranded` and then `fix/idb-vfs-close` merged in (worktree `.work/spike-safari-wt`); the trace's `idbPending` field is empty since the tracker went — the storage wipe's "still open" and `SPIKE-KILL` lines are the signal. A push runs the pre-push `pnpm test`. Delete it when the work is over.
+`spike/safari` held, until its deletion on 2026-10-23, the reproducers (`spike/idb/`, `tests/browser/setup/spike-idb-trace.ts` registered after the wipe and before the guard, `tests/browser/conformance/spike-perf.test.ts`, `tests/browser/pairs/spike-kill.test.ts`) and `.github/workflows/spike-safari.yaml`, whose jobs run when the commit message carries their tag (`[micro]`, `[suite]`, `[locate]`, `[ab]`, `[perf]`, `[stp]`, `[pairs]`, `[forced]`, `[lifeloc]`, `[kill]`, `[one]`). It has `fix/safari-idb-stranded` and then `fix/idb-vfs-close` merged in (worktree `.work/spike-safari-wt`); the trace's `idbPending` field is empty since the tracker went — the storage wipe's "still open" and `SPIKE-KILL` lines are the signal. A push runs the pre-push `pnpm test`. Delete it when the work is over.
