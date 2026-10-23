@@ -1,8 +1,90 @@
+diff --git a/src/WebLocksMixin.js b/src/WebLocksMixin.js
+index e5fd48f9ad54d1484c4f6282b5af56801c3b8ba5..c470c46164f34db41b4890332b5b334b57ca7df3 100644
+--- a/src/WebLocksMixin.js
++++ b/src/WebLocksMixin.js
+@@ -28,7 +28,10 @@ const POLICIES = ['exclusive', 'shared', 'shared+hint'];
+ export const WebLocksMixin = superclass => class extends superclass {
+   #options = {
+     lockPolicy: 'exclusive',
+-    lockTimeout: Infinity
++    lockTimeout: Infinity,
++    // Put in front of the file names in the lock names, so files of the
++    // same name in different storage do not share locks.
++    prefix: ''
+   };
+ 
+   /** @type {Map<number, LockState>} */ #mapIdToState = new Map();
+@@ -385,7 +388,7 @@ export const WebLocksMixin = superclass => class extends superclass {
+         }, this.#options.lockTimeout);
+       }
+ 
+-      const lockName = `lock##${lockState.baseName}##${name}`;
++      const lockName = `lock##${this.#options.prefix}${lockState.baseName}##${name}`;
+       navigator.locks.request(lockName, options, lock => {
+         if (lock) {
+           return new Promise(release => {
 diff --git a/src/examples/IDBBatchAtomicVFS.js b/src/examples/IDBBatchAtomicVFS.js
-index 4b9193705ba5e5525f3e77af64c47b4507200503..0d03347d8ac61bcf0cfa90419e8597360719c09a 100644
+index 4b9193705ba5e5525f3e77af64c47b4507200503..b5298221405318a8584ca312b4ae6563ba9defa5 100644
 --- a/src/examples/IDBBatchAtomicVFS.js
 +++ b/src/examples/IDBBatchAtomicVFS.js
-@@ -62,7 +62,7 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
+@@ -16,6 +16,22 @@ const RETRYABLE_ERRORS = new Set([
+  * @property {number} [pendingVersion]
+  */
+ 
++/**
++ * @typedef IDBBatchAtomicOptions
++ * @property {string} [idbName] The name of the IndexedDB database. By
++ * default the name of the VFS.
++ * @property {'exclusive'|'shared'|'shared+hint'} [lockPolicy]
++ * @property {number} [lockTimeout]
++ * @property {() => IDBFactory|Promise<IDBFactory>} [getIDBFactory] Returns
++ * the IDBFactory the VFS opens its database with, for instance the indexedDB
++ * of a Storage Bucket. By default the global indexedDB.
++ * @property {string} [prefix] Put in front of the names of the Web Locks
++ * the VFS derives from its file names. Set it when a database of the same
++ * name can exist in another IDBFactory of this origin, so the two do not
++ * share them, and use the same prefix for every VFS instance on one
++ * IDBFactory. By default empty, which keeps the names as they were.
++ */
++
+ class File {
+   /** @type {string} */ path;
+   /** @type {number} */ flags;
+@@ -46,23 +62,39 @@ export class IDBBatchAtomicVFS extends WebLocksMixin(FacadeVFS) {
+   /** @type {Promise} */ #isReady;
+   /** @type {IDBContext} */ #idb;
+ 
++  /** @type {IDBBatchAtomicOptions} */ options = {
++    getIDBFactory: () => indexedDB,
++    prefix: '',
++  };
++
++  /**
++   * @param {string} name
++   * @param {*} module
++   * @param {IDBBatchAtomicOptions} [options]
++   */
+   static async create(name, module, options) {
+     const vfs = new IDBBatchAtomicVFS(name, module, options);
+     await vfs.isReady();
+     return vfs;
+   }
+ 
++  /**
++   * @param {string} name
++   * @param {*} module
++   * @param {IDBBatchAtomicOptions} [options]
++   */
+   constructor(name, module, options = {}) {
+     super(name, module, options);
+-    this.#isReady = this.#initialize(options.idbName ?? name);
++    Object.assign(this.options, options);
++    this.#isReady = this.#initialize(this.options.idbName ?? name);
+   }
+ 
+   async #initialize(name) {
+-    this.#idb = await IDBContext.create(name);
++    this.#idb = await IDBContext.create(await this.options.getIDBFactory(), name);
    }
  
    close() {
@@ -11,7 +93,7 @@ index 4b9193705ba5e5525f3e77af64c47b4507200503..0d03347d8ac61bcf0cfa90419e859736
    }
    
    async isReady() {
-@@ -632,6 +632,7 @@ export class IDBContext {
+@@ -632,12 +664,17 @@ export class IDBContext {
    /** @type {Promise<any>} */ #txComplete = Promise.resolve();
    /** @type {IDBRequest?} */ #request = null;
    /** @type {WeakSet<IDBTransaction>} */ #txPending = new WeakSet();
@@ -19,7 +101,19 @@ index 4b9193705ba5e5525f3e77af64c47b4507200503..0d03347d8ac61bcf0cfa90419e859736
    
    log = null;
  
-@@ -699,8 +700,13 @@ export class IDBContext {
+-  static async create(name) {
++  /**
++   * @param {IDBFactory} factory
++   * @param {string} name
++   */
++  static async create(factory, name) {
+     const database = await new Promise((resolve, reject) => {
+-      const request = indexedDB.open(name, 6);
++      const request = factory.open(name, 6);
+       request.onupgradeneeded = async event => {
+         const db = request.result;
+         if (event.oldVersion) {
+@@ -699,8 +736,13 @@ export class IDBContext {
      this.#database = database;
    }
  
@@ -34,7 +128,7 @@ index 4b9193705ba5e5525f3e77af64c47b4507200503..0d03347d8ac61bcf0cfa90419e859736
    }
  
    /**
-@@ -761,6 +767,11 @@ export class IDBContext {
+@@ -761,6 +803,11 @@ export class IDBContext {
          tx = this.#database.transaction(this.#database.objectStoreNames, mode, options);
          this.log?.('IDBTransaction open', mode);
          this.#txPending.add(tx);
@@ -47,10 +141,53 @@ index 4b9193705ba5e5525f3e77af64c47b4507200503..0d03347d8ac61bcf0cfa90419e859736
            tx.addEventListener('complete', () => {
              this.log?.('IDBTransaction complete');
 diff --git a/src/examples/IDBMirrorVFS.js b/src/examples/IDBMirrorVFS.js
-index 20b788aa75579ae871edd5190855b9d9ebc65cbd..eb4691325ec355c9148c3cfc43689ccef4de003b 100644
+index 20b788aa75579ae871edd5190855b9d9ebc65cbd..d482ecc8cfed3f0d149cd75a430c0c3c0cb5ff4a 100644
 --- a/src/examples/IDBMirrorVFS.js
 +++ b/src/examples/IDBMirrorVFS.js
-@@ -75,6 +75,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -17,6 +17,19 @@ const contextId = Math.random().toString(36).slice(2);
+  * @property {number} [fileSize]
+  */
+ 
++/**
++ * @typedef IDBMirrorOptions
++ * @property {() => IDBFactory|Promise<IDBFactory>} [getIDBFactory] Returns
++ * the IDBFactory the VFS opens its database with, for instance the indexedDB
++ * of a Storage Bucket. By default the global indexedDB.
++ * @property {string} [prefix] Put in front of the names of the Web Locks
++ * and BroadcastChannels the VFS derives from its file names. Set it when a
++ * database of the same name can exist in another IDBFactory of this origin,
++ * so the two do not share them, and use the same prefix for every VFS
++ * instance on one IDBFactory. By default empty, which keeps the names as
++ * they were.
++ */
++
+ class File {
+   /** @type {string} */ path;
+   /** @type {number} */ flags;
+@@ -45,7 +58,12 @@ class File {
+ 
+   /** @type {string} */ synchronous;
+ 
+-  constructor(pathname, flags) {
++  /**
++   * @param {string} pathname
++   * @param {number} flags
++   * @param {string} prefix put in front of the pathname in the channel name
++   */
++  constructor(pathname, flags, prefix) {
+     this.path = pathname;
+     this.flags = flags;
+ 
+@@ -54,7 +72,7 @@ class File {
+     if (flags & VFS.SQLITE_OPEN_MAIN_DB) {
+       this.viewTx = null;
+       this.viewReleaser = null;
+-      this.broadcastChannel = new BroadcastChannel('mirror:' + pathname);
++      this.broadcastChannel = new BroadcastChannel(`mirror:${prefix}${pathname}`);
+       this.broadcastReceived = [];
+       this.commitsInFlight = new Set();
+       this.lockState = VFS.SQLITE_LOCK_NONE;
+@@ -75,26 +93,44 @@ export class IDBMirrorVFS extends FacadeVFS {
    #lastError = null;
  
    /** @type {IDBDatabase} */ #idb;
@@ -58,7 +195,45 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..eb4691325ec355c9148c3cfc43689cce
  
    log = null; // console.log;
  
-@@ -109,8 +110,27 @@ export class IDBMirrorVFS extends FacadeVFS {
+   /** @type {Promise} */ #isReady;
+ 
++  /** @type {IDBMirrorOptions} */ options = {
++    getIDBFactory: () => indexedDB,
++    prefix: '',
++  };
++
++  /**
++   * @param {string} name
++   * @param {*} module
++   * @param {IDBMirrorOptions} [options]
++   */
+   static async create(name, module, options) {
+     const instance = new IDBMirrorVFS(name, module, options);
+     await instance.isReady();
+     return instance;
+   }
+ 
++  /**
++   * @param {string} name
++   * @param {*} module
++   * @param {IDBMirrorOptions} [options]
++   */
+   constructor(name, module, options = {}) {
+     super(name, module);
++    Object.assign(this.options, options);
+     this.#isReady = this.#initialize(name);
+   }
+ 
+   async #initialize(name) {
+     // Open IndexedDB database, creating it if necessary.
++    const factory = await this.options.getIDBFactory();
+     this.#idb = await new Promise((resolve, reject) => {
+-      const request = indexedDB.open(name, 1);
++      const request = factory.open(name, 1);
+       request.onupgradeneeded = (event) => {
+         const db = request.result;
+         switch (event.oldVersion) {
+@@ -109,8 +145,27 @@ export class IDBMirrorVFS extends FacadeVFS {
      });
    }
  
@@ -88,16 +263,28 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..eb4691325ec355c9148c3cfc43689cce
    }
  
    async isReady() {
-@@ -135,7 +155,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -133,9 +188,9 @@ export class IDBMirrorVFS extends FacadeVFS {
+       let file;
+       if (flags & VFS.SQLITE_OPEN_MAIN_DB) {
          // TODO
-         file = new File(path, flags);
+-        file = new File(path, flags);
++        file = new File(path, flags, this.options.prefix);
  
 -        const idbTx = this.#idb.transaction(['blocks', 'tx'], 'readwrite');
 +        const idbTx = this.#transaction(['blocks', 'tx'], 'readwrite');
          const blocks = idbTx.objectStore('blocks');
          if (await idbX(blocks.count([path, 0])) === 0) {
            // File does not yet exist.
-@@ -428,7 +448,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -165,7 +220,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+         file = this.#mapPathToFile.get(path);
+         if (!file) {
+           if (flags & VFS.SQLITE_OPEN_CREATE) {
+-            file = new File(path, flags);
++            file = new File(path, flags, this.options.prefix);
+             file.blocks.set(0, new Uint8Array(0));
+           } else {
+             throw new Error('File not found');
+@@ -428,7 +483,7 @@ export class IDBMirrorVFS extends FacadeVFS {
          // In order to write, our view of the database must be up to date.
          // To check this, first fetch all transactions in IndexedDB equal to
          // or greater than our view.
@@ -106,7 +293,7 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..eb4691325ec355c9148c3cfc43689cce
          const range = IDBKeyRange.bound(
            [file.path, file.viewTx.txId],
            [file.path, Infinity]);
-@@ -681,7 +701,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -681,7 +736,7 @@ export class IDBMirrorVFS extends FacadeVFS {
      const oldestTxId = await this.#getOldestTxInUse(file);
  
      const tx = file.txActive;
@@ -115,7 +302,7 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..eb4691325ec355c9148c3cfc43689cce
      const complete = new Promise(async (resolve, reject) => {
        idbTx.oncomplete = () => {
          file.commitsPending--;
-@@ -801,7 +821,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -801,7 +856,7 @@ export class IDBMirrorVFS extends FacadeVFS {
     * @param {File} file 
     */
    async #reloadFile(file) {
@@ -124,7 +311,7 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..eb4691325ec355c9148c3cfc43689cce
      file.txActive = null;
      file.abortController = new AbortController();
      await this.#setView(file, file.viewTx);
-@@ -842,7 +862,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+@@ -842,7 +897,7 @@ export class IDBMirrorVFS extends FacadeVFS {
      // Only main databases are stored in IndexedDB and SQLite never
      // deletes main databases, but delete blocks here anyway for
      // standalone use.
@@ -133,6 +320,33 @@ index 20b788aa75579ae871edd5190855b9d9ebc65cbd..eb4691325ec355c9148c3cfc43689cce
        .objectStore('blocks')
        .delete(IDBKeyRange.bound([path, 0], [path, Infinity]));
      await new Promise((resolve, reject) => {
+@@ -866,7 +921,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+     const locks = await navigator.locks.query();
+     for (const { name } of locks.held) {
+       const m = TX_LOCK_REGEX.exec(name);
+-      if (m && m[1] === file.path) {
++      if (m && m[1] === this.options.prefix + file.path) {
+         oldestTxId = Math.min(oldestTxId, Number(m[2]));
+       }
+     }
+@@ -882,7 +937,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+    */
+   #lock(file, name, options = {}) {
+     return new Promise(resolve => {
+-      const lockName = `${file.path}@@${name}`;
++      const lockName = `${this.options.prefix}${file.path}@@${name}`;
+       navigator.locks.request(lockName, options, lock => {
+         if (lock) {
+           return new Promise(release => {
+@@ -947,7 +1002,7 @@ export class IDBMirrorVFS extends FacadeVFS {
+     // the transaction id. As long as we hold the lock, no other connection
+     // will overwrite data we are using.
+     file.viewTx = tx;
+-    const lockName = `${file.path}@@[${tx.txId}]`;
++    const lockName = `${this.options.prefix}${file.path}@@[${tx.txId}]`;
+     const newReleaser = await new Promise(resolve => {
+       navigator.locks.request(lockName, SHARED, lock => {
+         return new Promise(release => {
 diff --git a/src/examples/OPFSAdaptiveVFS.js b/src/examples/OPFSAdaptiveVFS.js
 index 38ff140c9642759971aed46b359f8de413e42daa..824fee33c0cbd5b2b94d98f0ac51890860024843 100644
 --- a/src/examples/OPFSAdaptiveVFS.js
@@ -191,7 +405,7 @@ index 38ff140c9642759971aed46b359f8de413e42daa..824fee33c0cbd5b2b94d98f0ac518908
        }
  
 diff --git a/src/examples/OPFSCoopSyncVFS.js b/src/examples/OPFSCoopSyncVFS.js
-index c6e3a747b0457b75a5f43c7da86031fba39b88ad..4dbc3ef89f74df710a495f0afa98850096550518 100644
+index a5ba9d9f007c807eee5f5589a0f30c688ee819de..2d9845883ca312abe43147dbf1c34390cf4f16e9 100644
 --- a/src/examples/OPFSCoopSyncVFS.js
 +++ b/src/examples/OPFSCoopSyncVFS.js
 @@ -5,6 +5,19 @@ import * as VFS from '../VFS.js';
@@ -214,23 +428,54 @@ index c6e3a747b0457b75a5f43c7da86031fba39b88ad..4dbc3ef89f74df710a495f0afa988500
  const DB_RELATED_FILE_SUFFIXES = ['', '-journal', '-wal'];
  
  const finalizationRegistry = new FinalizationRegistry(releaser => releaser());
-@@ -553,16 +566,32 @@ export class OPFSCoopSyncVFS extends FacadeVFS {
+@@ -109,9 +122,13 @@ export class OPFSCoopSyncVFS extends FacadeVFS {
+           if (lock) {
+             this.log?.(`Deleting temporary directory ${entry.name}`);
+             // Another instance initializing at the same time may have
+-            // deleted it between our listing and our lock.
++            // deleted it between our listing and our lock. Or the lock may
++            // have been released before the files were closed, as when a
++            // worker goes away without closing them; a later instance will
++            // delete the directory.
+             await root.removeEntry(entry.name, { recursive: true }).catch(e => {
+-              if (e?.name !== 'NotFoundError') throw e;
++              if (e?.name !== 'NotFoundError' &&
++                  e?.name !== 'NoModificationAllowedError') throw e;
+             });
+           } else {
+             this.log?.(`Temporary directory ${entry.name} is in use`);
+@@ -586,16 +603,35 @@ export class OPFSCoopSyncVFS extends FacadeVFS {
            // will close, leaking one access handle per attempt - which makes
            // every later open of the same database fail on a sidecar file it
            // holds itself.
 -          const results = await Promise.allSettled(
 -            DB_RELATED_FILE_SUFFIXES.map(async suffix => {
+-              const persistentFile = this.persistentFiles.get(file.path + suffix);
+-              if (persistentFile) {
+-                persistentFile.accessHandle =
+-                  await persistentFile.fileHandle.createSyncAccessHandle();
+-              }
+-            }));
+-          const failure = results.find(result => result.status === 'rejected');
+-          if (failure) throw failure.reason;
 +          const deadline = performance.now() + HELD_RETRY_TIMEOUT;
 +          while (true) {
++            const onError = [];
 +            const results = await Promise.allSettled(
 +              DB_RELATED_FILE_SUFFIXES.map(async suffix => {
 +                const persistentFile = this.persistentFiles.get(file.path + suffix);
 +                if (persistentFile) {
 +                  persistentFile.accessHandle =
 +                    await persistentFile.fileHandle.createSyncAccessHandle();
++                  onError.push(() => {
++                    persistentFile.accessHandle.close();
++                    persistentFile.accessHandle = null;
++                  });
 +                }
 +              }));
-+            const failure = results.find(result => result.status === 'rejected');
++            const failure = results.find(
++              /** @type {(result: PromiseSettledResult<void>) => result is PromiseRejectedResult} */
++              (result => result.status === 'rejected'));
 +            if (!failure) break;
 +            if (!HELD_ERRORS.has(failure.reason?.name) || performance.now() >= deadline) {
 +              throw failure.reason;
@@ -239,18 +484,7 @@ index c6e3a747b0457b75a5f43c7da86031fba39b88ad..4dbc3ef89f74df710a495f0afa988500
 +            // Still held by a connection that let go of the lock. Close what
 +            // this attempt did get, keep the lock, and try again.
 +            this.log?.(`access handles held for ${file.path}, retrying`);
-+            for (const suffix of DB_RELATED_FILE_SUFFIXES) {
-               const persistentFile = this.persistentFiles.get(file.path + suffix);
--              if (persistentFile) {
--                persistentFile.accessHandle =
--                  await persistentFile.fileHandle.createSyncAccessHandle();
--              }
--            }));
--          const failure = results.find(result => result.status === 'rejected');
--          if (failure) throw failure.reason;
-+              persistentFile?.accessHandle?.close();
-+              if (persistentFile) persistentFile.accessHandle = null;
-+            }
++            for (const f of onError) f();
 +            await new Promise(resolve => setTimeout(resolve, HELD_RETRY_INTERVAL));
 +          }
          } catch (e) {
