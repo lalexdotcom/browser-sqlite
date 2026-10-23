@@ -93,6 +93,14 @@ const DEFAULT_STATEMENT_CACHE_SIZE = 32;
 const DEFAULT_STATEMENT_CACHE_BYTES = 8 * 1024 * 1024;
 
 /**
+ * How long before `openTimeout` a replacement that cannot get its
+ * predecessor's file gives up and says so: the worker's error must reach the
+ * client before the `TIMEOUT` timer in `spawn` does, which would hide the
+ * reason.
+ */
+const HELD_REPORT_MARGIN_MS = 1_000;
+
+/**
  * The second sentence of an `openTimeout` failure, chosen by the roster.
  *
  * `undefined` — the roster could not be read — keeps the sentence this error
@@ -567,7 +575,7 @@ export const createSQLiteClient = (
         // make the option permanent to remove.
         for (const index of result.failedIndices) {
           scheduler.rearmSlot(index);
-          spawn(index, true);
+          spawn(index, 'idle');
         }
         // If failedIndices is empty the gate opens immediately (no re-arming).
         // If not, it stays closed until retry slots settle.
@@ -1572,8 +1580,18 @@ export const createSQLiteClient = (
     connRelease = undefined;
   };
 
+  /**
+   * Slots whose pending worker was spawned `'busy'` and is not ready yet. Its
+   * own death (the open error naming the held file) carries no running
+   * statement, yet the file is still held by the one before it: the next
+   * replacement must wait as long, or the explanation is lost.
+   */
+  const pendingBusySpawns = new Set<number>();
+
   /** `afterDeath`: the slot's previous worker died, see `afterDeath` in protocol.ts. */
-  const spawn = (index: number, afterDeath = false) => {
+  const spawn = (index: number, afterDeath?: 'idle' | 'busy') => {
+    if (afterDeath === 'busy') pendingBusySpawns.add(index);
+    else pendingBusySpawns.delete(index);
     // The slot holds a worker again from here — not from `ready`. Without this,
     // a restarted slot stays marked dead and the replacement's own death is
     // taken for a duplicate signal about the worker it replaced: no decision
@@ -1634,6 +1652,15 @@ export const createSQLiteClient = (
       logger,
       abortSlots,
       afterDeath,
+      // Measured here, at spawn: the worker's own clock starts after its boot,
+      // and the client's `TIMEOUT` timer above starts now.
+      // A boot slower than `openTimeout - 1 s` (or a small `openTimeout`) leaves
+      // no room: the worker falls back to the idle budget and the client's
+      // `TIMEOUT` may then win.
+      openDeadline:
+        afterDeath === 'busy'
+          ? Date.now() + openTimeout - HELD_REPORT_MARGIN_MS
+          : undefined,
       // Slot 0 never declines; only surplus workers may. Where a probe is owed,
       // slot 0 probes instead (`probeFirst` below) and opens once told to.
       declineWithout:
@@ -1663,6 +1690,7 @@ export const createSQLiteClient = (
           return;
         }
         supervisor.report(index, 'ready');
+        pendingBusySpawns.delete(index);
         // If this slot was recorded in startupLosses (it failed in a prior
         // round and is now recovering in the retry), remove the record so it
         // is not reported as permanently lost in onGateOpen.
@@ -1729,10 +1757,11 @@ export const createSQLiteClient = (
     else logger.info(message);
   };
 
-  const handleDeath = (index: number, error: SQLiteError) => {
+  const handleDeath = (index: number, error: SQLiteError, busy = false) => {
     // Snapshot inStartup BEFORE scheduler.remove() may trigger onFirstSettle or
     // onGateOpen (both of which can change inStartup synchronously).
     const wasInStartup = inStartup;
+    const afterBusySpawn = pendingBusySpawns.has(index);
 
     if (wasInStartup) {
       // During startup (gate still closed), defer the verdict to onFirstSettle.
@@ -1763,7 +1792,7 @@ export const createSQLiteClient = (
     const decision = supervisor.report(index, 'died');
     if (decision === 'restart') {
       logger.warn(`restarting worker ${index + 1}`);
-      void spawn(index, true);
+      void spawn(index, busy || afterBusySpawn ? 'busy' : 'idle');
     } else if (decision === 'lost') {
       // Slot permanently lost, but the pool still has workers — none of which
       // can stand in for worker 0 before it has answered (`probeSettled`).

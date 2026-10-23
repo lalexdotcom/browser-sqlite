@@ -4,7 +4,9 @@ import { databasePath } from '../../../src/utils';
 import {
   interceptWorkers,
   killSilently,
+  longQuery,
   scaled,
+  sleep,
   TEST_TARGET,
 } from '../helpers';
 import { removeOpfsPath } from '../helpers/environment';
@@ -436,5 +438,105 @@ describe('reopening a database after its worker died', () => {
     const rows = await step('db.read', db.read<{ n: number }>('SELECT 1 AS n'));
     expect(rows[0]?.n).toBe(1);
     expect(records.length).toBe(2);
+  });
+
+  /**
+   * A kill with a statement running, the holder taking the file behind it and
+   * the ErrorEvent that tells the pool. `holder.take` resolves once the holder
+   * has the file; `graceMs` is how long it keeps it from then on.
+   */
+  const killMidStatement = async (
+    graceMs: number,
+    openTimeout?: number,
+    maxWorkerRestarts = 1,
+  ) => {
+    const holder = exclusiveHolder();
+    const records = interceptWorkers();
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
+    const path = databasePath(TEST_TARGET.vfs, dbName);
+    const db: Client = createSQLiteClient(dbName, {
+      ...TEST_PAIR(),
+      poolSize: 1,
+      maxWorkerRestarts,
+      ...(openTimeout !== undefined ? { openTimeout } : {}),
+      debug: 'db',
+    });
+    onTestFinished(async () => {
+      holder.dispose();
+      await db.close().catch(() => {
+        // The client may already have failed; the assertions report it.
+      });
+    });
+    const step = stepsUnder(
+      () =>
+        `holder: ${holder.steps.join(' > ') || 'no step'}; db: ${poolState(db)}`,
+    );
+
+    await step('db.write', db.write('CREATE TABLE t (a)'));
+    const [first] = records;
+    const running = db.read(longQuery(20_000_000));
+    // Rejected later than it is awaited; keep it from being unhandled.
+    running.catch(() => {});
+    await sleep(100);
+    if (first) killSilently(first.worker);
+    expect(
+      await step(
+        'holder.take',
+        holder.take(path, { channel: `OPFS:/${path}`, graceMs }),
+      ),
+    ).toBe('taken');
+    first?.worker.dispatchEvent(new ErrorEvent('error'));
+    return { db, records, running, step };
+  };
+
+  it('waits past the idle budget when the dead worker was mid-statement', {
+    tags: ['vfs:OPFSAdaptiveVFS', 'browser:firefox'],
+  }, async () => {
+    // Over OPEN_RETRY_BUDGET_MS (2 500): only the longer wait gets through.
+    const { db, records, running, step } = await killMidStatement(4_000);
+
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+    const rows = await step('db.read', db.read<{ n: number }>('SELECT 1 AS n'));
+    expect(rows).toEqual([{ n: 1 }]);
+    expect(records.length).toBe(2);
+  });
+
+  it('fails with the reason when a killed statement keeps the file', {
+    tags: ['vfs:OPFSAdaptiveVFS', 'browser:firefox'],
+  }, async () => {
+    // Never released within the test.
+    const { db, running, step } = await killMidStatement(60_000, 6_000);
+
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+    const failure = await step('db.read', db.read('SELECT 1')).catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toMatchObject({
+      code: 'WORKER_CRASHED',
+      message: expect.stringContaining('WebKit #328618'),
+      cause: { name: 'NoModificationAllowedError' },
+    });
+    expect((failure as Error).message).toContain(
+      'Use the async or jspi build, or cross-origin isolation',
+    );
+    expect(failure).not.toMatchObject({ code: 'TIMEOUT' });
+  });
+
+  it('keeps the reason when the replacement is itself restarted', {
+    tags: ['vfs:OPFSAdaptiveVFS', 'browser:firefox'],
+  }, async () => {
+    // The first replacement fails on the held file; its own restart must wait
+    // as long, not fall back to the idle budget and a bare engine error.
+    const { db, running, step } = await killMidStatement(60_000, 6_000, 2);
+
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+    const failure = await step('db.read', db.read('SELECT 1')).catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toMatchObject({
+      code: 'WORKER_CRASHED',
+      message: expect.stringContaining('WebKit #328618'),
+    });
+    expect(failure).not.toMatchObject({ code: 'TIMEOUT' });
   });
 });

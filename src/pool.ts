@@ -12,11 +12,12 @@ import { DEFAULT_CREDIT_WINDOW } from './credits';
 import type { QueryDebugHandle, WorkerDebugHandle } from './debug';
 import type { Logger } from './logger';
 import { SQLiteError, type SQLiteErrorCode } from './types/errors';
-import type {
-  RowsBlock,
-  SavepointOp,
-  WasmLocation,
-  WorkerMessageData,
+import {
+  KILLED_SLOT,
+  type RowsBlock,
+  type SavepointOp,
+  type WasmLocation,
+  type WorkerMessageData,
 } from './types/protocol';
 
 /**
@@ -282,7 +283,7 @@ export const createPoolWorker = (deps: {
   pragmas?: Record<string, string> | undefined;
   statementCacheSize?: number | undefined;
   statementCacheBytes?: number | undefined;
-  onDeath?: (index: number, error: SQLiteError) => void;
+  onDeath?: (index: number, error: SQLiteError, busy: boolean) => void;
   onServed?: (index: number) => void;
   drainTimeout: number;
   createWorkerDebugState?:
@@ -293,8 +294,13 @@ export const createPoolWorker = (deps: {
   declineWithout?: readonly PlatformFeature[] | undefined;
   /** Sent to slot 0 where exclusivity depends on a feature (spec 2026-09-15). */
   probeFirst?: readonly PlatformFeature[] | undefined;
-  /** This worker replaces one that died: its open waits out a held file. */
-  afterDeath?: boolean | undefined;
+  /**
+   * This worker replaces one that died: its open waits out a held file.
+   * `busy`: the dead worker had a statement running.
+   */
+  afterDeath?: 'idle' | 'busy' | undefined;
+  /** Epoch ms a `busy` open waits until; see `openDeadline` in protocol.ts. */
+  openDeadline?: number | undefined;
   /** Worker 0's probe answer, with the function that lets it open. */
   onProbed?:
     | ((missing: PlatformFeature | null, proceed: () => void) => void)
@@ -314,7 +320,7 @@ export const createPoolWorker = (deps: {
   } = deps;
   const { createWorkerDebugState, logger } = deps;
   const { abortSlots } = deps;
-  const { declineWithout, probeFirst, afterDeath } = deps;
+  const { declineWithout, probeFirst, afterDeath, openDeadline } = deps;
 
   const deferredInit = Promise.withResolvers<PoolWorker | DeclinedWorker>();
 
@@ -326,10 +332,6 @@ export const createPoolWorker = (deps: {
     epochTarget: 0,
   });
   pool[index] = worker;
-  // A restarted worker inherits this slot, and its callIds restart at 0 — so
-  // the predecessor's last abort would fire on the replacement's seventh call.
-  // Zeroing here is the whole guard, and it belongs where the worker is born.
-  if (abortSlots) new Int32Array(abortSlots)[index] = 0;
   logger.info(`worker ${index + 1} created`);
 
   const debugWorker = createWorkerDebugState?.(index, workerName);
@@ -475,8 +477,10 @@ export const createPoolWorker = (deps: {
   };
 
   const die = (error: SQLiteError) => {
+    // Read before `poison()`, which ends the query in flight.
+    const busy = servingQuery !== undefined;
     if (!poison(error)) return;
-    deps.onDeath?.(index, error);
+    deps.onDeath?.(index, error, busy);
   };
 
   worker.onerror = (event) => {
@@ -535,6 +539,12 @@ export const createPoolWorker = (deps: {
       case 'ready': {
         const { callId } = data;
         if (callId === 0) {
+          // A restarted worker inherits the slot, and its callIds restart at
+          // 0: the predecessor's last abort would fire on the replacement's
+          // seventh call. The replacement runs no polled statement before
+          // `ready`, so zeroing here keeps both guards — the predecessor's
+          // last callId, and the KILLED_SLOT it must still read.
+          if (abortSlots) Atomics.store(new Int32Array(abortSlots), index, 0);
           ready = true;
           worker.status = 'READY';
           debugWorker?.initialized();
@@ -974,9 +984,11 @@ export const createPoolWorker = (deps: {
   Object.assign(worker, {
     query,
     terminate: (reason?: SQLiteError) => {
-      // Read before poison(), which marks every worker DEAD. A worker that
-      // answered `closed` has let its transactions settle already.
+      // Read before poison(), which marks every worker DEAD and ends the query
+      // in flight. A worker that answered `closed` has let its transactions
+      // settle already.
       const closed = worker.status === 'CLOSED';
+      const busy = servingQuery !== undefined;
       poison(
         reason ??
           new SQLiteError(
@@ -984,6 +996,10 @@ export const createPoolWorker = (deps: {
             `Worker ${index + 1} was terminated.`,
           ),
       );
+      // Safari does not stop a terminated worker inside a statement (WebKit
+      // 328618), so the slot stops it first, at its next progress check.
+      if (busy && abortSlots)
+        Atomics.store(new Int32Array(abortSlots), index, KILLED_SLOT);
       // Not on the other VFS: an OPFS handle would outlive the kill by the
       // grace while a replacement opens the same file.
       if (closed || VFS_CAPABILITIES[vfs].storage !== 'indexeddb') {
@@ -1047,6 +1063,7 @@ export const createPoolWorker = (deps: {
     declineWithout,
     probeFirst,
     afterDeath,
+    openDeadline,
   });
 
   return deferredInit.promise;

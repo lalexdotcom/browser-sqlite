@@ -35,12 +35,13 @@ import {
 } from '../credits';
 import { createLocks, initLockName } from '../locks';
 import type { SQLiteErrorCode } from '../types/errors';
-import type {
-  BootStage,
-  ClientMessageData,
-  ParamsBlock,
-  WasmLocation,
-  WorkerMessageData,
+import {
+  type BootStage,
+  type ClientMessageData,
+  KILLED_SLOT,
+  type ParamsBlock,
+  type WasmLocation,
+  type WorkerMessageData,
 } from '../types/protocol';
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
 import { anonymousParams, bindBlock, RowWriter } from './binary';
@@ -142,6 +143,16 @@ const createVfsInstance = async (
  */
 const OPEN_RETRY_BUDGET_MS = 2_500;
 
+/** What an open reports when a statement the pool killed still holds the file. */
+class HeldByKilledStatement extends Error {
+  constructor(file: string) {
+    super(
+      `Could not reopen '${file}': the worker it replaces was terminated mid-statement and still holds the file. Some engines (Safari up to 27.0.1, WebKit #328618) cannot stop it. Use the async or jspi build, or cross-origin isolation, so the library can interrupt the statement.`,
+    );
+    this.name = 'HeldByKilledStatement';
+  }
+}
+
 /**
  * `sqlite3_open_v2`, retried for a VFS that takes an exclusive OPFS access
  * handle inside `xOpen` — where `createVfsInstance`'s retry cannot reach,
@@ -164,24 +175,38 @@ const OPEN_RETRY_BUDGET_MS = 2_500;
  * the open only fails `OPEN_RETRY_BUDGET_MS` later than it would have, on a
  * slot that is being restarted anyway. A first open keeps the declaration:
  * nothing of ours has died there, so a held file is most likely live.
+ *
+ * **Two budgets.** The predecessor of an `idle` death was doing nothing: a
+ * corpse that lets go within `OPEN_RETRY_BUDGET_MS`. A `busy` one was
+ * terminated inside a statement, which Safari up to 27.0.1 cannot stop (WebKit
+ * #328618) — the thread keeps running, and the file with it, until the
+ * statement ends. That wait is as long as the statement, so the open waits
+ * until `openDeadline` (never less than the idle budget), and when it still
+ * fails on a held file says why instead of passing the engine's bare error on.
  */
 const openWithRetry = async (
   sqlite: { open_v2: (file: string) => Promise<number> },
   file: string,
   vfs: SQLiteVFS,
   lastError: () => unknown,
-  afterDeath: boolean,
+  afterDeath: 'idle' | 'busy' | undefined,
+  openDeadline: number | undefined,
 ): Promise<number> => {
-  if (!VFS_CAPABILITIES[vfs].exclusiveFileHandle && !afterDeath) {
+  if (!VFS_CAPABILITIES[vfs].exclusiveFileHandle && afterDeath === undefined) {
     return sqlite.open_v2(file);
   }
-  const deadline = Date.now() + OPEN_RETRY_BUDGET_MS;
+  const idleDeadline = Date.now() + OPEN_RETRY_BUDGET_MS;
+  const deadline =
+    afterDeath === 'busy' && openDeadline !== undefined
+      ? Math.max(idleDeadline, openDeadline)
+      : idleDeadline;
   for (;;) {
     try {
       return await sqlite.open_v2(file);
     } catch (error) {
-      if (!isHeldElsewhere(lastError()) || Date.now() >= deadline) {
-        throw error;
+      if (!isHeldElsewhere(lastError())) throw error;
+      if (Date.now() >= deadline) {
+        throw afterDeath === 'busy' ? new HeldByKilledStatement(file) : error;
       }
       await new Promise((resolve) =>
         setTimeout(resolve, ACQUIRE_RETRY_INTERVAL_MS),
@@ -360,7 +385,8 @@ type OpenOptions = {
   abortIndex?: number | undefined;
   declineWithout?: readonly PlatformFeature[] | undefined;
   probeFirst?: readonly PlatformFeature[] | undefined;
-  afterDeath?: boolean | undefined;
+  afterDeath?: 'idle' | 'busy' | undefined;
+  openDeadline?: number | undefined;
 };
 
 /**
@@ -550,7 +576,8 @@ const open = (file: string, options: OpenOptions) => {
               file,
               vfs,
               () => vfsInstanceSeen?.lastError,
-              options.afterDeath === true,
+              options.afterDeath,
+              options.openDeadline,
             );
             const step = createStep(module, build, db);
             boot('applying pragmas');
@@ -590,7 +617,10 @@ const open = (file: string, options: OpenOptions) => {
       self.postMessage({
         type: 'open-error',
         callId: 0,
-        message: detail ? `${base}: ${detail}` : base,
+        message:
+          detail && !(error instanceof HeldByKilledStatement)
+            ? `${base}: ${detail}`
+            : base,
         cause: cloneable(detail ? vfsError : error),
         ...(sqliteCode !== undefined ? { sqliteCode } : {}),
       });
@@ -766,8 +796,13 @@ const open = (file: string, options: OpenOptions) => {
     // without a slot.
     const yields = currentBuild !== 'sync';
     const polls = !yields && slot !== undefined;
-    const abortedHere = () =>
-      slot !== undefined && Atomics.load(slot, abortIndex as number) === callId;
+    // The pool's own abort writes this statement's callId; its kill writes
+    // KILLED_SLOT, because a terminated worker does not stop on Safari.
+    const abortedHere = () => {
+      if (slot === undefined) return false;
+      const value = Atomics.load(slot, abortIndex as number);
+      return value === callId || value === KILLED_SLOT;
+    };
     if (yields || polls) {
       sqlite.progress_handler(
         db,
@@ -1369,6 +1404,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         declineWithout,
         probeFirst,
         afterDeath,
+        openDeadline,
       } = data;
       open(file, {
         vfs,
@@ -1382,6 +1418,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         declineWithout,
         probeFirst,
         afterDeath,
+        openDeadline,
       });
       break;
     }

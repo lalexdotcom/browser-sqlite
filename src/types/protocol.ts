@@ -4,6 +4,13 @@ import type { SQLiteResultCode } from '../const/sqlite';
 import type { SQLiteVFS } from '../const/vfs';
 import type { SQLiteErrorCode } from './errors';
 
+/**
+ * What the pool writes into a worker's abort slot when it is about to kill it.
+ * A callId is never negative, so it cannot be mistaken for one; the worker's
+ * progress handler stops on it like on its own callId.
+ */
+export const KILLED_SLOT = -1;
+
 export type SQLiteWorkerMessageData<_T = unknown> = {
   callId: number;
   terminate?: boolean;
@@ -116,9 +123,16 @@ export type ClientMessageData =
       probeFirst?: readonly PlatformFeature[];
       /**
        * This slot's previous worker died and was terminated: a held database
-       * file can only be its, so the open waits for it on any VFS.
+       * file can only be its, so the open waits for it on any VFS. `busy`: it
+       * died with a statement running, which an engine may be unable to stop
+       * (WebKit #328618) — the open then waits until `openDeadline`.
        */
-      afterDeath?: boolean;
+      afterDeath?: 'idle' | 'busy';
+      /**
+       * Epoch ms (`Date.now()` clock) until which a `busy` open waits for the
+       * file. Absent: the idle budget applies.
+       */
+      openDeadline?: number;
     }
   | {
       type: 'query';

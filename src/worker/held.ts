@@ -8,7 +8,9 @@
  * `InvalidStateError` is a generic name in WebKit, so on Safari it does not
  * prove the file is held. That is acceptable where this is used: only the
  * open path's retries, both bounded, which then rethrow the original error —
- * an unrelated `InvalidStateError` arrives a few seconds later, unchanged.
+ * an unrelated `InvalidStateError` arrives later, unchanged: after the idle
+ * budget (a few seconds) or, when the worker replaces one that died
+ * mid-statement, after the wait up to the open timeout.
  */
 const HELD_ERRORS: ReadonlySet<string> = new Set([
   'NoModificationAllowedError',

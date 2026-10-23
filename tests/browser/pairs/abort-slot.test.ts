@@ -109,7 +109,8 @@ describe('the sync build, isolated', {
 
   it("does not carry a dead worker's abort into its replacement", async () => {
     // The slot holds a callId, and a restarted worker's callIds start at 0
-    // again — so the slot must be zeroed when a worker is created into it.
+    // again — so the slot must be zeroed when the replacement reports `ready`,
+    // which clears both the predecessor's callId and KILLED_SLOT.
     // Without that zeroing this test fails on the query whose callId matches
     // the one the abort wrote, and on no other: the defect is a single wrong
     // interrupt, several queries after the restart.
@@ -155,6 +156,41 @@ describe('the sync build, isolated', {
     } finally {
       await db.close();
     }
+  });
+
+  // An exclusive handle the killed worker keeps until its statement stops.
+  it("stops a killed worker's statement, so its replacement opens at once", {
+    tags: ['vfs:AccessHandlePoolVFS'],
+  }, async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({
+      poolSize: 1,
+      maxWorkerRestarts: 1,
+      debug: true,
+    });
+    await db.write('CREATE TABLE t (a)');
+    const running = db.read(longQuery(20_000_000));
+    await waitUntil(
+      theQueryIsRunning(db, longQuery(20_000_000)),
+      'the query to be running',
+    );
+    const killedAt = performance.now();
+    records[0]?.worker.dispatchEvent(new ErrorEvent('error'));
+    await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
+    await waitUntil(
+      () => records[1]?.received.includes('ready') ?? false,
+      'the replacement to be ready',
+      10_000,
+    );
+    // Chromium stops a terminated worker's WASM after ~2 s (HANDLE-CORPSE); the
+    // slot stops it at the next progress check.
+    expect(performance.now() - killedAt).toBeLessThan(1_000);
+    // The replacement does not inherit KILLED_SLOT: a statement past the
+    // progress handler's 100 000-op threshold still completes, twice.
+    for (let run = 0; run < 2; run++) {
+      expect(await db.read(longQuery(200_000))).toEqual([{ n: 200_000 }]);
+    }
+    await db.close();
   });
 });
 

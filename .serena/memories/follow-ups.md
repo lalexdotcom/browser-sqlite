@@ -18,12 +18,16 @@ been work on nothing.
 
 ## In sub-memories (user, 2026-10-16 and 19)
 
-`mem:follow-ups/wa-step-upstream` (optional, upstream's), `mem:follow-ups/tx-validation` (tx methods throw, not reject), `mem:follow-ups/timeout-start` (when `timeout` starts), `mem:follow-ups/safari-idb-stranded` (a stranded IndexedDB connection on Safari 26 — fixed on `fix/safari-idb-stranded` 2026-10-21, validated on Safari, awaiting the merge), `mem:follow-ups/safari-suite` (Safari wired into the suite on `feat/safari-suite` 2026-10-22; its first runs' failures, all a killed worker's held OPFS file, are the next pieces), `mem:follow-ups/ci-workflows` (Linux through `tests.yaml`, `tests-ubuntu.yaml`, a `browsers` input — done on `ci/linux-via-tests` 2026-10-22), `mem:follow-ups/lifecycle-restart-held` (a restarted worker meets its predecessor's held file — fixed for Firefox on `fix/restart-held-file` 2026-10-21; Safari open).
+`mem:follow-ups/wa-step-upstream` (optional, upstream's), `mem:follow-ups/tx-validation` (tx methods throw, not reject), `mem:follow-ups/timeout-start` (when `timeout` starts), `mem:follow-ups/safari-idb-stranded` (a stranded IndexedDB connection on Safari 26 — fixed on `fix/safari-idb-stranded` 2026-10-21, validated on Safari, awaiting the merge), `mem:follow-ups/safari-suite` (Safari in the suite since 2026-10-22, green on Safari 26/27 since 2026-10-23; what stays open is WebKit 328618's, issue #10), `mem:follow-ups/ci-workflows` (Linux through `tests.yaml`, `tests-ubuntu.yaml`, a `browsers` input — done on `ci/linux-via-tests` 2026-10-22), `mem:follow-ups/lifecycle-restart-held` (a restarted worker meets its predecessor's held file — fixed for Firefox on `fix/restart-held-file` 2026-10-21; Safari open).
 
 ## `multi-client` bulkWrite interleave on chromium `IDBMirrorVFS/async` — seen, not reproducible (2026-10-07)
 
 `tests/browser/pairs/multi-client.test.ts` :: "two clients writing at once > interleaves a bulkWrite with another client, refusing neither" failed once in the `feat/binary-protocol` matrix: client A read 0 of B's first 2 047-row batch over its 5 s of polling (`expected +0 to be 2047`, test 10.9 s). Replays the same afternoon: the test alone 10/10 on the branch and on `main`; the file under 16 busy loops 15/15 each; the full cell on the branch 1 failure in 5 then 0 in 15 (and 0 in 12 with `debug: true` and a diagnostic of B's `close()` and A's late count), on `main` 0 in 20. Another session's Firefox was loading the machine during the failing runs. Left by the user's decision ("on ignore et on enchaîne, et on consigne"). At the next sighting: rerun the cell with the diagnostic (B's `writer.close()` outcome — a failed batch against a slow one — and A's count after it), and compare with `main` at the same load.
 
+
+## `inspect-marker` › "releases the marker when close() races the acquisition" on chrome `OPFSWriteAheadVFS/sync`, macOS 26 — seen once (2026-10-23)
+
+Run 39963240636 (`feat/safari-busy-terminate`, a cell that took 838 s): one marker left (`expected length 0, got 1`). The test waits a fixed 50 ms after releasing the deferred grant for the marker to self-release — likely too short under that load. 10/10 green locally on the same branch. At the next sighting: wait on the marker's absence (bounded) instead of 50 ms.
 
 ## wa-sqlite's suite on stock browsers — WebDriver PR accepted, ours to send (Discussion #373, 2026-10-10)
 

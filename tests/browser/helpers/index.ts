@@ -54,10 +54,12 @@ export const TEST_TARGET: TestTarget = (() => {
  * killed worker runs its statement to its end, holding its OPFS handles
  * (SAFARI-TERMINATE-WASM). Only on the `sync` build of an OPFS VFS: the
  * `async` and `jspi` builds return to JS while a statement runs, where
- * `terminate()` takes effect.
+ * `terminate()` takes effect. Not under cross-origin isolation: the pool then
+ * stops the statement through the abort slot before it terminates the worker.
  */
 export const killedStatementRuns = (): string | undefined =>
   terminateRunsWasm(navigator.userAgent) &&
+  !ENVIRONMENT.isolated &&
   TEST_TARGET.build === 'sync' &&
   VFS_CAPABILITIES[TEST_TARGET.vfs].storage === 'opfs'
     ? TERMINATE_RUNS_WASM
