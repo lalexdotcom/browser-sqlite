@@ -174,7 +174,6 @@ describe('the sync build, isolated', {
       theQueryIsRunning(db, longQuery(20_000_000)),
       'the query to be running',
     );
-    const killedAt = performance.now();
     records[0]?.worker.dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
     await waitUntil(
@@ -182,9 +181,15 @@ describe('the sync build, isolated', {
       'the replacement to be ready',
       10_000,
     );
-    // Chromium stops a terminated worker's WASM after ~2 s (HANDLE-CORPSE); the
-    // slot stops it at the next progress check.
-    expect(performance.now() - killedAt).toBeLessThan(1_000);
+    // The slot stops the killed worker's statement at its next progress check,
+    // so the replacement's first open finds the file free. Without it the open
+    // retries until the engine stops the terminated worker's WASM (~2 s on
+    // Chromium, HANDLE-CORPSE; never on Safari up to 27.0.1, WebKit 328618).
+    // The cause is asserted rather than a time, which a slow runner stretches.
+    // Firefox frees the file of a terminated worker at once, slot or not, so
+    // only Chromium and Safari can fail this (red on Chrome with the slot cut).
+    expect(records[1]?.stages).toContain('opening the database');
+    expect(records[1]?.stages).not.toContain('waiting for a held file');
     // The replacement does not inherit KILLED_SLOT: a statement past the
     // progress handler's 100 000-op threshold still completes, twice.
     for (let run = 0; run < 2; run++) {

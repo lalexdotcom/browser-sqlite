@@ -21,7 +21,7 @@ Part of `mem:follow-ups`, opened 2026-10-16 (user) when the library-side fast st
 
 **WebKit** (Playwright's Linux WebKit 26.6 — not Safari): `step()` → upstream variant → fast step, `sync` 688-714 → 270-281 → 157-169, `jspi` 1 049-1 059 → 670-684 → 548-556; `async` unreadable (3.6-4.1 s every pass after the first, the Asyncify-on-WebKit slowdown). Real Safari not measured.
 
-**What it gave in the library** (FAST-STEP, `mem:measurements/statement-cache-and-perf`): `chunk()` of 4 000 000 rows, `MemoryVFS`, Chromium −49 / −38 / −20 %, Firefox −80 / −59 / −38 % (`sync` / `async` / `jspi`) — a figure for the proposal's motivation, not its evidence.
+**What it gave in the library** (FAST-STEP, `mem:measurements/step`): `chunk()` of 4 000 000 rows, `MemoryVFS`, Chromium −49 / −38 / −20 %, Firefox −80 / −59 / −38 % (`sync` / `async` / `jspi`) — a figure for the proposal's motivation, not its evidence.
 
 ## The Discussion (2026-10-19)
 

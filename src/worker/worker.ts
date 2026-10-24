@@ -115,14 +115,20 @@ const createVfsInstance = async (
   vfsClass: VFSClass,
   vfs: string,
   module: WASQLiteModule,
+  onWait: () => void,
 ): Promise<unknown> => {
   const deadline = Date.now() + ACQUIRE_RETRY_BUDGET_MS;
+  let waiting = false;
   for (;;) {
     try {
       return await vfsClass.create(vfs, module, { lockPolicy: 'shared' });
     } catch (error) {
       if (!isHeldElsewhere(error) || Date.now() >= deadline) {
         throw error;
+      }
+      if (!waiting) {
+        waiting = true;
+        onWait();
       }
       await new Promise((resolve) =>
         setTimeout(resolve, ACQUIRE_RETRY_INTERVAL_MS),
@@ -188,6 +194,7 @@ const openWithRetry = async (
   lastError: () => unknown,
   afterDeath: 'idle' | 'busy' | undefined,
   openDeadline: number | undefined,
+  onWait: () => void,
 ): Promise<number> => {
   if (afterDeath === undefined) {
     return sqlite.open_v2(file);
@@ -197,6 +204,7 @@ const openWithRetry = async (
     afterDeath === 'busy' && openDeadline !== undefined
       ? Math.max(idleDeadline, openDeadline)
       : idleDeadline;
+  let waiting = false;
   for (;;) {
     try {
       return await sqlite.open_v2(file);
@@ -204,6 +212,10 @@ const openWithRetry = async (
       if (!isHeldElsewhere(lastError())) throw error;
       if (Date.now() >= deadline) {
         throw afterDeath === 'busy' ? new HeldByKilledStatement(file) : error;
+      }
+      if (!waiting) {
+        waiting = true;
+        onWait();
       }
       await new Promise((resolve) =>
         setTimeout(resolve, ACQUIRE_RETRY_INTERVAL_MS),
@@ -549,44 +561,47 @@ const open = (file: string, options: OpenOptions) => {
     })
     .then(({ sqlite, module, vfsModule }) => {
       boot('creating the VFS');
-      return (createVfsInstance(vfsModule, vfs, module) as Promise<any>).then(
-        (vfsInstance: any) => {
-          vfsInstanceSeen = vfsInstance;
-          sqlite.vfs_register(vfsInstance, true);
-          boot('waiting for the open lock');
-          // One lock for open + pragmas. withLock releases on throw too, which
-          // is what the explicit unlock() in the old .catch existed to do.
-          //
-          // `file` arrives already normalized from `createSQLiteClient`, so
-          // two clients spelling the same database differently (e.g. 'data' vs
-          // './data') always compete on the same lock and open the same file.
-          // The relative form is intentional: sqlite3_open_v2 checks
-          // nPathname + 8 > mxPathname (64, wa-sqlite/src/VFS.js:10) before
-          // xOpen, so an absolute name costs a character the budget cannot spare
-          // (measured: broke all 96 browser tests on 56-char names). The VFS
-          // normalizes internally, so 'data' and '/data' open the same OPFS file.
-          return locks.withLock(initLockName(vfs, file), async () => {
-            boot('opening the database');
-            const db = await openWithRetry(
-              sqlite,
-              file,
-              () => vfsInstanceSeen?.lastError,
-              options.afterDeath,
-              options.openDeadline,
-            );
-            boot('applying pragmas');
-            for (const statement of renderPragmas(pragmas)) {
-              for await (const stmt of sqlite.statements(db, statement)) {
-                while ((await sqlite.step_asap(stmt)) === SQLITE_ROW) {}
-              }
+      return (
+        createVfsInstance(vfsModule, vfs, module, () =>
+          boot('waiting for a held file'),
+        ) as Promise<any>
+      ).then((vfsInstance: any) => {
+        vfsInstanceSeen = vfsInstance;
+        sqlite.vfs_register(vfsInstance, true);
+        boot('waiting for the open lock');
+        // One lock for open + pragmas. withLock releases on throw too, which
+        // is what the explicit unlock() in the old .catch existed to do.
+        //
+        // `file` arrives already normalized from `createSQLiteClient`, so
+        // two clients spelling the same database differently (e.g. 'data' vs
+        // './data') always compete on the same lock and open the same file.
+        // The relative form is intentional: sqlite3_open_v2 checks
+        // nPathname + 8 > mxPathname (64, wa-sqlite/src/VFS.js:10) before
+        // xOpen, so an absolute name costs a character the budget cannot spare
+        // (measured: broke all 96 browser tests on 56-char names). The VFS
+        // normalizes internally, so 'data' and '/data' open the same OPFS file.
+        return locks.withLock(initLockName(vfs, file), async () => {
+          boot('opening the database');
+          const db = await openWithRetry(
+            sqlite,
+            file,
+            () => vfsInstanceSeen?.lastError,
+            options.afterDeath,
+            options.openDeadline,
+            () => boot('waiting for a held file'),
+          );
+          boot('applying pragmas');
+          for (const statement of renderPragmas(pragmas)) {
+            for await (const stmt of sqlite.statements(db, statement)) {
+              while ((await sqlite.step_asap(stmt)) === SQLITE_ROW) {}
             }
-            // After the pragmas, which are not control. A plain function: an
-            // async one would take wa-sqlite's `_async` relay.
-            sqlite.set_authorizer(db, authorize, null);
-            return { sqlite, module, db };
-          });
-        },
-      );
+          }
+          // After the pragmas, which are not control. A plain function: an
+          // async one would take wa-sqlite's `_async` relay.
+          sqlite.set_authorizer(db, authorize, null);
+          return { sqlite, module, db };
+        });
+      });
     })
     .then((opened) => {
       self.postMessage({ type: 'ready', callId: 0 });
@@ -1236,6 +1251,7 @@ const deleteDatabaseFiles = async (data: {
     vfsModule[vfs],
     vfs,
     module,
+    () => {},
   )) as any;
 
   const { storage } = VFS_CAPABILITIES[vfs];

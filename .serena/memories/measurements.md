@@ -163,7 +163,11 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - JSPI-VS-SYNC — `jspi` walks rows as fast as `sync`
 - JSPI-SYNC-RELAYS
 - BULK-VALUES — converting cells in `enqueue()` costs nothing; JSONB faster on Chromium, slower on Firefox
+
+## `mem:measurements/step` — the step loop
+
 - FAST-STEP — the library's own step against `main`, stock Chrome 153 / Firefox 158: `chunk()` of 4 000 000 rows −49 % / −80 % on `sync`, every VFS faster, one-row queries unchanged
+- STEP-ASAP-LIB — wa-sqlite's `step_asap()` against the fast step and wa-sqlite's `step()`, three arms in sequence: 0-12 % slower than the fast step (`jspi` `ccall`, `sync` `verifyStatement`), asap/master 0.13-0.83
 
 ## `mem:measurements/bench-and-devices` — the bench page, devices, browsers, bundlers
 

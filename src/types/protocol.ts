@@ -176,6 +176,7 @@ export type BootStage =
   | 'creating the VFS'
   | 'waiting for the open lock'
   | 'opening the database'
+  | 'waiting for a held file'
   | 'applying pragmas';
 
 export type WorkerMessageData =

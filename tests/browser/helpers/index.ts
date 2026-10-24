@@ -252,6 +252,8 @@ export type WorkerRecord = {
   worker: Worker;
   posted: string[];
   received: string[];
+  /** The stages of the `boot` messages received, in order. */
+  stages: string[];
   /** Ordered trace: 'post:<type>', 'recv:<type>', 'terminate'. */
   log: string[];
   terminated: boolean;
@@ -276,13 +278,16 @@ export function interceptWorkers(options?: { url?: string }): WorkerRecord[] {
         worker: this,
         posted: [],
         received: [],
+        stages: [],
         log: [],
         terminated: false,
       };
       records.push(record);
       this.addEventListener('message', (event: MessageEvent) => {
-        const type = String((event.data as { type?: string })?.type);
+        const data = event.data as { type?: string; stage?: string };
+        const type = String(data?.type);
         record.received.push(type);
+        if (type === 'boot') record.stages.push(String(data.stage));
         record.log.push(`recv:${type}`);
       });
       const post = this.postMessage.bind(this);

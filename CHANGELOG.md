@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **With `debug`, a worker that waits for a database file another worker still holds reports the `boot` stage `'waiting for a held file'`,** instead of staying at `'opening the database'`.
+
 ### Changed
 
 - **Breaking:** **`stream()` and `chunk()` throw an invalid argument from the call,** instead of rejecting it at the first `next()`: a value that is neither SQL nor an `sql` query, a `params` array passed with an `sql` query, a write statement, or a param that cannot be bound.
