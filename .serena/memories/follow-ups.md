@@ -289,6 +289,10 @@ SQLite's temporary files (a `RETURNING` table, sorts, temp indexes) open through
 
 `types` accepts only `'JSONB'` (spec 2026-10-06, D7). The user sees it later carrying conversions such as `string → number`.
 
+## `failed-client.test.ts` › "holds no connection lock when the failure races its grant" fails on isolated Chrome `OPFSWriteAheadVFS/sync` under `--full` (2026-10-24, pre-existing)
+
+`node scripts/test-plan.ts --modes isolated --full --pair AccessHandlePoolVFS/sync` fails it 3 runs in 3 here, `timed out after 5000 ms waiting for the connection grant to land`, on `20366bd` (before the repin), `41c4dfd` and `test/abort-slot-held-wait` alike; `pnpm test`, the delivery gate and CI's matrix pass it (the default plan runs it elsewhere). Not looked into.
+
 ## Notes, with nothing to fix
 
 In `mem:follow-ups/notes`.
