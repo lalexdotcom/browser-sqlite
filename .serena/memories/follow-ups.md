@@ -89,7 +89,7 @@ Delivered on 2026-10-10; the decisions (D1-D11), the order and the risks are in 
 
 ## wa-sqlite #387: `getIDBFactory` and `prefix` for the IndexedDB VFS — PR open
 
-Opened 2026-10-23, branch `idb-factory-prefix` of the fork on `master` `6b59b231`; report `docs/upstream/2026-10-23-wa-sqlite-387-idb-factory-prefix.md`. **Owed:** when #385 or #387 merges, rebase the other — one import line in `test/IDBMirrorVFS.test.js`, keep both. If rhashimoto wants `prefix` kept out of `WebLocksMixin`'s other users, he says so on the PR (user). A Mirror-only test of `#getOldestTxInUse()` (no test covers it, prefixed or not) was offered to rhashimoto on the PR (2026-10-23, issuecomment-6370990190): written if he wants it.
+Opened 2026-10-23, branch `idb-factory-prefix` of the fork; report `docs/upstream/2026-10-23-wa-sqlite-387-idb-factory-prefix.md`. **Rebased onto `master` `66336807` on 2026-10-25** after #385 merged (`516b3080`, the import conflict in `test/IDBMirrorVFS.test.js` resolved by keeping both; suite green on Chrome; note on the PR). Nothing owed until his review. If rhashimoto wants `prefix` kept out of `WebLocksMixin`'s other users, he says so on the PR (user). A Mirror-only test of `#getOldestTxInUse()` (no test covers it, prefixed or not) was offered to rhashimoto on the PR (2026-10-23, issuecomment-6370990190): written if he wants it.
 
 ## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR #386 open
 

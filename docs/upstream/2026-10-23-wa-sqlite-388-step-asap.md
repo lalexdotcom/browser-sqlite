@@ -71,7 +71,32 @@ Whole suite on Chrome with the PR: 16/16 files, 8 003 assertions, 0 failed.
 
 PR [#388][pr388], opened 2026-10-23 from `lalexdotcom:step-asap`, on `master` at `ced5652e`, one commit (`947a3996`). The body points to #383, describes the change and each build's path, the cost in words, a page rhashimoto can save at the repository root and open through `yarn start` (executed by us on both engines and all builds first), the JSPI `ccall` limit with the `libadapters.js` option, and the test. It does not mention this library. No conflict with #385, #386 or #387 (none touches `sqlite-api.js` or the types).
 
+## Review (2026-10-25)
+
+rhashimoto requested changes on 2026-10-25: "This is great!", and **the JSPI `libadapters.js` option wanted in this PR**, plus eight line comments. Three are wording in `index.d.ts` (Promise examples: "the build supports JSPI" instead of "a VFS operation suspended"; a sentence introducing the code block; his `@returns` text), one moves `allowed` inside `done` (he read `done` as called once; it runs on every step, but `allowed` is only needed on the error path, so moving it there is free). The other three would undo measured choices, so each was measured as a copy of the PR head with only that suggestion applied (`.scratchpad/step-asap-bench/make-review.py`, `site/review-worker.js`, `run-review.sh`, `median-review.py`, `review.jsonl`).
+
+**Setup.** As above, `MemoryVFS`, 4 000 000 rows, headless Chrome 153 / Firefox 155 (user agents checked), all six arms in each page, 5 pages × 2 passes, median ms, Firefox / Chrome. Absolute values run lower than on 2026-10-23 (the PR's `step()` on `sync` 392 / 342 against 424 / 334 and 632 / 550 before); only the gaps within this campaign count. The `async` arm of the first draft was `async function(stmt) { return await sqlite3.step_asap(stmt); }`; rhashimoto's is `async stmt => sqlite3.step_asap(stmt)`, never measured until now.
+
+| build | `step()` PR | `step()` `async` (L770) | `step_asap()` PR | closures (L798/799) | no `ROW`/`DONE` early return (L792) | both |
+|---|---|---|---|---|---|---|
+| `sync` | 392 / 342 | 544 / 337 | 248 / 249 | 304 / 286 | 305 / 243 | 352 / 294 |
+| `async` | 934 / 674 | 1 084 / 676 | 769 / 558 | 786 / 564 | 780 / 536 | 834 / 568 |
+| `jspi` | 3 153 / 1 350 | 4 219 / 1 459 | 2 992 / 1 361 | 3 020 / 1 356 | 3 120 / 1 346 | 3 012 / 1 360 |
+
+Per row (gap ÷ 4 000 000), Firefox / Chrome:
+
+| | `sync` | `async` | `jspi` |
+|---|---|---|---|
+| `step()` as `async` | 38 ns / ≈0 | 37 ns / ≈0 | 267 ns / 27 ns |
+| closures | 14 ns / 9 ns | 4 ns / 1 ns | ≈0 |
+| no early return | 14 ns / ≈0 | ≈0 | 32 ns / ≈0 |
+
+**Reading.** All three choices hold. The `async` `step()` is the one that matters in absolute terms: +16-39 % on Firefox on every build, +8 % on Chrome `jspi` (the only build where `step_asap()` always returns a Promise for the `async` function to adopt), on the path every existing caller takes, `exec()` included. The closures (`done` capturing `stmt`, `retry(() => f(stmt), done)`) and dropping the early return each cost ~10-14 ns a row, on `sync` only (closures +23 % / +15 %, early return +23 % on Firefox, nothing on Chrome), a quarter of a `sync` `step_asap()` (~62 ns a row): small in absolute terms, but on the build where `step_asap()` gains the most.
+
+**Replied 2026-10-25** (user-validated text, numbers in the top-level comment only): the eight threads answered (`discussion_r4371459295`-`r4371459811`), the summary as [issuecomment-6399942915](https://github.com/rhashimoto/wa-sqlite/pull/388#issuecomment-6399942915). Taken: the `libadapters.js` JSPI path, here, with `dist/` rebuilt on Emscripten 3.1.61 after checking that `master` rebuilds byte for byte (as #375; if the image is gone, rebuild it, user); the three doc edits; `allowed`. Kept, with the numbers: `Promise.resolve()` and the early return, each to get a comment saying why. The closures left to his call. Wa-sqlite's name for the synchronous build is `default` (README parameters, demo URLs, `TestContext.js`); the reply says "the synchronous `default` build" once, since the README's "default build" also means everything `make` produces.
+
 ## What stays ours
 
 - **Not carried in the patch**: `src/worker/step.ts` already gives the library the gain.
 - **At the repin that brings it**: the worker's two call sites call `step_asap()`; `step.ts` and its fingerprints in `tests/unit/lib/wa-sqlite-pin.test.ts` are deleted.
+- **Since 2026-10-23 the patch carries #388** (`mem:stack-and-build/wa-sqlite`), and the two items above are done. The revision regenerates it; with the JSPI path it also carries whichever `dist/` glue the `libadapters.js` change rebuilds, until the merge, as for #375 (clear the rspack caches after).
