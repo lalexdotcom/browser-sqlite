@@ -67,6 +67,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A page the browser kills leaves no crash report; ask the browser's own log (2026-10-08, Safari 26)
 - Counting a component's activity names the stuck party; a hypothesis about load does not (2026-10-08, Safari 26)
 - A failure seen only on one platform is looped there, with every process's trace, before it is explained (2026-10-19, the browser-install lock on macOS)
+- A per-row cost on one engine that dead code reproduces is a JIT heuristic: prove it through the engine's own knob (2026-10-25, wa-sqlite #388)
 
 ## `mem:lessons/claims-and-docs` — claims, documentation, upstream
 
@@ -110,6 +111,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A script that runs on Linux is not a script that runs on Windows: four traps, each paid for once (2026-10-15, `ci/windows-macos`)
 - `git commit -a` hands its hook an absolute `GIT_INDEX_FILE`, and every git the hook's tests start inherits it (2026-10-16)
 - An edit that reports a failure may still have written the file: check `git diff` (2026-10-23)
+- A throwaway Safari CI spike: six traps of one afternoon (2026-10-25, `spike/safari-step-asap`)
 
 ## `mem:lessons/design` — design of the library
 

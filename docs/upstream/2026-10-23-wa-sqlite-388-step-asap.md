@@ -95,6 +95,51 @@ Per row (gap ÷ 4 000 000), Firefox / Chrome:
 
 **Replied 2026-10-25** (user-validated text, numbers in the top-level comment only): the eight threads answered (`discussion_r4371459295`-`r4371459811`), the summary as [issuecomment-6399942915](https://github.com/rhashimoto/wa-sqlite/pull/388#issuecomment-6399942915). Taken: the `libadapters.js` JSPI path, here, with `dist/` rebuilt on Emscripten 3.1.61 after checking that `master` rebuilds byte for byte (as #375; if the image is gone, rebuild it, user); the three doc edits; `allowed`. Kept, with the numbers: `Promise.resolve()` and the early return, each to get a comment saying why. The closures left to his call. Wa-sqlite's name for the synchronous build is `default` (README parameters, demo URLs, `TestContext.js`); the reply says "the synchronous `default` build" once, since the README's "default build" also means everything `make` produces.
 
+## `allowed` inside `done`: a Firefox inlining limit (2026-10-25)
+
+The "will do" on `allowed` was answered "costs nothing" without a measurement. Measured while preparing the revision, it is wrong: **Firefox `sync` +7 %**, Chrome nothing. Located by crossing glue and API (the rebuilt glue costs nothing, the revised API +6 %), then by variants of `done` (Firefox `sync`, 12 pages × 2 passes, medians against the head; `make-why.py`, `site/why-worker.js`):
+
+| variant of `done` | Firefox `sync` |
+|---|---|
+| `allowed` outside (the PR) | +1 % |
+| `allowed` inside (his suggestion) | **+7 %** |
+| the literal passed straight to `check()` | **+6 %** |
+| `allowed` outside, plus unreached code of the literal's size, no array | **+6 %** |
+| the literal in a separate `fail()` that `done` calls on the error path | 0 % |
+
+**Cause: SpiderMonkey's inlining size limit.** `done` sits just under the bytecode length up to which SpiderMonkey inlines a function into its caller (`retryResult`); two lines, even unreached, push it over, and each row pays a real call. Proven through the pref itself, `javascript.options.inlining_bytecode_max_length` set in the profile's `user.js` (`run-why-pref.sh`): at 1000 every variant runs ~227 ms, at 20 every one ~298 ms, the gap gone both ways. Comments are not bytecode and change nothing.
+
+**Corrected on the PR the same day** (user-validated, short: the gap on Firefox, none seen on Chrome or Safari, the cause, keep `allowed` where it is, the `fail()` shape offered if he still wants the array on the error path only): [discussion_r4371790074](https://github.com/rhashimoto/wa-sqlite/pull/388#discussion_r4371790074).
+
+## Safari spike (2026-10-25)
+
+To claim no cost on other browsers, the head against the revision measured on Safari through a throwaway CI spike (branch, workflow and runs deleted the same day, user; scripts in `.scratchpad/step-asap-bench/safari-spike/`, results in `safari26/`, `safari27/`, `safari26v/`). Per page: `head`, `head2` (a second instance, the control), the revision with `allowed` inside, outside, and in `fail()`; 5 pages per build, creation order rotated. Read as each arm's best time against the same page's head, median over pages (the medians alone are unusable there, see below).
+
+| | `head2` (control) | `allowed` inside | `allowed` outside | `fail()` |
+|---|---|---|---|---|
+| Safari 26.6.2 `sync` | +4 % | −10 % | −2 % | −2 % |
+| Safari 26.6.2 `async` | −2 % | +1 % | −1 % | +3 % |
+| Safari 27.0.1 `sync` | −1 % | +2 % | +2 % | +1 % |
+| Safari 27.0.1 `async` | 0 % | 0 % | 0 % | +2 % |
+| Safari 27.0.1 `jspi` | −2 % | **−38 %** | **−38 %** | **−39 %** |
+
+No cost of the revision on Safari within its ±5 % precision, and no difference whether `allowed` is inside or not. **JSPI with the export called directly: −38 % on Safari 27** (no JSPI on Safari 26: the glue fails in `instrumentWasmImports`), against −12 % on Chrome and −8 % on Firefox (`rev-worker.js`, 5 pages × 2 passes: Firefox / Chrome `jspi` 2 998 / 1 338 → 2 744 / 1 174 ms; `sync` and `async` within ±2 %, Firefox `sync` +9 % being `allowed`). That `ccall` costs most there is an argument for the `libadapters.js` part.
+
+**Why Safari's times vary so much** (a variance run on macOS 26: 8 pages alternating 1 and 5 instances, the head measured 12 times each beside a calibration loop, the host sampled after each page): instance count is not it (k=1 and k=5 alike, Safari at 840 MB and 1.5 GB); the runner's load average was 16-42 on 3 cores, falling through the job; the step loop varies ±20-30 % within a page where the calibration (a typed-array sum) varies ±8 %. The runner's noise, which a pass over 4 000 000 rows of wasm memory feels more than a small CPU loop (not verified further). Per-page pairing keeps it to about ±5 %.
+
+## The revision prepared (2026-10-25, not pushed)
+
+In `.work/wa-sqlite-step-asap`, uncommitted, the PR left as is until rhashimoto answers (user). Built on the assumption that our suggestions are accepted:
+
+- **The JSPI path**: `src/libadapters.js` sets `Module.asyncMode` from the library preprocessor (`#if ASYNCIFY == 2` → `'jspi'`, `#elif ASYNCIFY` → `'asyncify'`, else `null`; emsdk 3.1.61's `-sJSPI` sets `ASYNCIFY = 2`, `emcc.py`); `step_asap()` takes `ccall` only when `Module.handleAsync && Module.asyncMode !== 'jspi'`, so a build without `asyncMode` (an older `dist/`, a custom build) stays on `ccall`. `dist/` rebuilt with `wa-sqlite-emsdk:3.1.61` after a rebuild of the head reproduced `dist/` byte for byte: the three `.mjs` differ by the one `Module["asyncMode"]=…` statement, the `.wasm` not at all. **wa-sqlite's `Makefile` does not list `libadapters.js` among `dist/`'s dependencies: `make dist` rebuilt nothing, `make -B dist` did.**
+- **A test**: "knows which asynchronous build it runs on" (`module.asyncMode` per build), red on the old `dist/` on all three builds.
+- **The three `index.d.ts` wordings**, as he wrote them.
+- **`allowed` stays outside `done`**, as in the PR.
+- **The two promised comments**: on `step()` (`Promise.resolve()` passes the Promise on as is; an `async` function is measurably slower) and on the early return (an optimization sparing `check()`'s `includes()`; keep `done` short so Firefox still inlines it, two more lines cost it ~7 %).
+- **Unchanged**: the closure shape (his call; we kept `stmt` as an argument).
+
+Upstream suite on Chrome with it: 16/16 files, 8 006 passed. To send: commit on `step-asap`, push, a reply on the JSPI path (with the three engines' gains); then regenerate the patch with the rebuilt glue.
+
 ## What stays ours
 
 - **Not carried in the patch**: `src/worker/step.ts` already gives the library the gain.
