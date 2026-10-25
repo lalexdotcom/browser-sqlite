@@ -129,7 +129,7 @@ No cost of the revision on Safari within its ±5 % precision, and no difference 
 
 ## The revision prepared (2026-10-25, not pushed)
 
-In `.work/wa-sqlite-step-asap`, uncommitted, the PR left as is until rhashimoto answers (user). Built on the assumption that our suggestions are accepted:
+In `.work/wa-sqlite-step-asap`, committed locally on `step-asap` as `34d46069` and not pushed, the PR left as is until rhashimoto answers (user). Built on the assumption that our suggestions are accepted:
 
 - **The JSPI path**: `src/libadapters.js` sets `Module.asyncMode` from the library preprocessor (`#if ASYNCIFY == 2` → `'jspi'`, `#elif ASYNCIFY` → `'asyncify'`, else `null`; emsdk 3.1.61's `-sJSPI` sets `ASYNCIFY = 2`, `emcc.py`); `step_asap()` takes `ccall` only when `Module.handleAsync && Module.asyncMode !== 'jspi'`, so a build without `asyncMode` (an older `dist/`, a custom build) stays on `ccall`. `dist/` rebuilt with `wa-sqlite-emsdk:3.1.61` after a rebuild of the head reproduced `dist/` byte for byte: the three `.mjs` differ by the one `Module["asyncMode"]=…` statement, the `.wasm` not at all. **wa-sqlite's `Makefile` does not list `libadapters.js` among `dist/`'s dependencies: `make dist` rebuilt nothing, `make -B dist` did.**
 - **A test**: "knows which asynchronous build it runs on" (`module.asyncMode` per build), red on the old `dist/` on all three builds.
@@ -138,7 +138,7 @@ In `.work/wa-sqlite-step-asap`, uncommitted, the PR left as is until rhashimoto 
 - **The two promised comments**: on `step()` (`Promise.resolve()` passes the Promise on as is; an `async` function is measurably slower) and on the early return (an optimization sparing `check()`'s `includes()`; keep `done` short so Firefox still inlines it, two more lines cost it ~7 %).
 - **Unchanged**: the closure shape (his call; we kept `stmt` as an argument).
 
-Upstream suite on Chrome with it: 16/16 files, 8 006 passed. To send: commit on `step-asap`, push, a reply on the JSPI path (with the three engines' gains); then regenerate the patch with the rebuilt glue.
+Upstream suite on Chrome with it: 16/16 files, 8 006 passed. To send: adjust to his verdicts, push, a reply on the JSPI path (with the three engines' gains); then regenerate the patch with the rebuilt glue.
 
 ## What stays ours
 
