@@ -1,5 +1,7 @@
 # Test planner — the browser suite without identical repetitions (designed 2026-10-12, done 2026-10-13)
 
+**Status: CLOSED** — done 2026-10-13; kept as the record of the design.
+
 **Done (checked 2026-10-26):** plans A, B and C merged 2026-10-12/13 (`fix/guard-order`, `test/guards-in-unit`, `test/need-model`, `feat/test-planner`, `test/convert-needs`, `ci/test-planner`); `pnpm test` is the planner (`scripts/test-plan.ts`), and every push of `main` since has run CI and the matrix through it. Nothing below is open; it stays as the record of what was decided.
 
 Brainstorming with the user, architectural path: decisions are taken point by point, the user validates each before the next. A spec goes to `docs/superpowers/specs/` once the design is approved; nothing is implemented before. This file holds what is DECIDED so far; reread it before resuming.

@@ -1,0 +1,7 @@
+# Follow-up — Read methods that write inside a transaction — not designed (user, 2026-10-14)
+
+**Status: CLOSED** — done on `fix/tx-api-consistency` (2026-10-26, user: "on commence par aligner tx avec le client"): `tx.read()`, `tx.first()`, `tx.chunk()` and `tx.stream()` refuse a write with `NOT_A_READ_QUERY`; a write's `RETURNING` rows come from `tx.write()`'s `result`. Streaming them is `mem:follow-ups/sqlite-routing`.
+
+Part of `mem:follow-ups`; moved out of it on 2026-10-26.
+
+On the client, `read()`, `first()`, `chunk()` and `stream()` refuse a write (`assertReadable` → `NOT_A_READ_QUERY`, `src/client.ts`). Inside a transaction they do not: `tx.first()`, `tx.chunk()`, `tx.stream()` (and `tx.read()`) run on the writer and accept any write, `INSERT … RETURNING` or not; only a `readOnly` transaction refuses (`READ_ONLY_TRANSACTION`, `src/transaction.ts` `checksql`). The user finds that illogical: technically possible, inconsistent with the client surface. To decide: refuse writes in the transaction's read methods as the client does, or allow only `… RETURNING` there, or keep and document. Consumer-visible either way (CHANGELOG, `API.md`); tests that use it today: `tx-savepoint.test.ts` (`tx.chunk(… RETURNING x)`), `tx-abort.test.ts` (`tx.first(BIG_INSERT)`, a write through `first()`, spec 2026-09-10 D5). Relates to the `sqlite3_stmt_readonly` entry, now in `mem:follow-ups/sqlite-routing`.

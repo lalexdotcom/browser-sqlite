@@ -1,298 +1,77 @@
-# Follow-ups — the open backlog
+# Follow-ups — the backlog, as an index
 
-One short entry each, and every entry OPEN. **An entry marked DORMANT waits for an event and needs no action until it comes: it is not part of the backlog and is not listed when the user asks for it (user, 2026-10-03).** Anything closed is deleted from here —
-`CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers,
-`mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
+**One follow-up, one memory (user, 2026-10-26).** Every entry lives in its own sub-memory `mem:follow-ups/<name>`, and this file is only the index, so no entry has to fit under another's size limit.
 
-**The test planner (no identical repetitions in the browser suite) is done (2026-10-13)**; its decisions stay in `mem:follow-ups/test-planner-design`, nothing open. **Proposals to wa-sqlite for a cheaper `step()` live in `mem:follow-ups/wa-step-upstream` (2026-10-16); options 1 and 2 accepted on #383 (2026-10-23), PR to send.** **Entries waiting on an event live in `mem:follow-ups/dormant`** — `open-retry` on Firefox and wa-sqlite #297 `trace_v2`, moved there on 2026-10-05 to keep this file under 40 000 characters.
+**The status is in both places, and each entry stands on its own (user, 2026-10-26).** The index gives every entry's status, so whether it is done can be read here without opening it; the entry repeats it on a `**Status: …**` line right under its title, so it can be read alone. Change both in the same edit. Statuses: **OPEN**; **IDEA** (not planned for the short or medium term — keep it, do not present it as pending scope or as "the next thing", user 2026-09-03); **DORMANT** (waits for an event and needs no action until it comes; not part of the backlog and not listed when the user asks for it, user 2026-10-03); **RECORD** (notes, nothing to fix); **CLOSED** (with the date and the branch or merge that closed it).
 
-**Delete, never annotate.** No struck-through lines, no "shipped and merged", no headstone
-saying an entry is gone, no verdict on an entry: what is written here is the backlog, not a
-report about it. Each of those was tried, and each made the file's length stop meaning
-anything.
+**Never delete an entry; mark it (user, 2026-10-26).** A closed follow-up keeps its memory and its row, with the status CLOSED: deleting it breaks the links that point to it. Inside an entry, the text above the status line is what the follow-up was; update the status rather than rewriting the history of it. `CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers, `mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
 
 **Verify an entry against the source before scheduling work on it.** Entries rot into
 descriptions of a problem that has moved or never existed: `wa-sqlite.d.ts` claimed to
 shadow types that were never loaded, `W-types` a duplication already gone. Both would have
 been work on nothing.
 
-## In sub-memories (user, 2026-10-16 and 19)
-
-`mem:follow-ups/wa-step-upstream` (optional, upstream's), `mem:follow-ups/tx-validation` (tx methods throw, not reject), `mem:follow-ups/timeout-start` (when `timeout` starts), `mem:follow-ups/safari-idb-stranded` (a stranded IndexedDB connection on Safari 26 — fixed on `fix/safari-idb-stranded`, validated on Safari, merged as `f4a07b3`), `mem:follow-ups/safari-suite` (Safari in the suite since 2026-10-22, green on Safari 26/27 since 2026-10-23; what stays open is WebKit 328618's, issue #10), `mem:follow-ups/ci-workflows` (Linux through `tests.yaml`, `tests-ubuntu.yaml`, a `browsers` input — done on `ci/linux-via-tests` 2026-10-22, merged as `3d9d94c`), `mem:follow-ups/lifecycle-restart-held` (a restarted worker meets its predecessor's held file — fixed for Firefox on `fix/restart-held-file` 2026-10-21; Safari open).
-
-## `multi-client` bulkWrite interleave on chromium `IDBMirrorVFS/async` — seen, not reproducible (2026-10-07)
-
-`tests/browser/pairs/multi-client.test.ts` :: "two clients writing at once > interleaves a bulkWrite with another client, refusing neither" failed once in the `feat/binary-protocol` matrix: client A read 0 of B's first 2 047-row batch over its 5 s of polling (`expected +0 to be 2047`, test 10.9 s). Replays the same afternoon: the test alone 10/10 on the branch and on `main`; the file under 16 busy loops 15/15 each; the full cell on the branch 1 failure in 5 then 0 in 15 (and 0 in 12 with `debug: true` and a diagnostic of B's `close()` and A's late count), on `main` 0 in 20. Another session's Firefox was loading the machine during the failing runs. Left by the user's decision ("on ignore et on enchaîne, et on consigne"). At the next sighting: rerun the cell with the diagnostic (B's `writer.close()` outcome — a failed batch against a slow one — and A's count after it), and compare with `main` at the same load.
-
-
-## wa-sqlite's suite on stock browsers — WebDriver PR accepted, ours to send (Discussion #373, 2026-10-10)
-
-**Where it stands.** On the user's go, a top-level comment was posted on rhashimoto/wa-sqlite#373 on 2026-10-08 (discussioncomment-18824045). It revises the plan he had validated, after two days of measurements on the fork (`mem:measurements/test-browsers`). **He accepted it on 2026-10-10 at 18:11 UTC: "Okay, let's see what a WebDriver PR looks like! For CI triggers, I'm fine with just Linux for now." The PR is ours to send.** That reply went unrecorded until 2026-10-14, and this entry said "waiting on him" for four days: **read the thread (`gh api graphql`, discussion comments and their replies) before reporting a Discussion as waiting.** The user's principles behind it are in `mem:conventions` (§ Testing in browsers).
-
-**2026-10-10: he questioned it, and was answered the same day.** He was not convinced that Playwright's browsers fall short for tests of storage, Web Locks and `BroadcastChannel`, asked for cases where Chrome or Safari differ from Playwright's builds, and whether WebDriver is slower than Playwright, and by how much. Answered on the user's go (discussioncomment-18853671), with no new measurement — the user: WebKit and Firefox are justified enough, and uniformity is the reason for Chrome. Chromium: no difference seen, WebDriver for one launcher and one configuration, versions pinnable there too (only Safari follows macOS). WebKit: Playwright's trunk build already has WebKit 324094's fix while Safari 27.0.1 does not; the DataView race shows on Safari 26 only; OPFS depends on Playwright's version and context. Firefox: the Juggler build's `await` cost (FF-PW-AWAIT). Speed: the two launchers not timed against each other; the driver mostly opens pages; the whole suite on stock Chrome through WebDriver takes 2-3 min on Linux runners. **For upstream the runner stays `@web/test-runner`; Vitest is the library's** — the two were mixed up once in drafting (user, 2026-10-10). He answered within the hour (above): WebDriver it is, Linux-only triggers for now.
-
-**What the comment proposes:**
-- **Stock browsers through WebDriver** (`@web/test-runner-webdriver`), Playwright dropped, which revisits his answer 1 (Playwright's bundled Chromium). The reason given: test what users run; patched builds are noise.
-- **Development:** `yarn test` runs Chrome only by default, and `WTR_BROWSERS` picks others (`chrome,firefox`, plus `safari` on macOS).
-- **CI:** one reusable workflow with the steps, and one small workflow per platform: Linux (Chrome, Firefox), Windows (Chrome, Firefox), macOS (Chrome, Firefox, Safari). Triggers are his to choose per platform; the example given is all on a release, Linux on PRs and pushes to master, and any by `workflow_dispatch`. The WASM is built once with `make` and shared by every job.
-- **The DataView race** (SAFARI26-DATAVIEW-RACE) goes as its own commit in the test PR, not a PR of its own: only Safari exposes it.
-- **`sql_0005` on `IDBMirrorVFS`** is skipped on Safari before 27 with `pending()` and its reason (SAFARI26-IDBMIRROR-KILL).
-- **The `readwrite-unsafe` skips** stay as agreed.
-- **Windows:** geckodriver comes from the runner, and the docs will tell Windows contributors to install it.
-- **Mobile:** iOS Safari can follow the macOS images' simulators (iOS 26 works, iOS 27 refuses). Chrome on Android is not explored, only said possible.
-
-**What his go calls for.** The PR branch, from upstream `master`, in this order:
-1. **Test and harness commits:**
-   - the capability skips: `vfs_read_freshness` and `sql_0005` on `OPFSWriteAheadVFS` without `FileSystemSyncAccessHandle.prototype.mode`, and `vfs_open_last_error` accepting `InvalidStateError`;
-   - `sql_0005` registering each worker's cleanup before its open;
-   - `TestContext.create()` rejecting when the worker reports an error;
-   - `destroy()` closing the VFS before `terminate()`;
-   - the DataView race fix, ported from `68aae811` on the fork;
-   - the Safari-before-27 skip, through a `TestContext` helper reading `Version/NN` from the user agent (the same on macOS and iOS).
-2. **Config:** `WTR_BROWSERS`, with Chrome as the default.
-3. **Workflows:** as proposed above, but only Linux (Chrome, Firefox) is triggered — "just Linux for now" (2026-10-10). Open, for the user: also ship the Windows and macOS workflows on `workflow_dispatch` only, or ship Linux alone with the reusable workflow ready for the others.
-4. **Docs:** a "Running the tests" section per OS.
-
-Before opening it, measure reliability: about 10 runs per environment, through `workflow_dispatch` on the fork. Upstream's JSPI flag is not needed on stock Chrome 154.
-
-**Still open:**
-- Linux Firefox lost two files at the launcher once in 8 runs, unexplained — on the Linux-only target, so to watch in the reliability runs.
-- Windows Firefox has only one complete run.
-- iOS 27 simulators refuse WebDriver sessions; the image `20261006` with Safari 27.0.1 is untried.
-- The fork's `probe/stock-browsers` (head `437e6de1`, the working WebDriver harness) and `probe/webkit-opfs` (the fork's main clone sits on it, with uncommitted Safari/WebKit probes and results) are throwaway: kept until this PR is sent, then deleted, branches and worktrees (user, 2026-10-23).
-
-**History, compressed.**
-- **2026-10-03:** asked, about Firefox.
-- **2026-10-04:** he pointed at WebKit and Playwright's private mode.
-- **2026-10-05:** we measured WebKit's OPFS in a persistent context and proposed WebKit; he asked for all three browsers by default, with an environment variable to restrict to one.
-- **2026-10-06:** design questions (discussioncomment-18773230). He answered: Playwright's Chromium, `WTR_BROWSERS`, drop the pre-build pass, both skips, `create()` rejecting, `destroy()` closing the VFS, one PR.
-- **2026-10-07:** confirmed (discussioncomment-18791734).
-- **2026-10-08:** revised proposal, stock browsers through WebDriver (discussioncomment-18824045).
-- **2026-10-10:** his questions on Playwright's browsers and WebDriver's speed; answered the same day (discussioncomment-18853671); at 18:11 UTC he accepted: "let's see what a WebDriver PR looks like", Linux-only triggers for now.
-
-The Firefox findings that started it (WA-FIREFOX-SQL-HANG): `vfs_read_freshness` and `sql_0005` on `OPFSWriteAheadVFS` assume two connections, which Firefox without `readwrite-unsafe` refuses. Three harness traits then turn that failed open into a hang:
-- `sql_0005` registered a worker's cleanup only after its open, so the failed worker was never destroyed;
-- `maybeReset` retried `NoModificationAllowedError` for 10 s, then rejected without posting a port;
-- `TestContext.create()` waited for ever for that port.
-
-Jasmine's random order decides whether a resetting spec follows the failure. None of this is a VFS defect, and none of it reaches the library.
-
-## The library's tests on stock browsers — what stays open after the Vitest + WebdriverIO migration (user, 2026-10-10)
-
-Delivered on 2026-10-10; the decisions (D1-D11), the order and the risks are in `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`, the setup in `mem:stack-and-build` (§ Test suites), the numbers in `mem:measurements/suite-and-matrix`. Open:
-- **The rebuild after delivery passed (2026-10-10):** on a fresh container `post-create.sh` installed the browsers' apt packages (apt resolved the pre-t64 names to their t64 packages), `node scripts/browsers.ts install` printed `ok` for both, and `pnpm test` gave 2616 passed / 12 skipped.
-- **Closed 2026-10-13: the matrix is green on GitHub** (run 38387953580, `ci/test-planner`, dispatched: `plan` + 22 pair jobs, 23/23, ~8 min). It confirms the two fixes of 2026-10-12 to the first GitHub matrix's failures (run 38184863157: `abort-slot`'s cache test, `abandon`'s deadline test).
-- **CI verified on 2026-10-11.** The first push (`main`, run 38172794856) ran no Chrome test: a cold-cache download race (`EACCES` on chromedriver) and AppArmor denying Chrome for Testing its sandbox (`consumer-smoke`, "Chrome instance exited"). Fixed by two workflow steps (`mem:stack-and-build/ci`); PR #7's run 38182346151 is green: `pnpm test` 2616 passed / 12 skipped as locally (9 jobs in 457 s, the step ~18 min with the build and the merge), conformance 162/32, consumer smoke 24/24.
-- **The next piece of work, as planned then:** Windows and macOS runners, Safari and the iOS simulator, per-platform triggers, the WASM built once and shared (`mem:conventions`, § Testing in browsers). **Checked 2026-10-26:** Windows, macOS 26/27, Safari in the suite and per-platform `workflow_dispatch` workflows are done (`mem:stack-and-build/ci`, `mem:follow-ups/safari-suite`); **still open: the iOS simulator** (probed only, IOS-SIMULATOR) **and the WASM built once** (each job runs `pnpm build`).
-- **Parallelism: delivered 2026-10-10** (`scripts/test-parallel.ts`, `mem:stack-and-build`); on CI (2026-10-11, run 38182346151) the 9 jobs of `pnpm test` took 457 s, 3 at a time, the slowest cell 276 s (`firefox-OPFSWriteAheadVFS-sync`).
-- **Measured since (checked 2026-10-26):** the library's `IDBMirrorVFS` with several connections on Safari 26 did not stall the way wa-sqlite's `sql_0005` does (SAFARI26-IDBMIRROR-KILL): the `spike/safari` pairs job ran all 75 `tests/browser/pairs` files on `safari · IDBMirrorVFS/async` (SAFARI-IDB-STRAND, `mem:measurements/test-browsers/library`), 0-1 stranded connection and no stall.
-
-## wa-sqlite #387: `getIDBFactory` and `prefix` for the IndexedDB VFS — PR open
-
-Opened 2026-10-23, branch `idb-factory-prefix` of the fork; report `docs/upstream/2026-10-23-wa-sqlite-387-idb-factory-prefix.md`. **Rebased onto `master` `66336807` on 2026-10-25** after #385 merged (`516b3080`, the import conflict in `test/IDBMirrorVFS.test.js` resolved by keeping both; suite green on Chrome; note on the PR). Nothing owed until his review. If rhashimoto wants `prefix` kept out of `WebLocksMixin`'s other users, he says so on the PR (user). A Mirror-only test of `#getOldestTxInUse()` (no test covers it, prefixed or not) was offered to rhashimoto on the PR (2026-10-23, issuecomment-6370990190): written if he wants it.
-
-## wa-sqlite #362: `OPFSCoopSyncVFS.create()` fails after a back/forward-cache navigation — PR #386 open
-
-**PR #386 opened 2026-10-23** (rhashimoto accepted the offer on 2026-10-17, issuecomment-6236936019), branch `opfscoopsync-sweep-held-directory` of the fork, on `master` `8a8bc2ee` since its rebase; report `docs/upstream/2026-10-23-wa-sqlite-386-coopsync-sweep-held-directory.md`. Carried since the repin to `6b59b231` (2026-10-23); rebased onto `8a8bc2ee` after #381 merged (`c4f832ea`, same day).
-
-**To do (user, 2026-10-16): a browser test of the real navigation.** None exists (`vfs-create-retry.test.ts` holds a pool file, no navigation); Safari is unmeasured. Chrome for Testing under WebDriver caches a page not served `no-store`; a Vitest test runs in an iframe, never cached, so it needs a top-level page — to design.
-
-## Designs owed — ideas, not scheduled work (user, 2026-09-03)
-
-**The user has said explicitly that the three below are not planned for the short or medium
-term — they are ideas.** Keep them, do not present them as pending rc.5 scope, and do not
-propose them as "the next thing" the way this file's older framing invited.
-
-
-### A real watcher on a database's clients — deferred by the user, 2026-09-03
-
-Database inspection ships as a one-shot snapshot the consumer polls. The user asked for a
-watcher during the brainstorm, then withdrew the word deliberately: *"ce sera une autre
-fonctionnalité"*. **The measurement that makes it cheap is already banked** —
-`navigator.locks.query()` is `≈ 0.032 ms + 0.00038 ms × n` on Chromium, so polling at
-300-500 ms costs 0.14-0.23 ms of main thread per second and takes no lock, no worker round
-trip and no queue.
-
-**What it cannot be built on, and this is the whole design constraint:** Web Locks has NO
-change notification. An emitter fed from the registry can only poll internally — which
-moves the polling under the hood and makes it permanent, charging every client for an
-observability most never read. That is why the shipped API is on-demand. A genuine push
-mechanism needs a second channel (a `BroadcastChannel` hello/bye reconciled against
-`query()` for tabs that were killed without saying goodbye), and that channel is the cost
-to weigh, not the query.
-
-**Two smaller emitters may be the better shape than "watch the count"** — the question a
-consumer actually has is usually "a tab left" or "the database is free now", and the second
-is nearly free already: waiting on `bsq:conn` exclusively IS the event "nobody left".
-
-### One compiled `WebAssembly.Module` for the pool — the premise it waited on is dead
-
-Every worker compiles its own copy of the 1.23 MB binary. Sharing one is verified and
-priced in `mem:measurements`: the clone is free and arrives usable, but it buys ~2 ms on
-Chromium, which overlaps those compiles anyway, and ~8 ms at the default `poolSize` on
-Firefox, which does not.
-
-It was carried on the premise that whatever solved multi-tab would improve those numbers —
-a coordinator compiles once per **origin** rather than once per client. **That premise is
-gone:** rc.5's cross-tab design has no coordinator and cannot have one, because a
-SharedWorker cannot open a connection on the four VFS that matter (`mem:architecture/cross-tab`). So the
-measured numbers are the whole case, and they do not justify adding a handshake to the open
-path — the path GATE-1 and three abort defects were paid for. Reviving it needs no new
-measurement, only that table.
-
-**A new argument, Safari (2026-10-23, the user's "voie 2", kept as an idea):** on Safari 26/27 a
-worker's wasm instantiation stalls 1-11 s after another worker ran hot wasm (SAFARI-WASM-INSTANTIATE,
-`mem:measurements/test-browsers/library`): every restart, and a client opened after heavy queries,
-can pay it. If the stall is compilation (unverified), a module compiled once by the page and handed to
-the workers would remove it. To measure first: the same variants with a precompiled module (the worker
-would need Emscripten's `instantiateWasm` hook; the `wasm` option only locates the file today).
-
-### Recycling the params buffer through `done` — an idea, kept out of the binary protocol (user, 2026-10-07)
-
-The worker hands the transferred params buffer back in `done`, the page reuses it for the next send. Measured (BINARY-PROTOCOL, `mem:measurements/binary-protocol`): on 200 writes of a 1 MiB text it halves the peak again over the plain binary path (Chromium 29-40 → 16 MB, Firefox 50-77 → 25 MB), and gains nothing on small queries. Cost: each worker keeps its largest buffer for life (~3 MiB for a 1 MiB text, worst-case sizing), and `done` grows an optional field — so it can be added later without breaking the protocol. If taken up: cap the size kept per worker; the cap is unmeasured.
-
-### Buffer strategy of the binary blocks, both directions — a measurement to take if the choice is questioned (user, 2026-10-08)
-
-The two sides grow their buffers differently, on purpose: `ParamsWriter` knows the size before writing (`encodeParams` sizes for the worst case; `bulkWrite` batches are large), so it uses 1 MiB segments and never copies; the result `RowWriter` (spec 2026-10-08) learns the size row by row, so it keeps one buffer per chunk that doubles by copy, sized from the query's previous chunk. Growable `ArrayBuffer`s (`resize`, `transfer`) were refused on 2026-10-07 for raising the browser floor (Firefox → 122-128). Unmeasured alternative for rows: segments of doubling size capped at 1 MiB (no copy, a test per value at decoding). Should either choice be questioned, measure both arms on each side with the direct harness (RESULT-BINARY / BINARY-PROTOCOL).
-
-### A timed flush — out of rc.4 (user, 2026-08-27)
-
-Raised by the user during the back-pressure brainstorm and kept out of the spec, which
-records the full argument in its §7. Short form: a timer's memory case is weak — the input
-buffer is already bounded at one batch — while its real cost lands on the workload it
-targets, since `bulkWrite` commits per batch and a timer on a trickle multiplies commits,
-hence OPFS fsyncs, each flush also taking a write lease. What it would buy is latency and
-durability: a slow producer's rows reaching SQLite without waiting for `close()`. **The
-commit cost the argument turns on is measured**: ~3.4 ms on Chromium/sync and ~5.3 ms on
-Chromium/async (`mem:measurements`). That price is what a timer would pay per flush on a
-trickle, and it is no longer a deduction.
-
-
-## What the matrix showed, and what it shows now (2026-09-16, resolved 2026-09-18)
-
-**The three product defects are gone.** Full matrix on 2026-09-18 after the fixes: 65 of 66 cells
-green, 1 failing test, 1 distinct group — against 62 cell-failures and 20 groups on 2026-09-16.
-**Re-measured 2026-09-21 once that one was fixed (`2be2ae6`): 66 of 66 cells green, 0 failing
-tests, 2650 s.** Every one of the three traced to a
-wa-sqlite defect rather than to this library, and each is upstream with a falsifying test in
-wa-sqlite's own suite: `OPFSCoopSyncVFS` → #350 plus our own `deleteDatabase` probe (a file's
-existence, not an open), `IDBBatchAtomicVFS` → #351, `IDBMirrorVFS` → #352 and #353. Reports in
-`docs/upstream/`, patch inventory in `mem:stack-and-build/wa-sqlite`.
-
-Kept for its method rather than its content — the original entry, now closed:
-
-Numbers in `mem:measurements`. `scripts/matrix-triage.ts` regenerates the grouping from any
-`.matrix/<run>/`.
-
-**Everything the triage called test work is done.** 989 cell-failures → 500 (the dead cleanup)
-→ 79 (the `Need` vocabulary and the pinned pool sizes) → pending, after the dying-worker handle
-fix cleared the last 18. `MemoryVFS` and `MemoryAsyncVFS` are entirely green; 49 of 66 cells were
-green before the last fix. **The lesson the sequence taught, and it was the triage's own
-prediction: clearing the first pile is what made the second readable** — the second GREW when the
-first went, because tests finally reached their real cause.
-
-What is left is product, on three VFS, none of them recommended. Each needs a diagnosis before a
-fix, as `output()` did.
-
-- **`IDBMirrorVFS` — 46.** All one defect, and the abandonment was never the cause: `pData` is a
-  `Uint8ArrayProxy`, so `block.set(pData, …)` stored zeroes — including over SQLite's rollback
-  journal header, after which a rollback undid nothing.
-- **`IDBBatchAtomicVFS` — 8.** One defect too, with two faces by build: `jWrite` wrote through a
-  block it assumed started at the offset.
-- **`OPFSCoopSyncVFS` — 7.** Two unrelated causes, which nothing suggested: the six
-  `DATABASE_NOT_FOUND` were `deleteDatabase` reading `SQLITE_CANTOPEN` as absence on a database
-  that existed but was empty; the `sqlite3_open_v2` ones were handles leaked by a partial
-  acquisition.
-
-**The lesson the three shared, and it is in `mem:lessons`: a pile's twelve subjects can be one
-defect, and the scenario a defect is found through is often not the one that demonstrates it.**
-
-## What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
-
-- **On Safari, wa-sqlite's `async` (Asyncify) build slows down after a few long statements, and
-  stays slow.** Measured 2026-09-14 on Safari 26.6.2 (IDB-SIGNAL, `mem:measurements`): after four
-  ~1.5 s reads, `IDBBatchAtomicVFS` and `OPFSAnyContextVFS` ran their fourth at 11-30 s, and every
-  `async` column's cached full scan ran 8-17× slower afterwards; `MemoryVFS` on the `sync` build did
-  not move. Not IndexedDB (a 32 MB cache changes nothing), not the library's yield (no signal in the
-  probe, and rc.4 shows it). Pre-existing; Chromium and Firefox never showed it. **The `jspi`
-  build escapes it** (Safari 27.0, flat long reads and a cached scan back at baseline), and on
-  that Safari the bench's two `jspi` columns answer `true` where both `async` ones stay `null`.
-  Since 2026-09-24 an omitted `build` loads `jspi` wherever the engine has it, so Safari 27+ escapes
-  it by default; `VFS.md`'s `async` note says so. Still open: an upstream report (wa-sqlite or WebKit).
-
-
-## Read workers refuse writes themselves, with `sqlite3_stmt_readonly` — not started (user, 2026-10-04)
-
-Today the one-writer invariant rests on the client's routing regex (`isReadQuery`: an allowlisted opening keyword and no write keyword anywhere). Proposed by the user after the transaction-control guard (`feat/tx-savepoint`): the worker checks each prepared statement on a read lease — cache hits included — before its first `step`, so a misrouted write can never run on a read worker. **The primitive is `sqlite3_stmt_readonly`, not the authorizer**: one wasm export call per prepared statement, SQLite deciding, no per-action JS callback (so no Firefox `jspi` relay cost); `Module._sqlite3_stmt_readonly` is exported by all three builds (checked 2026-10-04), not wrapped by `sqlite-api.js`. It complements the routing, which picks the worker before any prepare; it could then let the regex relax its false positives (`SELECT 'INSERT'` serialized through the writer, `db.read("SELECT … 'BEGIN'")` refused) — but inside a transaction `tx.first()`/`tx.chunk()`/`tx.stream()` accept writes (`INSERT … RETURNING`, they run on the writer), so they keep the regex or retry on the writer. On the client those methods refuse a write (`assertReadable`, `NOT_A_READ_QUERY`; checked 2026-10-14).
-
-**Known (2026-10-09, wa-sqlite's SQLite 3.53.0):** `PRAGMA cache_size(10)` answers `stmt_readonly` = 1 and runs on a read-only connection, though it changes the connection — so `stmt_readonly` alone would admit setting pragmas. **Measure first:** what `stmt_readonly` answers for the other statements that change only connection state — `ATTACH`, `DETACH`, `PRAGMA x = y`, `CREATE TEMP TABLE` — which would make one read worker diverge from the others; those may need the authorizer (`SQLITE_ATTACH`, `SQLITE_DETACH`, `SQLITE_PRAGMA` with a value) or the client rule kept. And the cost per prepare.
-
-## `jspi` before `sync` in the build order — to examine (user, 2026-10-05)
-
-Measured on 2026-10-05 (JSPI-VS-SYNC, `mem:measurements/statement-cache-and-perf`): `jspi` runs row walks as fast as `sync` on Chromium and Firefox, where `async` pays 1.2-1.8×, and it interrupts a running statement with no cross-origin isolation. So declaring `jspi` first on the VFS that list `sync` first (`OPFSWriteAheadVFS`, `OPFSCoopSyncVFS`, `AccessHandlePoolVFS`, `MemoryVFS`) would make the default interruptible where the browser has JSPI, at no measured cost. To weigh before deciding: Safari 27 is not measured; the Firefox figure rests on #375's glue, merged upstream and in the pin since 2026-10-05; `transaction-throughput` on `OPFSWriteAheadVFS`/Chromium read 1.27× with a 1.03-1.94× spread (`MemoryVFS` 0.87×), to re-measure; the open path and memory of `jspi` against `sync` are not measured; and a changed default is a consumer-visible change (CHANGELOG, `VFS.md`'s Builds and Recommendations, the `build` JSDoc — `mem:lessons/claims-and-docs`, "A changed default is described in more places than the spec lists").
-
-
-## Params as an object, bound by name — not designed (user, 2026-10-09)
-
-`db.read('SELECT … WHERE id = :id', { id: 1 })`: an object as params, today refused with `INVALID_VALUE`. The worker would bind by name — for each statement, `sqlite3_bind_parameter_name(stmt, i)` looked up in the object, a key `id` matching `:id`, `@id` and `$id` (and SQLite reads `#id` too) — because SQLite numbers named parameters per statement in order of first appearance, so no client-side translation to indexes can work across a multi-statement string. Gains for the string form: multi-statement strings bind correctly, and a missing key can throw instead of binding `NULL`. Open: what an extra key does (ignored, or refused once every statement ran), and refusing a positional `?` in a named query; the name→index map could live with the cached statement — measure the lookup. Touches the worker and the protocol, so the full matrix. The `sql` tag does not need it: it uses numbered `?N` (spec 2026-10-08, D11, kept for D14). Positional `?` across statements already binds correctly since `fix/multi-statement-params` (2026-10-09).
-
-## Firefox + OPFS: every file create/open/close/delete costs fsyncs — what the library can avoid (user, 2026-10-14)
-
-Firefox keeps a per-origin SQLite metadata database for OPFS (`storage/default/<origin>/fs/metadata.sqlite`, in the profile) in rollback-journal mode: one create + `createSyncAccessHandle` + `close` + `removeEntry` cycle runs 7 transactions, 21 fsyncs (Chrome: 0). Reported upstream as [Mozilla bug 2072928](https://bugzilla.mozilla.org/show_bug.cgi?id=2072928) (third party, 2026-09-17, UNCONFIRMED, unassigned, no Mozilla reply; `PRAGMA journal_mode = WAL` in Firefox's `GetStorageConnection` takes a cycle from 75 to 1.9 ms on Linux) — no Windows numbers there. Data reads/writes are unaffected; the cost is per metadata operation and scales with the cost of an fsync: Linux 79 ms/cycle in that report, macOS ~4× Chrome (its `fsync` does not flush the drive). Not reachable from a page: the fix is Mozilla's.
-
-**Measured on Windows (2026-10-14, OPFS-PROBE, `mem:measurements/held-handles`):** Firefox pays 40-220 ms per OPFS file operation on `windows-latest` (Chrome 0.5-2 ms, Firefox on Linux and macOS 1-7 ms); Firefox OPFS tests run 7-16× slower than Chrome there.
-
-**What the library could do (unmeasured, to count per VFS first):** keep access handles open (WriteAhead/Adaptive do; `OPFSCoopSyncVFS` hands them over between clients and pays continuously — its handover tests exceed 120 s on Windows Firefox); `journal_mode = PERSIST`/`TRUNCATE` instead of `DELETE` where a VFS creates and deletes `-journal` per write transaction; `temp_store = MEMORY` (the AnyContext entry below); `AccessHandlePoolVFS` creates nothing at run time. First step: count OPFS metadata operations per write transaction, per VFS and journal mode, on Firefox.
-
-**The library's default open timeout (30 s, `src/client.ts`) can be too short on Firefox on Windows (2026-10-15, run 38721500216):** a single `OPFSWriteAheadVFS` client (`bulk-write` › "writes nothing when the abort beats the first batch") got `TIMEOUT: Worker 1 did not become ready within 30000 ms. No client of this library holds it` under the suite's 3 parallel jobs. A user with several tabs, or a loaded machine, could meet it. To decide (user-visible): an adaptive default, a larger one, or a note in `VFS.md`. Meanwhile the tests stretch the default by BSQ_TIME_SCALE (`tests/browser/helpers/library.ts`, the `browser-sqlite` alias of the browser tests; the build itself unchanged at factor 1).
-
-**Two CoopSync clients on Windows Firefox, with wa-sqlite #381 carried (2026-10-16, COOPSYNC-381-WINDOWS, `mem:measurements/held-handles`):** under the tests' 120 s open timeout, 54 two-client attempts of `coopsync-handover` failed no statement, where before #381 the first test met 12 × the 30 s open `TIMEOUT` and 2 raw errors in 20 attempts. An attempt takes 25-60 s there (~150 ms on Linux), so the file runs 3 attempts on Firefox on Windows instead of 20; its skip there was removed on 2026-10-16. Unmeasured: whether the library's 30 s default lets a second client open there — the paragraph above. A user with two tabs on Windows Firefox pays that hand-over cost; the library paying less per hand-over is the path the user wants to explore, or a Firefox that fixes bug 2072928 (it counts once `scripts/browsers.ts` pins it). A changed default is consumer-visible. Also possible: a note in `VFS.md` on Firefox + OPFS. Open, the user's: whether to add our Windows numbers to bug 2072928.
-
-## A worker terminated with an open sync access handle frees its Web Lock before its file — what #381 leaves open (2026-10-15) — closed 2026-10-23 (#381 and #382 merged and pinned; checked 2026-10-26)
-
-Found through `coopsync-handover` on Windows Firefox (run 38693552137): besides the 30 s open `TIMEOUT`s, 2 × `undefined: No modification allowed` — an error with no `SQLiteError` code. Path: `OPFSCoopSyncVFS.#requestAccessHandle` took the Web Lock, called `createSyncAccessHandle()` ONCE and rethrew; the rejection left the SQLite call as a raw JS exception, which `statementError` (`src/pool.ts`) makes a plain `Error`. Every engine and OS has the race; Windows Firefox widens the window tenfold (HANDOVER-PROBE, `mem:measurements/held-handles`).
-
-**Fixed for `OPFSCoopSyncVFS` by rhashimoto/wa-sqlite#381** (retry every 10 ms up to 5 s; report `docs/upstream/2026-10-15-wa-sqlite-381-coopsync-held-handle.md`), **merged and pinned on 2026-10-23** (`8a8bc2ee`; `mem:stack-and-build/wa-sqlite`); on Windows Firefox two CoopSync clients then fail no statement (COOPSYNC-381-WINDOWS). The library's first-open retry it made redundant is removed (POST-381, `mem:measurements/held-handles`).
-
-**Open:**
-- **`OPFSAdaptiveVFS`: the same race, worse — rhashimoto/wa-sqlite#382 opened 2026-10-16, merged 2026-10-23 (`010eeb50`), pinned at `66336807`; its fork branch deleted 2026-10-26** (was `opfsadaptive-retry-held-handle`, head `d6dd6ba0`; report `docs/upstream/2026-10-16-wa-sqlite-382-adaptive-held-handle.md`, numbers ADAPTIVE-382 in `mem:measurements/held-handles`). Without `readwrite-unsafe` (Firefox, Safari) a held file in `jLock()` left the lock held with no handle: on Firefox `asyncify` hung B and every other connection, `jspi` failed raw and B's `close()` never returned. The change retries as #381 does and gives the lock back on failure; **carried as a `pnpm patch` beside #381 since 2026-10-16.** Upstream's other lock-then-file sites, surveyed: none left (ADAPTIVE-382).
-- The throwaways are removed: the fork's `probe/held-handle` branch deleted; `scripts/probe-handover.ts` last at `6050a53`, `scripts/probe-opfs.ts` at `6ec7616`, both on `ci/windows-macos` (`git show <sha>:<path>` to rerun).
-
-## A worker's JS exception reaches the caller with no `SQLiteError` code — not designed (user, 2026-10-15)
-
-`statementError` (`src/pool.ts`) turns a query failure that SQLite did not report — a JS exception in the worker — into a plain `Error` ("as before"): the caller gets no `code` to branch on. Seen as `undefined: No modification allowed` (the entry below). Fixing that case's cause (the CoopSync retry) removes that instance, not the class. To decide: wrap such failures in a `SQLiteError` (`WORKER_CRASHED`, or a dedicated code) with the original as `cause`. Consumer-visible (CHANGELOG, `API.md`'s error codes).
-
-## The Windows/macOS CI: deferred minors of its final review (2026-10-15) — settled 2026-10-26 (`ci/windows-minors`)
-
-- **Accepted, not fixed (user, 2026-10-26):** `scripts/bounded.ts`'s `finish()` calls `killTree` on the child's PID after it exited, only when `bounded` ended the run itself (deadline or a forwarded signal). POSIX: intended, the group outlives its leader. Windows: `taskkill /T /F` on a PID Windows may have recycled — a narrow window, on a run already failing or cancelled.
-- **Fixed:** `scripts/hook-gate.ts` printed DEP0190 on Node 24 under Windows (`shell: true` with an args array). `spawnPlan()` now hands a pnpm/npx `.cmd` shim to the shell as one command line and runs everything else without a shell; unit-tested for `win32` and Linux, falsified by the args-array shape. **CI cannot confirm it:** `tests-windows.yaml` never runs hook-gate (checked 2026-10-26 in run 40304959359's log); its one DEP0190 comes from `pnpm/action-setup`'s "Running self-installer…" step, a third party's, and stays. hook-gate's own path runs only in a developer's Windows hooks; the unit test is the evidence.
-- **Fixed:** `tests/unit/tooling/processes.test.ts` › "hands an argument with spaces and a middle dot over intact" spawned Node itself and exercised no project code; deleted (the project's guarantee is `packageBin` without a shell, and hook-gate's argv guard test).
-- **Fixed:** the Windows budget, (2400 + 1800) s × 4 = 280 min against a 240-min job: `tests-windows.yaml` now has `timeout-minutes: 300`, so a hung run ends in `bounded.ts` as a failure that uploads its logs instead of a GitHub cancellation with none.
-
-## `close.test.ts` › "rejects a queued request and every later call" — its falsifier is refuted (2026-10-14, pre-existing)
-
-Checked while widening its window on `ci/windows-macos`: with `closeAbort.abort(closingError)` removed from `close()` (`src/client.ts`, ~l. 1483 then), the test stays GREEN on `firefox · OPFSWriteAheadVFS/sync` — the comment's stated falsifier does not bite. Likely a second guard producing the same rejection (`mem:lessons/tests`, "A falsifier that stays green may be one guard of two"). To do: find the second guard, then either pin what only `closeAbort` buys or rewrite the comment to the pair, running the mutation. Reported to the user, not fixed. **Fixed 2026-10-26 (`test/close-queued-promptly`, user's option: pin it).** The second guard is `scheduler.shutdown()`: without `closeAbort`, `queued` waits on inFlight's write lock, gets it once inFlight is done, asks for a lease and is refused with the same `CLIENT_CLOSED` — the test checked the code, not the moment. What only `closeAbort` buys is the order: the test now asserts `queued` rejects while inFlight is still unsettled. Mutant (abort removed): this test fails on that assertion, as do two others of the file that already caught it ("settles a transaction whose callback is still running", "rejects — never hangs — a statement the callback issues after close()"). 5 runs each on Firefox and Chrome `OPFSWriteAheadVFS/sync`, all green.
-
-## The matrix on Windows and macOS — later (user, 2026-10-15)
-
-`matrix.yaml` (every vfs/build pair, 52 cells) runs on `ubuntu-latest` only; `tests.yaml` gives Windows and macOS `pnpm test` (complement mode) and conformance only (spec 2026-10-14, D6). The planner already produces an all-pairs plan; `matrix.yaml` would need a `runs-on` input and `BSQ_TIME_SCALE`. Cost to weigh: on Windows, Firefox's OPFS makes a full matrix take hours.
-
-## Read methods that write inside a transaction — not designed (user, 2026-10-14)
-
-On the client, `read()`, `first()`, `chunk()` and `stream()` refuse a write (`assertReadable` → `NOT_A_READ_QUERY`, `src/client.ts`). Inside a transaction they do not: `tx.first()`, `tx.chunk()`, `tx.stream()` (and `tx.read()`) run on the writer and accept any write, `INSERT … RETURNING` or not; only a `readOnly` transaction refuses (`READ_ONLY_TRANSACTION`, `src/transaction.ts` `checksql`). The user finds that illogical: technically possible, inconsistent with the client surface. To decide: refuse writes in the transaction's read methods as the client does, or allow only `… RETURNING` there, or keep and document. Consumer-visible either way (CHANGELOG, `API.md`); tests that use it today: `tx-savepoint.test.ts` (`tx.chunk(… RETURNING x)`), `tx-abort.test.ts` (`tx.first(BIG_INSERT)`, a write through `first()`, spec 2026-09-10 D5). Relates to the `sqlite3_stmt_readonly` entry above.
-
-## `temp_store` on `OPFSAnyContextVFS` — a default pragma to weigh (user, 2026-10-14)
-
-SQLite's temporary files (a `RETURNING` table, sorts, temp indexes) open through the VFS; `OPFSAnyContextVFS` makes them OPFS files reached through the async API, where `OPFSAdaptiveVFS` uses sync handles. Measured 2026-10-14, Chrome `jspi`, `INSERT` of 1M rows `RETURNING x` inside a transaction: AnyContext `first()` 5 030 ms with `temp_store` FILE (the default) against 1 589 ms with MEMORY, `write()` 6 802 → 2 169 ms, a plain `INSERT` ~1.3 s either way; Adaptive 634 → 553 ms. The cost of MEMORY, measured in native SQLite 3.46.1 (Python, not the WASM build): process RSS +25.5 MiB at the first row against +6.6 MiB with FILE, for 10.5 MiB of data (2 693 pages of 4 KiB); 200 000 rows +7.4 MiB — so ~19 MiB per 1M integer rows, growing with what spills. In WASM the heap never shrinks: a worker keeps its peak until it ends, and each worker of the pool has its own. Option: `defaultPragmas: { temp_store: 'memory' }` on `OPFSAnyContextVFS` (`src/const/vfs.ts`) — consumer-visible (CHANGELOG, `VFS.md`); unmeasured in the WASM heap, on Firefox, and for the other VFS that might reach temp files through async I/O. Found through `tx-abort`'s `first()` test, which timed out under matrix load on AnyContext because of its `RETURNING` (removed on 2026-10-14: it served nothing the test checks).
-
-## More `types` values for `bulkWrite()` — not designed (user, 2026-10-06)
-
-`types` accepts only `'JSONB'` (spec 2026-10-06, D7). The user sees it later carrying conversions such as `string → number`.
-
-## `failed-client.test.ts` › "holds no connection lock when the failure races its grant" fails on isolated Chrome `OPFSWriteAheadVFS/sync` under `--full` (2026-10-24, pre-existing)
-
-`node scripts/test-plan.ts --modes isolated --full --pair AccessHandlePoolVFS/sync` fails it 3 runs in 3 here, `timed out after 5000 ms waiting for the connection grant to land`, on `20366bd` (before the repin), `41c4dfd` and `test/abort-slot-held-wait` alike; `pnpm test`, the delivery gate and CI's matrix pass it (the default plan runs it elsewhere). **Fixed 2026-10-26 (`test/failed-client-probe-memo`): the test's.** On `OPFSWriteAheadVFS` (the only VFS with `exclusiveConnectionWithout`) a client requests `bsq:conn` only once worker 0's probe answer is known, from a worker or from the realm's memo (`exclusivityProbes`); the test's worker never answers, so it passed only when the file's two earlier tests had filled the memo in the same page. Under `--full` it ran alone in its complement cell and waited for a grant nobody requested. Proven by three runs (all three tests in the cell: pass; the third alone: 5 s timeout; alone after a healthy client on another database: pass). The test now opens such a client first; falsified by dropping `holdConnection`'s late-grant refusal (the lock stays held). The library was right throughout.
-
-## Notes, with nothing to fix
-
-In `mem:follow-ups/notes`.
+## Open — the library
+
+| Memory | Subject | Status |
+|---|---|---|
+| `sqlite-routing` | One `run()` routed by SQLite's own read/write diagnosis, to stream a write's `RETURNING`; holds the `sqlite3_stmt_readonly` entry | OPEN — designed in outline by the user; large and breaking, after the small workstreams (2026-10-26) |
+| `timeout-start` | When a call's `timeout` starts counting (call vs first `next()`) | OPEN — decision owed by the user |
+| `named-params` | Params as an object, bound by name | OPEN — not designed |
+| `bulkwrite-types` | More `types` values for `bulkWrite()` | OPEN — not designed |
+| `jspi-before-sync` | `jspi` before `sync` in the build order | OPEN — to examine; measurements owed |
+| `temp-store-anycontext` | `temp_store = MEMORY` by default on `OPFSAnyContextVFS` | OPEN — to weigh; WASM heap unmeasured |
+| `firefox-opfs-fsync` | Firefox + OPFS metadata fsyncs; the 30 s default open timeout on Windows Firefox | OPEN — count metadata operations per VFS first; timeout decision owed |
+| `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21); Safari open (WebKit 328618); WriteAhead on Firefox untested |
+| `safari-async-slowdown` | Safari's `async` build slows after long statements | OPEN — an upstream report (wa-sqlite or WebKit) owed |
+| `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
+
+## Open — tests and CI
+
+| Memory | Subject | Status |
+|---|---|---|
+| `library-stock-browsers` | What stays open after the Vitest + WebdriverIO migration | OPEN — the iOS simulator, the WASM built once |
+| `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10) |
+| `matrix-windows-macos` | The matrix on Windows and macOS | OPEN — later (user, 2026-10-15) |
+
+## Open — upstream (wa-sqlite)
+
+| Memory | Subject | Status |
+|---|---|---|
+| `wa-sqlite-webdriver-pr` | wa-sqlite's suite on stock browsers (Discussion #373) | OPEN — accepted 2026-10-10; the PR is ours to send |
+| `wa-step-upstream` | A cheaper `step()` upstream (#383, PR #388) | OPEN — #388 open; revision committed locally, waiting for rhashimoto's answer |
+| `wa-sqlite-386-coopsync-bfcache` | `OPFSCoopSyncVFS.create()` after a bfcache navigation (#362, PR #386) | OPEN — PR open; a browser test of the real navigation to do |
+| `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | OPEN — PR open, waiting for review |
+
+## Ideas
+
+| Memory | Subject | Status |
+|---|---|---|
+| `idea-client-watcher` | A real watcher on a database's clients | IDEA |
+| `idea-shared-wasm-module` | One compiled `WebAssembly.Module` for the pool | IDEA |
+| `idea-params-buffer-recycling` | Recycling the params buffer through `done` | IDEA |
+| `idea-binary-buffer-strategy` | Buffer strategy of the binary blocks, a measurement if questioned | IDEA |
+| `idea-timed-flush` | A timed flush for `bulkWrite()` | IDEA |
+
+## Dormant and records
+
+| Memory | Subject | Status |
+|---|---|---|
+| `dormant` | Entries waiting on an event: `open-retry` on Firefox, wa-sqlite #297 `trace_v2` | DORMANT |
+| `notes` | What was examined and closed or kept on purpose, and what to do if it comes back | RECORD |
+
+## Closed
+
+| Memory | Subject | Status |
+|---|---|---|
+| `tx-validation` | `tx.read()`/`tx.write()`/`tx.first()` threw on a bad argument | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged |
+| `tx-read-methods-write` | Read methods that wrote inside a transaction | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged |
+| `worker-js-exception` | A worker's JS exception with no `SQLiteError` code | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged, `WORKER_ERROR` |
+| `close-test-falsifier` | `close.test.ts`'s refuted falsifier | CLOSED — 2026-10-26, `test/close-queued-promptly` |
+| `failed-client-probe-memo` | `failed-client.test.ts` under `--full` | CLOSED — 2026-10-26, `test/failed-client-probe-memo` |
+| `windows-ci-minors` | Deferred minors of the Windows/macOS CI review | CLOSED — 2026-10-26, `ci/windows-minors` |
+| `held-handle-lock-order` | A terminated worker frees its Web Lock before its file (#381, #382) | CLOSED — 2026-10-23, both merged and pinned |
+| `ci-workflows` | Linux through `tests.yaml`, `tests-ubuntu.yaml`, a `browsers` input | CLOSED — merged as `3d9d94c` |
+| `safari-idb-stranded` | A stranded IndexedDB connection on Safari 26 | CLOSED — merged as `f4a07b3` |
+| `test-planner-design` | The browser-suite planner's design decisions | CLOSED — done 2026-10-13; kept as the record |
+| `matrix-2026-09` | What the matrix showed in September, and how its piles were read | CLOSED — resolved 2026-09-21; kept for its method |

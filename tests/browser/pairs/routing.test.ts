@@ -61,6 +61,31 @@ describe('routing — strictness', () => {
     expect(rows.length).toBe(1);
   });
 
+  // Falsifiable: drop the method passed to checksql() by tx's read methods in
+  // src/transaction.ts and the DELETEs run.
+  it("a transaction's read(), first(), chunk() and stream() reject a write statement", async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    await db.write('CREATE TABLE t (a)');
+    await db.write('INSERT INTO t (a) VALUES (1)');
+
+    await db.transaction(async (tx) => {
+      await expect(tx.read('DELETE FROM t')).rejects.toMatchObject({
+        code: 'NOT_A_READ_QUERY',
+      });
+      await expect(tx.first('DELETE FROM t')).rejects.toMatchObject({
+        code: 'NOT_A_READ_QUERY',
+      });
+      expect(() => tx.chunk('DELETE FROM t')).toThrow(
+        expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
+      );
+      expect(() => tx.stream('DELETE FROM t')).toThrow(
+        expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
+      );
+    });
+    const rows = await db.read('SELECT * FROM t');
+    expect(rows.length).toBe(1);
+  });
+
   // Falsifiable: put the ternary back on write()'s acquire in src/client.ts.
   it('write() accepts a read statement and routes it to the writer', {
     tags: ['requires:two-workers'],

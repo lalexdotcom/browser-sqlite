@@ -1,0 +1,13 @@
+# Follow-up — The library's tests on stock browsers — what stays open after the Vitest + WebdriverIO migration (user, 2026-10-10)
+
+**Status: OPEN** — the iOS simulator and the WASM built once remain.
+
+Part of `mem:follow-ups`; moved out of it on 2026-10-26.
+
+Delivered on 2026-10-10; the decisions (D1-D11), the order and the risks are in `docs/superpowers/specs/2026-10-10-vitest-webdriverio-design.md`, the setup in `mem:stack-and-build` (§ Test suites), the numbers in `mem:measurements/suite-and-matrix`. Open:
+- **The rebuild after delivery passed (2026-10-10):** on a fresh container `post-create.sh` installed the browsers' apt packages (apt resolved the pre-t64 names to their t64 packages), `node scripts/browsers.ts install` printed `ok` for both, and `pnpm test` gave 2616 passed / 12 skipped.
+- **Closed 2026-10-13: the matrix is green on GitHub** (run 38387953580, `ci/test-planner`, dispatched: `plan` + 22 pair jobs, 23/23, ~8 min). It confirms the two fixes of 2026-10-12 to the first GitHub matrix's failures (run 38184863157: `abort-slot`'s cache test, `abandon`'s deadline test).
+- **CI verified on 2026-10-11.** The first push (`main`, run 38172794856) ran no Chrome test: a cold-cache download race (`EACCES` on chromedriver) and AppArmor denying Chrome for Testing its sandbox (`consumer-smoke`, "Chrome instance exited"). Fixed by two workflow steps (`mem:stack-and-build/ci`); PR #7's run 38182346151 is green: `pnpm test` 2616 passed / 12 skipped as locally (9 jobs in 457 s, the step ~18 min with the build and the merge), conformance 162/32, consumer smoke 24/24.
+- **The next piece of work, as planned then:** Windows and macOS runners, Safari and the iOS simulator, per-platform triggers, the WASM built once and shared (`mem:conventions`, § Testing in browsers). **Checked 2026-10-26:** Windows, macOS 26/27, Safari in the suite and per-platform `workflow_dispatch` workflows are done (`mem:stack-and-build/ci`, `mem:follow-ups/safari-suite`); **still open: the iOS simulator** (probed only, IOS-SIMULATOR) **and the WASM built once** (each job runs `pnpm build`).
+- **Parallelism: delivered 2026-10-10** (`scripts/test-parallel.ts`, `mem:stack-and-build`); on CI (2026-10-11, run 38182346151) the 9 jobs of `pnpm test` took 457 s, 3 at a time, the slowest cell 276 s (`firefox-OPFSWriteAheadVFS-sync`).
+- **Measured since (checked 2026-10-26):** the library's `IDBMirrorVFS` with several connections on Safari 26 did not stall the way wa-sqlite's `sql_0005` does (SAFARI26-IDBMIRROR-KILL): the `spike/safari` pairs job ran all 75 `tests/browser/pairs` files on `safari · IDBMirrorVFS/async` (SAFARI-IDB-STRAND, `mem:measurements/test-browsers/library`), 0-1 stranded connection and no stall.

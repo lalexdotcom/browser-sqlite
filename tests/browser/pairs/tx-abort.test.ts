@@ -224,40 +224,6 @@ describe('a write abandoned inside a transaction', () => {
     }
   });
 
-  // The SQL decides, not the method (spec 2026-09-10, D5): a write through
-  // first() is savepointed like any other. Falsifiable: make opensSavepoint()
-  // return false — the write is then cut mid-step and SQLite takes the
-  // transaction with it.
-  it('undoes a caught write issued through tx.first(), and goes on', {
-    tags: ['requires:interruptible'],
-    timeout: scaled(30_000),
-  }, async () => {
-    const db = await setUp();
-    try {
-      const reason = new Error('cut mid-step');
-      let caught: unknown;
-      await db.transaction(async (tx) => {
-        caught = await tx
-          .first(BIG_INSERT, [], {
-            signal: abortAfter(30, reason),
-          })
-          .catch((e) => e);
-        await tx.write('INSERT INTO t VALUES (1)');
-      });
-
-      expect(caught).toBe(reason);
-      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
-        { n: 0 },
-      ]);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
-        { a: 0 },
-        { a: 1 },
-      ]);
-    } finally {
-      await db.close();
-    }
-  });
-
   // Spec 2026-09-11, R4. Falsifiable: restore the `onAbandoned` hook in
   // src/bulk.ts — the abandoned load kills the transaction again.
   it('keeps the transaction when a tx.bulkWrite is abandoned between batches', async () => {

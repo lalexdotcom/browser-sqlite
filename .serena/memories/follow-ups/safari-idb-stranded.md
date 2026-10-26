@@ -1,5 +1,7 @@
 # A stranded IndexedDB connection on Safari — fixed, through wa-sqlite #384/#385 carried (merged 2026-10-21)
 
+**Status: CLOSED** — fixed, merged as `f4a07b3`.
+
 Part of `mem:follow-ups`. Comes before `mem:follow-ups/safari-suite` (user, 2026-10-20). Numbers: SAFARI-IDB-STRAND (raw IndexedDB, conformance, cost) and SAFARI-IDB-LIB (the pair suite, forced kills, the quiesce, the validation) in `mem:measurements/test-browsers`; IDB-CLOSE-384 (the upstream side) in `mem:measurements/wa-sqlite-prs`.
 
 ## Diagnosis

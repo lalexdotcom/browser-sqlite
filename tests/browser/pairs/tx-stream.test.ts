@@ -14,7 +14,6 @@ const SERIES = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c W
 const setUp = async () => {
   const db = await createTestClient({ poolSize: 1 });
   await db.write('CREATE TABLE t (a INTEGER)');
-  await db.write('CREATE TABLE big (x INTEGER)');
   return db;
 };
 
@@ -22,9 +21,6 @@ type Db = Awaited<ReturnType<typeof setUp>>;
 
 const rowsOf = async (db: Db) =>
   (await db.read<{ a: number }>('SELECT a FROM t ORDER BY a')).map((r) => r.a);
-
-const bigCount = async (db: Db) =>
-  (await db.read<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n;
 
 describe('tx.stream() between two rows of a chunk', () => {
   // Falsifiable: in tx.stream, leave `entry.gen` on releasing's generator —
@@ -44,41 +40,6 @@ describe('tx.stream() between two rows of a chunk', () => {
     expect(first).toEqual({ value: { x: 1 }, done: false });
     expect(await kept.next()).toEqual({ value: undefined, done: true });
     expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-  });
-
-  // Falsifiable: in tx.stream, hand flatten no signal — the buffered row 2 is
-  // then served after the abort.
-  it("a savepointed tx.stream() aborted mid-chunk rejects the next row, undoes its write and keeps the transaction's other writes", async () => {
-    const db = await setUp();
-    const ctl = new AbortController();
-    const reason = new Error('abort the stream');
-    let first: IteratorResult<{ x: number }> | undefined;
-    let second: unknown;
-    const outcome = await db.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
-      const rows = tx
-        .stream<{ x: number }>(`INSERT INTO big ${SERIES} RETURNING x`, [], {
-          chunkSize: CHUNK_SIZE,
-          signal: ctl.signal,
-        })
-        [Symbol.asyncIterator]();
-      first = await rows.next();
-      ctl.abort(reason);
-      second = await rows.next().then(
-        (r) => ({ resolved: r }),
-        (e: unknown) => ({ rejected: e }),
-      );
-      // Here, not after the callback: a row served instead keeps the stream
-      // open, and the write below would wait behind it for ever.
-      expect(second).toEqual({ rejected: reason });
-      await tx.write('INSERT INTO t VALUES (2)');
-      return 'returned';
-    });
-    expect(first).toEqual({ value: { x: 1 }, done: false });
-    expect((second as { rejected: unknown }).rejected).toBe(reason);
-    expect(outcome).toBe('returned');
-    expect(await rowsOf(db)).toEqual([1, 2]);
-    expect(await bigCount(db)).toBe(0);
   });
 
   // Falsifiable: in flatten's return(), skip the source's return() on an open

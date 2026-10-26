@@ -1,0 +1,7 @@
+# Follow-up — `temp_store` on `OPFSAnyContextVFS` — a default pragma to weigh (user, 2026-10-14)
+
+**Status: OPEN** — to weigh; the WASM heap is unmeasured.
+
+Part of `mem:follow-ups`; moved out of it on 2026-10-26.
+
+SQLite's temporary files (a `RETURNING` table, sorts, temp indexes) open through the VFS; `OPFSAnyContextVFS` makes them OPFS files reached through the async API, where `OPFSAdaptiveVFS` uses sync handles. Measured 2026-10-14, Chrome `jspi`, `INSERT` of 1M rows `RETURNING x` inside a transaction: AnyContext `first()` 5 030 ms with `temp_store` FILE (the default) against 1 589 ms with MEMORY, `write()` 6 802 → 2 169 ms, a plain `INSERT` ~1.3 s either way; Adaptive 634 → 553 ms. The cost of MEMORY, measured in native SQLite 3.46.1 (Python, not the WASM build): process RSS +25.5 MiB at the first row against +6.6 MiB with FILE, for 10.5 MiB of data (2 693 pages of 4 KiB); 200 000 rows +7.4 MiB — so ~19 MiB per 1M integer rows, growing with what spills. In WASM the heap never shrinks: a worker keeps its peak until it ends, and each worker of the pool has its own. Option: `defaultPragmas: { temp_store: 'memory' }` on `OPFSAnyContextVFS` (`src/const/vfs.ts`) — consumer-visible (CHANGELOG, `VFS.md`); unmeasured in the WASM heap, on Firefox, and for the other VFS that might reach temp files through async I/O. Found through `tx-abort`'s `first()` test, which timed out under matrix load on AnyContext because of its `RETURNING` (removed on 2026-10-14: it served nothing the test checks).

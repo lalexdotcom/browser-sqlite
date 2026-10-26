@@ -601,50 +601,6 @@ describe('transaction — what else kills it (spec R1)', () => {
     ]);
   });
 
-  // The generator half of the same rules (review I3, T3): settled() and
-  // releasing() are two places a statement can end, and each needs its own
-  // test — a fake worker exercised only through read()/write() cannot tell
-  // them apart.
-
-  // Spec 2026-09-11, R1, the generator half. Falsifiable: in `releasing`, drop
-  // the abandon(…) call — the next message then releases the write instead of
-  // rolling it back.
-  it('rolls back a write issued through tx.chunk() abandoned by its own signal, and goes on', async () => {
-    const reached = deferred();
-    const gate = deferred();
-    const worker = fakeWorker([], {
-      'INSERT INTO t VALUES (1) RETURNING a': async () => {
-        reached.resolve();
-        await gate.promise;
-      },
-    });
-    const { transaction } = harness(worker);
-    const own = new AbortController();
-    const reason = new Error('this chunk only');
-    let caught: unknown;
-    await transaction(async (tx) => {
-      const gen = tx.chunk('INSERT INTO t VALUES (1) RETURNING a', [], {
-        signal: own.signal,
-      });
-      const next = gen.next();
-      await reached.promise;
-      own.abort(reason);
-      caught = await next.catch((e) => e);
-      gate.resolve();
-      await tx.write('INSERT INTO t VALUES (2)');
-    });
-    expect(caught).toBe(reason);
-    expect(worker.executed).toEqual([
-      'BEGIN IMMEDIATE',
-      'SAVEPOINT __bsq_sp',
-      'INSERT INTO t VALUES (1) RETURNING a',
-      'ROLLBACK TO __bsq_sp',
-      'RELEASE __bsq_sp',
-      'INSERT INTO t VALUES (2)',
-      'COMMIT',
-    ]);
-  });
-
   // Falsifiable: remove the dieIfConnectionLeft() call from `releasing` in
   // src/transaction.ts; the for-await loop finishes and the transaction
   // commits instead of dying.
@@ -740,33 +696,6 @@ describe('transaction — when chunk() and stream() reach the worker', () => {
       expect(query.mock.calls.length).toBe(begun + 2);
       await chunked.return(undefined);
       await streamed.return(undefined);
-    });
-  });
-
-  // The savepointed path: a write with RETURNING and a signal of its own, as
-  // in the tx.chunk() test above. Falsifiable the same two ways.
-  it('asks the worker at the same moments for a savepointed write', async () => {
-    const worker = fakeWorker([]);
-    const query = vi.spyOn(worker, 'query');
-    const { transaction } = harness(worker);
-    const sql = 'INSERT INTO t VALUES (1) RETURNING a';
-    await transaction(async (tx) => {
-      const begun = query.mock.calls.length;
-      const chunked = tx.chunk(sql, [], {
-        signal: new AbortController().signal,
-      });
-      expect(query.mock.calls.length).toBe(begun + 1);
-      const streamed = tx.stream(sql, [], {
-        signal: new AbortController().signal,
-      });
-      expect(query.mock.calls.length).toBe(begun + 1);
-      await chunked.next();
-      await chunked.return(undefined);
-      const before = query.mock.calls.length;
-      await streamed.next();
-      expect(query.mock.calls.length).toBe(before + 1);
-      await streamed.return(undefined);
-      expect(worker.executed).toContain('SAVEPOINT __bsq_sp');
     });
   });
 });
@@ -1417,4 +1346,65 @@ describe('tx.savepoint() — failures and endings (spec 2026-10-04, E12, D5, U4,
       code: 'TRANSACTION_CLOSED',
     });
   });
+});
+
+// Spec: the client's read()/write()/first() are async, so a refused argument
+// arrives as the rejection of the returned promise; the transaction's must do
+// the same. Falsifiable: drop `async` from tx.read/write/first in
+// src/transaction.ts and the call throws instead of returning.
+describe('transaction — a refused argument rejects, never throws', () => {
+  for (const method of ['read', 'write', 'first'] as const) {
+    it(`tx.${method}() rejects a query that is neither a string nor sql`, async () => {
+      const { transaction } = harness(fakeWorker([]));
+      let returned: Promise<unknown> | undefined;
+      await transaction(async (tx) => {
+        const call = tx[method] as (query: unknown) => Promise<unknown>;
+        const pending = call(42);
+        returned = pending;
+        await pending.catch(() => {});
+      });
+      await expect(returned).rejects.toMatchObject({ code: 'INVALID_VALUE' });
+    });
+  }
+});
+
+// As on the client: read(), first(), chunk() and stream() take only a read;
+// a write goes through tx.write(), which returns its RETURNING rows. The
+// promise methods reject, the generators throw from the call — like theirs.
+// Falsifiable: drop the assertReadable() call from tx's read methods in
+// src/transaction.ts; the write then reaches the worker.
+describe('transaction — read methods refuse a write, as the client does', () => {
+  const WRITE = 'INSERT INTO t VALUES (1) RETURNING a';
+
+  for (const method of ['read', 'first'] as const) {
+    it(`tx.${method}() rejects a write with NOT_A_READ_QUERY, and sends nothing`, async () => {
+      const worker = fakeWorker([]);
+      const { transaction } = harness(worker);
+      let outcome: unknown;
+      await transaction(async (tx) => {
+        const call = tx[method] as (sql: string) => Promise<unknown>;
+        outcome = await call(WRITE).catch((e: unknown) => e);
+      });
+      expect(outcome).toMatchObject({ code: 'NOT_A_READ_QUERY' });
+      expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+    });
+  }
+
+  for (const method of ['chunk', 'stream'] as const) {
+    it(`tx.${method}() throws a write with NOT_A_READ_QUERY from the call, and sends nothing`, async () => {
+      const worker = fakeWorker([]);
+      const { transaction } = harness(worker);
+      let outcome: unknown;
+      await transaction(async (tx) => {
+        const call = tx[method] as (sql: string) => unknown;
+        try {
+          call(WRITE);
+        } catch (e) {
+          outcome = e;
+        }
+      });
+      expect(outcome).toMatchObject({ code: 'NOT_A_READ_QUERY' });
+      expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+    });
+  }
 });

@@ -13,6 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **Breaking:** **`stream()` and `chunk()` throw an invalid argument from the call,** instead of rejecting it at the first `next()`: a value that is neither SQL nor an `sql` query, a `params` array passed with an `sql` query, a write statement, or a param that cannot be bound.
+- **Breaking:** **In a transaction, `tx.read()`, `tx.write()` and `tx.first()` reject an invalid argument,** as `read()`, `write()` and `first()` do, instead of throwing it from the call.
+- **Breaking:** **In a transaction, `tx.read()`, `tx.first()`, `tx.chunk()` and `tx.stream()` refuse a write statement with `NOT_A_READ_QUERY`,** as on the client, where they ran it. A write goes through `tx.write()`, whose `result` holds its `RETURNING` rows.
+- **A statement that fails in its worker without SQLite reporting it rejects with a `SQLiteError` of code `WORKER_ERROR`,** the original exception as `cause`, where it was a plain `Error` with no code.
 - **An invalid or refused pragma is reported with `INVALID_PRAGMA` before a missing browser feature,** where a browser without OPFS reported the missing OPFS instead.
 - **A `wasmUrl` callback is no longer called when the client's options are invalid or the browser lacks what the VFS needs,** nor when `deleteDatabase()` is refused before starting its worker.
 - **Reading rows is faster.**

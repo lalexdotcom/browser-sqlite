@@ -1,5 +1,7 @@
 # Follow-ups — notes, with nothing to fix
 
+**Status: RECORD** — notes, nothing to fix.
+
 Part of `mem:follow-ups`: what was examined and closed or kept on purpose, and what to do if it comes back.
 
 ### Parallel Vitest processes raced on Vite's dep-optimizer cache — fixed, 2026-10-13 (`fix/vite-cache-per-job`)
