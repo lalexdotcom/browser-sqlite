@@ -262,12 +262,12 @@ Found through `coopsync-handover` on Windows Firefox (run 38693552137): besides 
 
 `statementError` (`src/pool.ts`) turns a query failure that SQLite did not report — a JS exception in the worker — into a plain `Error` ("as before"): the caller gets no `code` to branch on. Seen as `undefined: No modification allowed` (the entry below). Fixing that case's cause (the CoopSync retry) removes that instance, not the class. To decide: wrap such failures in a `SQLiteError` (`WORKER_CRASHED`, or a dedicated code) with the original as `cause`. Consumer-visible (CHANGELOG, `API.md`'s error codes).
 
-## The Windows/macOS CI: deferred minors of its final review (2026-10-15)
+## The Windows/macOS CI: deferred minors of its final review (2026-10-15) — settled 2026-10-26 (`ci/windows-minors`)
 
-- `scripts/bounded.ts` calls `killTree` on the child's PID after it exited; on Windows that is `taskkill /T /F` on a PID Windows may have recycled (narrow window).
-- `scripts/hook-gate.ts`: `shell: true` with an args array prints DEP0190 on Node 24 under Windows (cosmetic; the argv guard test stands).
-- `tests/unit/tooling/processes.test.ts` › "hands an argument with spaces and a middle dot over intact" spawns Node itself and exercises no project code; its "Falsifiable" comment is wrong.
-- Windows bounds: (2400 + 1800) × 4 s = 280 min of `bounded.ts` budget against a 240-min job; a job GitHub cancels uploads no logs (`if: failure()` does not run on cancel).
+- **Accepted, not fixed (user, 2026-10-26):** `scripts/bounded.ts`'s `finish()` calls `killTree` on the child's PID after it exited, only when `bounded` ended the run itself (deadline or a forwarded signal). POSIX: intended, the group outlives its leader. Windows: `taskkill /T /F` on a PID Windows may have recycled — a narrow window, on a run already failing or cancelled.
+- **Fixed:** `scripts/hook-gate.ts` printed DEP0190 on Node 24 under Windows (`shell: true` with an args array). `spawnPlan()` now hands a pnpm/npx `.cmd` shim to the shell as one command line and runs everything else without a shell; unit-tested for `win32` and Linux, falsified by the args-array shape. **CI cannot confirm it:** `tests-windows.yaml` never runs hook-gate (checked 2026-10-26 in run 40304959359's log); its one DEP0190 comes from `pnpm/action-setup`'s "Running self-installer…" step, a third party's, and stays. hook-gate's own path runs only in a developer's Windows hooks; the unit test is the evidence.
+- **Fixed:** `tests/unit/tooling/processes.test.ts` › "hands an argument with spaces and a middle dot over intact" spawned Node itself and exercised no project code; deleted (the project's guarantee is `packageBin` without a shell, and hook-gate's argv guard test).
+- **Fixed:** the Windows budget, (2400 + 1800) s × 4 = 280 min against a 240-min job: `tests-windows.yaml` now has `timeout-minutes: 300`, so a hung run ends in `bounded.ts` as a failure that uploads its logs instead of a GitHub cancellation with none.
 
 ## `close.test.ts` › "rejects a queued request and every later call" — its falsifier is refuted (2026-10-14, pre-existing)
 

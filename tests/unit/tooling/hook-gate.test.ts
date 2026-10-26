@@ -18,6 +18,7 @@ import {
   FULL,
   gatherFacts,
   runChecks,
+  spawnPlan,
 } from '../../../scripts/hook-gate.ts';
 
 const ZERO = '0'.repeat(40);
@@ -393,6 +394,32 @@ describe('COMMANDS.tsc', () => {
       'pnpm exec tsc --noEmit',
       'pnpm exec tsc -p tsconfig.build.json --noEmit',
     ]);
+  });
+});
+
+describe('spawnPlan', () => {
+  // Falsifiable: hand the shell an args array — Node 24 then prints DEP0190
+  // on Windows for every pnpm/npx step.
+  it('hands a .cmd shim on Windows to the shell as one command line', () => {
+    expect(spawnPlan(['pnpm', 'exec', 'biome', 'ci', '.'], 'win32')).toEqual({
+      file: 'pnpm exec biome ci .',
+      args: [],
+      shell: true,
+    });
+    expect(spawnPlan(['npx', 'tsc', '--noEmit'], 'win32').shell).toBe(true);
+  });
+
+  it('runs everything else without a shell, its argv intact', () => {
+    expect(spawnPlan(['node', '-e', 'x()'], 'win32')).toEqual({
+      file: 'node',
+      args: ['-e', 'x()'],
+      shell: false,
+    });
+    expect(spawnPlan(['pnpm', 'exec', 'biome'], 'linux')).toEqual({
+      file: 'pnpm',
+      args: ['exec', 'biome'],
+      shell: false,
+    });
   });
 });
 

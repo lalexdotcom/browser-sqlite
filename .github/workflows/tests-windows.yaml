@@ -16,4 +16,7 @@ jobs:
       # delete on Windows (Mozilla bug 2072928): its OPFS tests run 7-16 times
       # slower than Chrome's there.
       time-scale: '4'
-      timeout-minutes: 240
+      # Above the steps' own bounds, (2400 + 1800) s × 4 = 280 min: a run that
+      # hangs is then ended by bounded.ts, as a failure that uploads its logs,
+      # not cancelled by GitHub with none. Under the 360-min hosted maximum.
+      timeout-minutes: 300
