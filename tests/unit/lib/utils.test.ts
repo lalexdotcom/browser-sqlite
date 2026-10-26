@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { SQLiteBuild } from '../../../src/const/builds';
 import { VFS_CAPABILITIES } from '../../../src/const/vfs';
 import { SQLiteError } from '../../../src/types/errors';
@@ -17,6 +17,7 @@ import {
   resolveWasmLocation,
   splitPragmas,
   sqlParams,
+  withDeadline,
 } from '../../../src/utils';
 
 describe('isWriteQuery', () => {
@@ -644,6 +645,34 @@ describe('randomId', () => {
       expect(id).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
       );
+    }
+  });
+});
+
+// chunk() and stream() start their deadline at the call, and a generator that
+// is never read never calls release(). The timer must then leave nothing on
+// the caller's signal. Falsifiable: drop the release from the timer's callback
+// in withDeadline — the listener stays.
+describe('withDeadline', () => {
+  it('detaches from the caller signal when the budget is spent, release() never called', () => {
+    vi.useFakeTimers();
+    try {
+      const caller = new AbortController().signal;
+      const add = vi.spyOn(caller, 'addEventListener');
+      const remove = vi.spyOn(caller, 'removeEventListener');
+      const { signal } = withDeadline(
+        { signal: caller, timeout: 50 },
+        'stream',
+      );
+      expect(add).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(50);
+      expect(signal?.reason).toMatchObject({
+        code: 'OPERATION_TIMEOUT',
+        timeout: 50,
+      });
+      expect(remove).toHaveBeenCalledWith('abort', add.mock.calls[0]?.[1]);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

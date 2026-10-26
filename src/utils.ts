@@ -201,7 +201,7 @@ export const mergeSignals = (
 
 /**
  * The `timeout` option: a wall-clock budget in milliseconds, counted from the
- * call (for `chunk()` and `stream()`, from the first `next()`). Returns the
+ * call, `chunk()` and `stream()` included. Returns the
  * signal the call should actually use — the caller's own, merged with one this
  * library owns and aborts when the budget is spent.
  *
@@ -211,7 +211,9 @@ export const mergeSignals = (
  * this is an AbortController and a setTimeout rather than
  * `AbortSignal.timeout()`, which offers no way to set the reason.
  *
- * `release()` is owed exactly once, however the call ends.
+ * `release()` is owed once the call ends, however it ends. A call that never
+ * runs — a generator never read — never owes it: the spent timer releases
+ * itself, and a later `release()` is harmless.
  */
 export const withDeadline = (
   options:
@@ -232,6 +234,9 @@ export const withDeadline = (
         { timeout: budget },
       ),
     );
+    // A generator never read never calls release(): once spent, leave nothing
+    // on the caller's signal.
+    release();
   }, budget);
   const { signal, release } = mergeSignals(options?.signal, controller.signal);
   return {
