@@ -64,9 +64,9 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
-| `tx-validation` | `tx.read()`/`tx.write()`/`tx.first()` threw on a bad argument | CLOSED — 2026-10-26, `fix/tx-api-consistency` (not merged yet) |
-| `tx-read-methods-write` | Read methods that wrote inside a transaction | CLOSED — 2026-10-26, `fix/tx-api-consistency` (not merged yet) |
-| `worker-js-exception` | A worker's JS exception with no `SQLiteError` code | CLOSED — 2026-10-26, `fix/tx-api-consistency` (not merged yet), `WORKER_ERROR` |
+| `tx-validation` | `tx.read()`/`tx.write()`/`tx.first()` threw on a bad argument | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged |
+| `tx-read-methods-write` | Read methods that wrote inside a transaction | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged |
+| `worker-js-exception` | A worker's JS exception with no `SQLiteError` code | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged, `WORKER_ERROR` |
 | `close-test-falsifier` | `close.test.ts`'s refuted falsifier | CLOSED — 2026-10-26, `test/close-queued-promptly` |
 | `failed-client-probe-memo` | `failed-client.test.ts` under `--full` | CLOSED — 2026-10-26, `test/failed-client-probe-memo` |
 | `windows-ci-minors` | Deferred minors of the Windows/macOS CI review | CLOSED — 2026-10-26, `ci/windows-minors` |

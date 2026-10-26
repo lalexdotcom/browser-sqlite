@@ -20,6 +20,7 @@ Open:
 - **A verdict memo on the client**, `Map` SQL → read/write, so only a statement's first run pays the diagnosis round trip (Claude's proposal). The user's objection: the statement cache is in the worker, so it is a second index. Its case: a worker's verdict helps no other worker, and the client is what picks the queue. Bound and eviction undecided.
 - Whether `read()` and `write()` stay as explicit assertions beside `run()`, or go.
 - Inside a transaction there is one connection: `tx.run()` needs no routing.
+- **Dead code kept for this workstream (user, 2026-10-26):** since `tx.chunk()`/`tx.stream()` refuse writes, the path that ran a generator's write inside the library's savepoint (`drainToEnd`, the `st.savepointed` branches of `chunkSource`/`releasing` in `src/transaction.ts`) is unreachable. Kept rather than deleted, since a streamed write through `tx.run()`/`tx.stream()` would need it again; its tests were removed with the refusal (`fix/tx-api-consistency`) and would come back with it.
 
 ## Read workers refuse writes themselves, with `sqlite3_stmt_readonly` — not started (user, 2026-10-04)
 
