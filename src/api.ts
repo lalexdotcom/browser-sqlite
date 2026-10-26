@@ -51,10 +51,9 @@ export type Interruptible<T = unknown> = T & {
   signal?: AbortSignal | undefined;
   /**
    * Milliseconds within which it must finish, after which it is aborted and
-   * rejected with `OPERATION_TIMEOUT`. The clock starts at the call; on the
-   * client's `chunk()` and `stream()`, which acquire nothing until iterated, it
-   * starts at the first `next()`. (A transaction's `tx.chunk()` and
-   * `tx.stream()` start it at the call.) It is wall clock: time your
+   * rejected with `OPERATION_TIMEOUT`. The clock starts at the call, for
+   * `chunk()` and `stream()` too, though they acquire nothing until iterated: a
+   * generator read late has spent that time. It is wall clock: time your
    * own code spends — between two chunks of a `stream()`, inside a
    * `transaction()` callback, between two `enqueue()` calls — counts against
    * it, as does time spent waiting for a pool worker or for another tab's
@@ -281,8 +280,8 @@ export type SQLiteQueryAPI = {
    * **Arguments are validated at the call.** An invalid query, a params array
    * given with a query built by `sql`, a write statement (`NOT_A_READ_QUERY`)
    * and an unbindable param throw a `SQLiteError` from `chunk()` itself, before
-   * any generator exists. The `timeout` timer and the worker acquisition start
-   * at the first `next()`.
+   * any generator exists. The `timeout` timer starts at the call too; the worker
+   * acquisition at the first `next()`.
    *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *
@@ -313,8 +312,8 @@ export type SQLiteQueryAPI = {
    * **Arguments are validated at the call.** An invalid query, a params array
    * given with a query built by `sql`, a write statement (`NOT_A_READ_QUERY`)
    * and an unbindable param throw a `SQLiteError` from `stream()` itself, before
-   * any generator exists. The `timeout` timer and the worker acquisition start
-   * at the first `next()`.
+   * any generator exists. The `timeout` timer starts at the call too; the worker
+   * acquisition at the first `next()`.
    *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *

@@ -1,6 +1,6 @@
 # Follow-up — when a call's `timeout` starts counting
 
-**Status: OPEN** — decision owed by the user.
+**Status: CLOSED** — 2026-10-26, `fix/timeout-from-call`. The user's decision: the budget counts from the call everywhere ("un utilisateur qui donne une valeur s'attend à ce que cette valeur soit à partir du call"); `chunk()`/`stream()` start `withDeadline` at the call, the worker still at the first `next()`; a generator never read is released by its own spent timer. Breaking.
 
 Part of `mem:follow-ups`, opened 2026-10-19 (user): "on va revoir ça dans un autre chantier". Found on `perf/stream-iterator`, whose `API.md` now states the facts as they are.
 

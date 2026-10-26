@@ -192,6 +192,30 @@ describe('query timeout', () => {
     }
   });
 
+  // The budget a caller gives is counted from the call, like every other
+  // method's, not from the first next(). Falsifier: start withDeadline inside
+  // chunkRows in src/client.ts, as before — both first next() calls resolve.
+  it('bounds a stream() and a chunk() from the call, not from the first next()', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      await db.read('SELECT 1');
+      const rows = db.stream('SELECT 1 AS one', [], { timeout: 200 });
+      const chunks = db.chunk('SELECT 1 AS one', [], { timeout: 200 });
+      await new Promise((r) => setTimeout(r, 600));
+      await expect(rows.next()).rejects.toMatchObject({
+        code: 'OPERATION_TIMEOUT',
+        timeout: 200,
+      });
+      await expect(chunks.next()).rejects.toMatchObject({
+        code: 'OPERATION_TIMEOUT',
+        timeout: 200,
+      });
+      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    } finally {
+      await db.close();
+    }
+  });
+
   it('bounds an output() the same way, leaving the target untouched', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {

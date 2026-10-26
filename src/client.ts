@@ -1296,8 +1296,9 @@ export const createSQLiteClient = (
 
   /**
    * The body of `chunk()` and `stream()`, after their arguments were validated
-   * at the call: the deadline starts at the first `next()`, the retry and the
-   * lease are `streamWithRetry`'s.
+   * and their deadline started at the call: the worker is acquired at the first
+   * `next()`, the retry and the lease are `streamWithRetry`'s. A generator never
+   * read never gets here; its timer, once spent, releases itself.
    */
   const chunkRows = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -1305,9 +1306,9 @@ export const createSQLiteClient = (
     sql: string,
     bound: QueryParams | undefined,
     options: SQLiteChunkOptions | undefined,
-    method: 'chunk' | 'stream',
+    deadline: ReturnType<typeof withDeadline>,
   ): AsyncGenerator<T[], void, unknown> {
-    const { signal, release } = withDeadline(options, method);
+    const { signal, release } = deadline;
     try {
       yield* streamWithRetry(signal, (worker, onAbandon) =>
         chunkWorker<T>(worker, sql, bound, {
@@ -1340,7 +1341,7 @@ export const createSQLiteClient = (
     const { sql, params, options } = queryArgs(input, second, third);
     assertReadable(sql, 'chunk');
     const bound = prepareParams(params);
-    return chunkRows<T>(sql, bound, options, 'chunk');
+    return chunkRows<T>(sql, bound, options, withDeadline(options, 'chunk'));
   };
 
   /**
@@ -1358,7 +1359,9 @@ export const createSQLiteClient = (
     const { sql, params, options } = queryArgs(input, second, third);
     assertReadable(sql, 'stream');
     const bound = prepareParams(params);
-    return flatten(chunkRows<T>(sql, bound, options, 'stream'));
+    return flatten(
+      chunkRows<T>(sql, bound, options, withDeadline(options, 'stream')),
+    );
   };
 
   /**
