@@ -38,6 +38,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A warm local cache and a permissive container hide what a fresh CI runner hits first (2026-10-11, the first CI run on WebdriverIO)
 - A fixed sleep before reading state another task delivers loses the race when the main thread stalls (2026-10-14, `failed-client`)
 - A test that outlives its bound keeps running into the next test, and its result list dies with it (2026-10-16, `coopsync-handover` on Windows Firefox)
+- A test can pass on what its siblings left in the page: the planner moves it, and it fails (2026-10-26, `failed-client`)
 
 ## `mem:lessons/debugging` — debugging, probes, measurement
 
@@ -111,6 +112,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A script that runs on Linux is not a script that runs on Windows: four traps, each paid for once (2026-10-15, `ci/windows-macos`)
 - `git commit -a` hands its hook an absolute `GIT_INDEX_FILE`, and every git the hook's tests start inherits it (2026-10-16)
 - An edit that reports a failure may still have written the file: check `git diff` (2026-10-23)
+- Two test planners at once rebuild each other's build: one at a time (2026-10-26)
 - A throwaway Safari CI spike: six traps of one afternoon (2026-10-25, `spike/safari-step-asap`)
 
 ## `mem:lessons/design` — design of the library
