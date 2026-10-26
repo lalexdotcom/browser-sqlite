@@ -68,6 +68,18 @@ describe('a client that failed', () => {
     const pair = { vfs: TEST_TARGET.vfs, build: TEST_TARGET.build };
     const name = `bsq-test-${crypto.randomUUID()}`;
 
+    // A VFS whose exclusivity worker 0 probes (OPFSWriteAheadVFS) requests
+    // bsq:conn only once the page knows the answer: from a worker 0, or from
+    // the realm's memo. The failed client's worker never answers, so without
+    // the memo no grant is ever requested and there is no race to test. A
+    // healthy client on another database fills the memo first; the test no
+    // longer depends on which tests ran before it in this page.
+    const warmName = `bsq-test-${crypto.randomUUID()}`;
+    const warm = createSQLiteClient(warmName, pair);
+    await warm.read('SELECT 1');
+    await warm.close();
+    onTestFinished(() => deleteDatabase(warmName, pair).catch(() => {}));
+
     // Defers bsq:conn: grants until signaled, and records when one lands.
     const originalRequest = (
       navigator.locks.request as (...args: unknown[]) => unknown
