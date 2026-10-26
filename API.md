@@ -165,7 +165,7 @@ const { result } = await db.write<{ id: number }>(
 | `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`.<br>See [Interrupting a call](#interrupting-a-call). |
 | `timeout` | `number` (ms) | — | Milliseconds before it is aborted and rejected with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
 
-**`result` is how to read a `RETURNING` clause outside a transaction.**<br>It holds every row the statement returns, gathered before the call resolves. `read()`, `first()`, `chunk()` and `stream()` refuse a write; inside a [transaction](#clienttransaction), `tx.first()`, `tx.chunk()` and `tx.stream()` accept one, to take its rows one at a time or in chunks.
+**`result` is how to read a `RETURNING` clause.**<br>It holds every row the statement returns, gathered before the call resolves, from `write()` and from `tx.write()` inside a [transaction](#clienttransaction). `read()`, `first()`, `chunk()` and `stream()` refuse a write, inside a transaction too.
 
 **Transaction control is refused.**<br>`BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` reject with `STATEMENT_FAILED` and `sqliteCode` `23` (`SQLITE_CODES.AUTH`), on the client and inside a transaction alike. On the client, each call may run on a different connection, so a transaction opened this way could never be closed; inside a transaction, the library owns the transaction and its savepoints. Use [`transaction()`](#clienttransaction), and `tx.savepoint()` inside it. In a string of several statements, the ones before the refused statement have run — outside a transaction, they are committed.
 
@@ -659,7 +659,7 @@ try {
 ```
 
 
-**Read methods reject write statements.**<br>`read()`, `chunk()`, `stream()`, and `first()` reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`.
+**Read methods reject write statements.**<br>`read()`, `chunk()`, `stream()`, and `first()`, on the client and inside a transaction, reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`.
 
 ## Debugging
 

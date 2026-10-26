@@ -24,7 +24,13 @@ import { createSavepointStack, type SavepointEntry } from './savepoints';
 import type { Scheduler } from './scheduler';
 import { queryArgs, type SQLQuery } from './sql';
 import { SQLiteError } from './types/errors';
-import { isWriteQuery, mergeSignals, quoteIdent, withDeadline } from './utils';
+import {
+  assertReadable,
+  isWriteQuery,
+  mergeSignals,
+  quoteIdent,
+  withDeadline,
+} from './utils';
 
 /**
  * The transaction object as the library's own code sees it: `write` also takes
@@ -210,8 +216,10 @@ export const createTransaction =
       );
       const worker = lease.worker;
 
-      const checksql = (sql: string): string => {
+      /** `method` names a read method: it refuses a write, as the client's do. */
+      const checksql = (sql: string, method?: string): string => {
         deps.checkStatement(sql);
+        if (method) assertReadable(sql, method);
         if (readOnly && isWriteQuery(sql))
           throw new SQLiteError(
             'READ_ONLY_TRANSACTION',
@@ -977,7 +985,7 @@ export const createTransaction =
             params,
             options: given,
           } = queryArgs(input, second, third);
-          const query = checksql(sql);
+          const query = checksql(sql, 'read');
           const bound = prepareParams(params);
           const { settled } = withSignal(given, 'read', query);
           return settled((target, options) =>
@@ -1014,7 +1022,7 @@ export const createTransaction =
             params,
             options: given,
           } = queryArgs(input, second, third);
-          const query = checksql(sql);
+          const query = checksql(sql, 'chunk');
           const bound = prepareParams(params);
           const st = withSignal(given, 'chunk', query);
           const entry: OpenStatement = {};
@@ -1035,7 +1043,7 @@ export const createTransaction =
             params,
             options: given,
           } = queryArgs(input, second, third);
-          const query = checksql(sql);
+          const query = checksql(sql, 'stream');
           const bound = prepareParams(params);
           const st = withSignal(given, 'stream', query);
           const entry: OpenStatement = {};
@@ -1071,7 +1079,7 @@ export const createTransaction =
             params,
             options: given,
           } = queryArgs(input, second, third);
-          const query = checksql(sql);
+          const query = checksql(sql, 'first');
           const bound = prepareParams(params);
           const { settled } = withSignal(given, 'first', query);
           return settled((target, options) =>
