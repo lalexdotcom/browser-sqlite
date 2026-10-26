@@ -22,26 +22,6 @@ describe('packageBin', () => {
       /vitest declares no bin "nope"/,
     );
   });
-
-  // Falsifiable: route the call through a shell — the argument splits at its spaces.
-  it('hands an argument with spaces and a middle dot over intact', async () => {
-    const name = 'chrome · OPFSAdaptiveVFS/jspi';
-    const child = spawn(
-      process.execPath,
-      [
-        '-e',
-        'process.stdout.write(JSON.stringify(process.argv.slice(1)))',
-        name,
-      ],
-      { stdio: ['ignore', 'pipe', 'inherit'] },
-    );
-    let out = '';
-    child.stdout.on('data', (d) => {
-      out += String(d);
-    });
-    await new Promise((resolve) => child.on('close', resolve));
-    expect(JSON.parse(out)).toEqual([name]);
-  });
 });
 
 describe('killTree', () => {

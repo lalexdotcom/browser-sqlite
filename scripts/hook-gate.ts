@@ -287,6 +287,24 @@ export const COMMANDS: Readonly<Record<Check, readonly Step[]>> = {
   consumer: [{ argv: ['pnpm', 'test:consumer'] }],
 };
 
+/**
+ * How a step is started. pnpm and npx are .cmd shims on Windows, which Node
+ * starts only through a shell, and given one command line: an args array
+ * beside `shell: true` is deprecated (DEP0190, Node 24). COMMANDS holds no
+ * argument a shell could split (tested). Anything else runs without a shell:
+ * cmd.exe mangles a `node -e` script.
+ */
+export function spawnPlan(
+  argv: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): { file: string; args: string[]; shell: boolean } {
+  const [command = '', ...args] = argv;
+  if (platform === 'win32' && (command === 'pnpm' || command === 'npx')) {
+    return { file: argv.join(' '), args: [], shell: true };
+  }
+  return { file: command, args, shell: false };
+}
+
 export function runChecks(
   checks: readonly Check[],
   {
@@ -299,17 +317,12 @@ export function runChecks(
 ): number {
   for (const check of checks) {
     for (const step of commands[check]) {
-      const [command = '', ...args] = step.argv;
-      const result = spawnSync(command, args, {
+      const { file, args, shell } = spawnPlan(step.argv);
+      const result = spawnSync(file, args, {
         cwd,
         stdio: ['ignore', 'inherit', 'inherit'],
         env: { ...process.env, ...step.env },
-        // pnpm and npx are .cmd shims on Windows, which Node starts only
-        // through a shell; COMMANDS holds no argument a shell could split.
-        // Anything else runs without one: cmd.exe mangles a `node -e` script.
-        shell:
-          process.platform === 'win32' &&
-          (command === 'pnpm' || command === 'npx'),
+        shell,
       });
       if (result.status !== 0) {
         console.error(
