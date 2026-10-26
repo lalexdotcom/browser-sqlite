@@ -82,9 +82,9 @@ describe('params', () => {
       expect.objectContaining({ code: 'INVALID_VALUE' }),
     );
     await db.transaction(async (tx) => {
-      expect(() => tx.read('SELECT ?', [Symbol('s')])).toThrow(
-        expect.objectContaining({ code: 'INVALID_VALUE' }),
-      );
+      await expect(tx.read('SELECT ?', [Symbol('s')])).rejects.toMatchObject({
+        code: 'INVALID_VALUE',
+      });
     });
     // No request for the refused calls reached a worker.
     const sent = (db.debug?.requests ?? [])

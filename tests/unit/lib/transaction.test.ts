@@ -1418,3 +1418,23 @@ describe('tx.savepoint() — failures and endings (spec 2026-10-04, E12, D5, U4,
     });
   });
 });
+
+// Spec: the client's read()/write()/first() are async, so a refused argument
+// arrives as the rejection of the returned promise; the transaction's must do
+// the same. Falsifiable: drop `async` from tx.read/write/first in
+// src/transaction.ts and the call throws instead of returning.
+describe('transaction — a refused argument rejects, never throws', () => {
+  for (const method of ['read', 'write', 'first'] as const) {
+    it(`tx.${method}() rejects a query that is neither a string nor sql`, async () => {
+      const { transaction } = harness(fakeWorker([]));
+      let returned: Promise<unknown> | undefined;
+      await transaction(async (tx) => {
+        const call = tx[method] as (query: unknown) => Promise<unknown>;
+        const pending = call(42);
+        returned = pending;
+        await pending.catch(() => {});
+      });
+      await expect(returned).rejects.toMatchObject({ code: 'INVALID_VALUE' });
+    });
+  }
+});

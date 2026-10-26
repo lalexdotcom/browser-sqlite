@@ -966,7 +966,7 @@ export const createTransaction =
           });
 
       const db: InternalTransactionDB = {
-        read: <T extends Record<string, unknown>>(
+        read: async <T extends Record<string, unknown>>(
           input: string | SQLQuery,
           second?: unknown,
           third?: SQLiteChunkOptions,
@@ -985,7 +985,7 @@ export const createTransaction =
           );
         },
 
-        write: <T extends Record<string, unknown>>(
+        write: async <T extends Record<string, unknown>>(
           input: string | SQLQuery,
           second?: unknown,
           third?: Interruptible,
@@ -1060,7 +1060,7 @@ export const createTransaction =
           return rows;
         },
 
-        first: <T extends Record<string, unknown>>(
+        first: async <T extends Record<string, unknown>>(
           input: string | SQLQuery,
           second?: unknown,
           third?: Interruptible,
