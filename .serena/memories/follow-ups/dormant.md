@@ -1,5 +1,7 @@
 # Follow-ups — entries waiting on an event
 
+**Status: DORMANT** — each entry waits for its event.
+
 Part of `mem:follow-ups`. Each entry here needs no action until its event comes (a new sighting, a Playwright release); moved out of `mem:follow-ups` verbatim on 2026-10-05 to keep it under 40 000 characters.
 
 ## `open-retry` "succeeds once the holder lets go" times out on Firefox — DORMANT until the next sighting (user, 2026-10-03)

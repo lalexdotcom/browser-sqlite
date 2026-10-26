@@ -1,5 +1,7 @@
 # Follow-up — a restarted worker meets the file its crashed predecessor still holds (`lifecycle`, Firefox `OPFSAdaptiveVFS/jspi`)
 
+**Status: OPEN** — fixed for Firefox (2026-10-21); Safari open (WebKit 328618); `OPFSWriteAheadVFS` on Firefox untested.
+
 Part of `mem:follow-ups`, opened 2026-10-21. **Fixed on `fix/restart-held-file` (2026-10-21, the user's option A); what stays open is Safari, below.**
 
 **What failed:** run 39620037006 (`xcode-27`, macOS 27.0.1, Firefox 155.0.1, `main` `7108558`), `tests/browser/pairs/lifecycle.test.ts` › "worker lifecycle — crash detection › restarts the slot once and keeps serving": the replacement's open failed with `WORKER_CRASHED: unable to open database file: NoModificationAllowedError`, in 411 ms (no retry ran).

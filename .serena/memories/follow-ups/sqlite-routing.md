@@ -1,5 +1,7 @@
 # Follow-up — SQLite decides read or write: `run()`, routing by diagnosis, and read workers that refuse writes
 
+**Status: OPEN** — designed in outline by the user; large and breaking, after the small workstreams (2026-10-26).
+
 Part of `mem:follow-ups`, opened 2026-10-26 (user). **A large, breaking change, deferred by the user until the small workstreams are closed** ("ça vaut peut-être le coup de le faire maintenant, mais j'aimerais clôturer les petits chantiers avant"). The user is still thinking about the breaking side.
 
 ## Why: streaming the rows a write returns
