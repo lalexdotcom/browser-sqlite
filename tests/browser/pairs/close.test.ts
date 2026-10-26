@@ -76,7 +76,9 @@ describe('close()', () => {
   });
 
   // Falsifiable: delete the closeAbort.abort() call in close() — queued then
-  // waits behind inFlight's web lock and completes instead of rejecting.
+  // waits behind inFlight's web lock, and is refused only once inFlight is
+  // done, by the scheduler's shutdown: the same CLIENT_CLOSED, too late. Hence
+  // the order is asserted, not only the code.
   it('rejects a queued request and every later call', async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
     await db.write('CREATE TABLE t (a)');
@@ -88,8 +90,15 @@ describe('close()', () => {
     // to find it.
     await waitUntil(aRequestIsInFlight(db), 'the write to be in flight');
     const queued = db.write('INSERT INTO t (a) VALUES (2)');
+    let inFlightSettled = false;
+    const markSettled = () => {
+      inFlightSettled = true;
+    };
+    void inFlight.then(markSettled, markSettled);
     const closing = db.close();
     await expect(queued).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
+    // Rejected while inFlight still holds the lock, not after it.
+    expect(inFlightSettled).toBe(false);
     await inFlight;
     await closing;
     await expect(db.read('SELECT 1')).rejects.toMatchObject({
