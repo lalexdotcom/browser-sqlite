@@ -283,6 +283,10 @@ A plain commit runs `pre-commit` with `GIT_INDEX_FILE=.git/index`, relative, har
 
 On `fix/safari-held-file` Claude Code's `Edit` on `CHANGELOG.md` (a file never opened with `Read` in that session, its `old_string` copied from a `sed` print) answered "String not found in file", yet the file's mtime was 25 ms after the call and two `[Unreleased]` entries were gone. Taken at first for another session's work: three sessions were asked, the session transcripts read (only this one active at 07:33), and the timestamps matched this session's own call. After any failed edit, `git diff` the file before trusting the failure; `Read` a non-code file before `Edit`, and verify a CHANGELOG change by `git diff --numstat`.
 
+## Two test planners at once rebuild each other's build: one at a time (2026-10-26)
+
+A second `scripts/test-plan.ts` started while one ran rebuilt `tests/build`, and the first run's Firefox cells then failed whole files: `Failed to import … need-guard.ts` and `CompileError: wasm validation error: … failed to match magic number` (a half-written `.wasm`). None was real. Run planners one after the other; a run that overlapped another is rerun before any of its failures is read.
+
 ## A throwaway Safari CI spike: six traps of one afternoon (2026-10-25, `spike/safari-step-asap`)
 
 Measuring wa-sqlite #388 on Safari (`docs/upstream/2026-10-23-wa-sqlite-388-step-asap.md` § Safari spike) took four pushes where one should have done:
