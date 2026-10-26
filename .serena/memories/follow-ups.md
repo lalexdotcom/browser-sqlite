@@ -63,7 +63,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
-| `timeout-start` | When a call's `timeout` starts counting (call vs first `next()`) | CLOSED — 2026-10-26, `fix/timeout-from-call`: from the call everywhere |
+| `timeout-start` | When a call's `timeout` starts counting (call vs first `next()`) | CLOSED — 2026-10-26, `fix/timeout-from-call`, merged: from the call everywhere |
 | `tx-validation` | `tx.read()`/`tx.write()`/`tx.first()` threw on a bad argument | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged |
 | `tx-read-methods-write` | Read methods that wrote inside a transaction | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged |
 | `worker-js-exception` | A worker's JS exception with no `SQLiteError` code | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged, `WORKER_ERROR` |
