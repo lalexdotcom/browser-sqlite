@@ -97,7 +97,7 @@ here on purpose: a total alone cannot say which suite moved.
 - **Another agent's work was paused by the user until our upstream PRs were done; the user
   relaunches it.**
 
-## Trusted publishing — what is left, all the user's
+## Trusted publishing — done (2026-10-19), nothing left
 
 - **Shown at rc.8 (2026-10-09): OIDC alone publishes AND moves the dist-tags.** The release job ran
   with `NODE_AUTH_TOKEN` empty; `npm publish` signed provenance and `npm dist-tag add` set
