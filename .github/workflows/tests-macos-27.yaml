@@ -15,3 +15,10 @@ jobs:
       # image, in public preview. Move to macos-27 once it exists.
       runs-on: xcode-27
       browsers: chrome,firefox,safari
+      # On GitHub's macOS runners a setTimeout(0) takes 16-25 ms in Chrome and
+      # Firefox started by their WebDriver, against 4.5-6 ms on Linux and on a
+      # Mac's foreground tab: a test built on timers runs ~4 times slower here.
+      time-scale: '2'
+      # Above the steps' own bounds, (2400 + 1800) s × 2 = 140 min, so a run
+      # that hangs ends in bounded.ts as a failure that uploads its logs.
+      timeout-minutes: 150
