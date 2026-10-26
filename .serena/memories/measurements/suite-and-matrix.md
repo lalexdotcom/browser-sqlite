@@ -2,6 +2,8 @@
 
 Part of `mem:measurements`, which indexes every entry; its rules apply here.
 
+**Reading a run's time (2026-10-26):** the `Duration` line `pnpm test` prints comes from the merged Vitest report and is the SUM of every job's duration (525 s for a run of 2 min 55 s wall, 19 jobs 6 at a time). Wall time is `time`, or the span from `logs/plan.json` to the last job log under `.work/test-parallel/<run>/`. Read `Duration` as wall time once, and a "fourfold slowdown" sat in `mem:state` for five days.
+
 ## PARALLEL-RUNS — several Vitest processes at once, 2026-10-10, this container (16 cores), Vitest 5.0.3, Chrome 153.0.8010.52, Firefox 155.0.1
 
 **Why.** The WebdriverIO provider runs one file at a time per project and a Vitest run takes its projects one after another (`supportsParallelism = false`, one active page per WebDriver session), so one invocation cannot use the machine. Several processes can, each with its own session, hence browser profile and port. Design in `mem:stack-and-build` (Provider facts, "Parallel runs").
