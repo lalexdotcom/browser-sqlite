@@ -1,0 +1,17 @@
+# Follow-up — The macOS workflows fail without a library cause: slow timers in Chrome and Firefox, and a lost Safari session (2026-10-26)
+
+**Status: OPEN** — being investigated (user: "on traite ça", 2026-10-26); measure before fixing.
+
+Part of `mem:follow-ups`, opened 2026-10-26, after the push of `main` `a17b6c6` (CI, Matrix 23/23, Windows and macOS 27 green; macOS 26 failed twice, each time differently).
+
+**Run 40344020443 (macOS 26):** 519 of 522 files passed, no failed assertion; the cell `safari · IDBBatchAtomicVFS/async` timed out at 901 s: Safari's page lost its WebDriver connection during `tx-quiesce.test.ts` (`[vitest] Browser connection was closed while running tests`, then `invalid session id` at close), so the cell's last three files were never collected (`PLAN_MISSING`). A lost Safari session was seen once before, in the SAFARI-IDB-STRAND A/B (`mem:measurements/test-browsers/library`).
+
+**Run 40349652033 (macOS 26, re-dispatched):** 521 of 522 files passed; `chunk-delivery.test.ts` › "delivers every row to a stream consumer that awaits per row" timed out at its 30 s on `chrome · OPFSWriteAheadVFS/sync` (1001 rows, a `setTimeout(0)` per row; the same test took 8.2 s on another cell of that run). The test passes no `timeout`, so `fix/timeout-from-call` does not touch its path.
+
+**Corrected 2026-10-26: that cell is not abnormal among cells, it is the biggest.** `chrome · OPFSWriteAheadVFS/sync` is a start cell (388 tests, 64 files); comparing it with the small complement cells (11-70 s) was wrong. On Linux (CI run 40343978535) it takes 221 s, beside `chrome · OPFSAdaptiveVFS/jspi` 203 s. On macOS it took 551 s (macOS 26, run 40036121542, green), 729 and 839 s (the two runs above), 465 s on macOS 27 (run 40344025140, green): every big Chrome and Firefox cell runs 2-4× its Linux time there. Sum of the cell's file durations: Linux 184 s, macOS 27 304 s, macOS 26 490 s (both runs); the rest of the wall time is per-file overhead (Linux ~37 s, macOS 26 ~240-350 s).
+
+**Measured from the job logs (2026-10-26): on macOS, timers are slow in Chrome and Firefox, not in Safari.** The failing test (1001 rows, a `setTimeout(0)` per row) takes 4.3-4.5 s on Linux in all four cells (Chrome and Firefox), but 20-23 s on macOS 26 and 27 in every Chrome and Firefox cell — 22.3, 22.5, 22.7 s, nearly constant across cells, which points at a deterministic timer delay rather than CPU contention — and 8.1-8.2 s in Safari cells. The run that failed only crossed 30 s (32.1 s) on top of that baseline. Per-file times of the big Chrome cell also vary run to run on macOS 26 (`results.test.ts` 2.8 → 24.6 s, `inspect-marker.test.ts` 7.4 → 37.2 s): load comes on top.
+
+**Hypothesis to test (not verified):** macOS throttles timers of apps that are not frontmost (App Nap, timer coalescing); safaridriver keeps Safari in front, while the Chrome and Firefox windows WebDriver opens beside it are not. Candidate remedies, each to measure: `defaults write NSGlobalDomain NSAppSleepDisabled -bool YES` (App Nap off) in the macOS workflows; Chrome's `--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows`; Firefox's background-timer prefs; or `BSQ_TIME_SCALE` > 1 on macOS as Windows has (masks rather than fixes). First step: a probe of `setTimeout(0)` latency per browser on the macOS runner, with and without App Nap disabled.
+
+**The lost Safari session** (run 40344020443) is a separate symptom, seen twice now; no lead yet.

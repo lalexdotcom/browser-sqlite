@@ -32,6 +32,7 @@ been work on nothing.
 | `library-stock-browsers` | What stays open after the Vitest + WebdriverIO migration | OPEN — the iOS simulator, the WASM built once |
 | `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10) |
 | `matrix-windows-macos` | The matrix on Windows and macOS | OPEN — later (user, 2026-10-15) |
+| `macos-ci-instability` | macOS workflows fail without a library cause: timers ~5× slower in Chrome and Firefox than on Linux (not in Safari), a lost Safari session | OPEN — being investigated; next: a `setTimeout(0)` probe with App Nap off (2026-10-26) |
 | `ci-live-progress` | Reading a GitHub run's progress from `gh` while it runs (logs come only at job end) | OPEN — not designed; recommended: a progress check run the planner updates |
 
 ## Open — upstream (wa-sqlite)
