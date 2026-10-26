@@ -1,5 +1,0 @@
-# Follow-up — `tx.first()`, `tx.read()`, `tx.write()` throw on a bad argument instead of rejecting
-
-Part of `mem:follow-ups`, opened 2026-10-19 (user). Found while settling where `stream()`/`chunk()` validate (`perf/stream-iterator`, task 0: `client.stream()`/`client.chunk()` validate at the call).
-
-`client.first()`, `client.read()` and `client.write()` are `async` functions: `queryArgs`, `assertReadable` and `prepareParams` run at the call and their error comes as the rejection of the returned promise. In `src/transaction.ts`, `tx.first()`, `tx.read()` and `tx.write()` are plain functions returning a promise: the same validations (`queryArgs`, `checksql`, `prepareParams`) throw synchronously from the call, while the same function's "transaction ended" path returns `Promise.reject(closedError(ending))`. A caller doing `tx.first(bad).catch(...)` gets an exception instead. To weigh: make them reject (a behaviour change, probably breaking under the same rule as task 0), and check the other promise-returning `tx` methods the same way.
