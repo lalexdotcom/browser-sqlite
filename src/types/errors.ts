@@ -17,6 +17,8 @@
  * but a lock conflict — a constraint, a syntax error, a full disk. `message` is
  * SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode`
  * its subtype when SQLite reports one.
+ * `WORKER_ERROR` is a statement that failed in the worker without SQLite
+ * reporting it — a JavaScript exception, kept as `cause`; the worker lives on.
  * `INVALID_VALUE` is a param or a `bulkWrite()` cell no rule can bind — refused on the page, before any worker sees it.
  */
 import type {
@@ -28,6 +30,7 @@ export type SQLiteErrorCode =
   | 'NOT_A_READ_QUERY'
   | 'CLIENT_CLOSED'
   | 'WORKER_CRASHED'
+  | 'WORKER_ERROR'
   | 'TIMEOUT'
   | 'PROTOCOL_ERROR'
   | 'INVALID_IDENTIFIER'

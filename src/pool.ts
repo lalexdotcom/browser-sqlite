@@ -190,7 +190,7 @@ export const busyFromCode = (data: {
  * What a query's `error` message becomes (spec 2026-09-14 §5.3): a code the
  * worker minted; else `BUSY` for a lock conflict; else `STATEMENT_FAILED` for
  * any other code SQLite reported; else — a failure SQLite did not report, such
- * as a JS exception in the worker — a plain Error, as before. `BUSY` and
+ * as a JS exception in the worker — `WORKER_ERROR`, the exception as `cause`. `BUSY` and
  * `STATEMENT_FAILED` carry `sqliteCode`, and `sqliteExtendedCode` when it is a
  * subtype (`subtypeOf`).
  */
@@ -209,7 +209,9 @@ export const statementError = (data: {
   const busy = busyFromCode(data);
   if (busy) return busy;
   if (data.sqliteCode === undefined) {
-    return new Error(data.message, { cause: data.cause });
+    return new SQLiteError('WORKER_ERROR', data.message, {
+      cause: data.cause,
+    });
   }
   const sqliteExtendedCode = subtypeOf(data);
   return new SQLiteError('STATEMENT_FAILED', data.message, {

@@ -83,13 +83,17 @@ describe('statementError — a query the worker reports failed', () => {
     ).toMatchObject({ code: 'OPERATION_TIMEOUT' });
   });
 
-  // Falsifiable: build STATEMENT_FAILED whenever sqliteCode is absent too.
-  it('leaves a failure without a SQLite code a plain Error', () => {
+  // A JS exception in the worker, which SQLite did not report: the caller
+  // still gets a code to branch on. Falsifiable: return a plain Error when
+  // sqliteCode is absent, as before.
+  it('wraps a failure without a SQLite code in WORKER_ERROR, the cause kept', () => {
     const cause = new TypeError('not SQLite');
     const error = statementError({ message: 'Unknown error', cause });
-    expect(error).not.toBeInstanceOf(SQLiteError);
+    expect(error).toBeInstanceOf(SQLiteError);
+    expect(error).toMatchObject({ code: 'WORKER_ERROR' });
     expect(error.message).toBe('Unknown error');
     expect(error.cause).toBe(cause);
+    expect((error as SQLiteError).sqliteCode).toBeUndefined();
   });
 });
 

@@ -616,6 +616,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `NOT_A_READ_QUERY` | `read()`, `chunk()`, `stream()`, or `first()` was called with a statement that is not a provably readable query. |
 | `CLIENT_CLOSED` | A query was queued after `close()` was called. |
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. When SQLite refused to open the database — a file that is not a database, a `pragmas` entry it rejected — `sqliteCode` carries its result code. |
+| `WORKER_ERROR` | A statement failed in its worker without SQLite reporting it — a JavaScript exception, kept as `cause`. It has no `sqliteCode`, and the worker keeps serving. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
 | `OPERATION_TIMEOUT` | The `timeout` set on a call was spent. The error carries it as `error.timeout`. Deliberately not `TIMEOUT`, which means a deadline this library imposed on itself — a worker that never became ready, a deletion that did not complete. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |

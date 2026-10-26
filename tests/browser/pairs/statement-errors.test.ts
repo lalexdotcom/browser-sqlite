@@ -75,7 +75,7 @@ describe('a failed statement carries SQLite codes', {
   tags: ['standalone', 'excludes:shared-storage', 'requires:every-build'],
 }, () => {
   // Falsifiable: drop the STATEMENT_FAILED branch of statementError in
-  // src/pool.ts — a plain Error arrives. Make `stamped` in
+  // src/pool.ts — a WORKER_ERROR arrives. Make `stamped` in
   // src/worker/worker.ts a no-op — sqliteExtendedCode is undefined. (Dropping
   // only the step stamp in `run` changes nothing: the outer catches stamp the
   // same value.)
@@ -249,7 +249,7 @@ describe('bulkWrite', {
 }, () => {
   // SQLiteBulkWriteError already keeps the failed batch as `cause`; this pins
   // what that cause now is. Falsifiable: drop the STATEMENT_FAILED branch of
-  // statementError — the cause is a plain Error.
+  // statementError — the cause is a WORKER_ERROR.
   it('keeps the failed statement as the cause of BULK_WRITE_FAILED', async ({
     task,
   }) => {
