@@ -134,8 +134,13 @@ describe('affected', () => {
     const db = await createTestClient();
 
     await db.run('CREATE TABLE t (a)');
-    await db.run('INSERT INTO t VALUES (1),(2),(3)');
-    const result = await db.run('SELECT 1');
+    // In one transaction: db.run('SELECT 1') takes the read branch and reports
+    // 0 on its own, where the worker's stale-changes guard is what is tested.
+    // Falsifiable: drop that guard in the worker's run.
+    const result = await db.transaction(async (tx) => {
+      await tx.run('INSERT INTO t VALUES (1),(2),(3)');
+      return tx.run('SELECT 1');
+    });
 
     expect(result.affected).toBe(0);
 

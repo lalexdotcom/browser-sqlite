@@ -124,8 +124,8 @@ export const createBulk = (shared: {
 
     // bulkWrite, sweepOnce, indexStatements and output move in here VERBATIM.
     // Not one character of their bodies changes: they already read `read`,
-    // `write`, `transaction`, `file`, `locks`, `logger` and `maxVariables` as
-    // free variables, and all seven are still in scope. This task is a
+    // `writeDirect`, `transaction`, `file`, `locks`, `logger` and
+    // `maxVariables` as free variables, and all seven are still in scope. This task is a
     // relocation; any behavioural edit smuggled into it is a defect.
 
     /**

@@ -946,8 +946,8 @@ describe('transaction — a savepointed write, and the message after it (spec 20
   // function-valued member of `tx` except `rollback` (its own test, just
   // below — a full ROLLBACK concludes nothing, so it has no T7 case to
   // share) and `bulkWrite`/`output` (they issue no query of their own; each
-  // batch is a `tx.run()` under the hood, so they run through the very
-  // `settled`/`via` this file already exercises via `write`). A new entry
+  // batch is a `tx.writeDirect()` under the hood, with no verdict, so they run
+  // through the very `settled`/`via` this file already exercises via `write`). A new entry
   // point that skips `entries` — and so skips its own T7 case — fails this
   // instead of going unnoticed.
   it('the parameterised list above names every method T7 must cover', async () => {

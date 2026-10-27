@@ -79,19 +79,34 @@ describe('routing — strictness', () => {
   // (a read sent to the writer) is gone with write(). Falsifiable: make
   // runStatement() in src/client.ts drop the rows of a read.
   it('run() takes a read statement and returns its rows', async () => {
-    const db = await createTestClient({ poolSize: 2 });
+    const db = await createTestClient();
     const { rows, affected } = await db.run<{ n: number }>('SELECT 1 AS n');
     expect(rows[0]?.n).toBe(1);
     expect(affected).toBe(0);
   });
 
-  // The refusal belongs to first() now: all() takes both. Falsifiable: make
-  // the worker's verdict answer 'write' for a bare read pragma, or 'read' for
-  // one that assigns.
+  // The refusal belongs to first() now: all() takes both. first() asks no
+  // verdict, so what it shares with the verdict is the classification.
+  // Falsifiable: make classifyStatement in src/classify.ts call a bare read
+  // pragma a write.
   it('accepts a bare read pragma through first()', async () => {
     const db = await createTestClient();
     const row = await db.first<{ journal_mode: string }>('PRAGMA journal_mode');
     expect(row?.journal_mode).toBeDefined();
+    await db.close();
+  });
+
+  // The verdict's answer is read off `db.debug`: a read is recorded as a read
+  // request. Falsifiable: make the worker's verdict answer 'write' for a bare
+  // read pragma.
+  it('routes a bare read pragma through all() as a read', async () => {
+    const db = await createTestClient({ debug: true });
+    const rows = await db.all<{ journal_mode: string }>('PRAGMA journal_mode');
+    expect(rows[0]?.journal_mode).toBeDefined();
+    const requests = (db.debug?.requests ?? []).filter((r) =>
+      r.queries.some((q) => q.sql === 'PRAGMA journal_mode'),
+    );
+    expect(requests.map((r) => r.kind)).toEqual(['read']);
     await db.close();
   });
 
