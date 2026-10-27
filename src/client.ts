@@ -1619,9 +1619,11 @@ export const createSQLiteClient = (
 
   /**
    * Executes a write query and returns results with affected row count.
-   * Automatically acquires and releases a worker from the pool.
+   * Automatically acquires and releases a worker from the pool. No verdict is
+   * asked: this is the library's own write path, and `write()` for as long as
+   * it stays.
    */
-  const write = async <
+  const writeDirect = async <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(
     input: string | SQLQuery,
@@ -1743,7 +1745,7 @@ export const createSQLiteClient = (
     logger,
   });
 
-  const { bulkWrite, output } = bulkFor({ read, write, transaction });
+  const { bulkWrite, output } = bulkFor({ read, writeDirect, transaction });
 
   /** Bounds any settlement that depends on a worker answering. */
   const bounded = async (promise: Promise<unknown>, ms: number) => {
@@ -2190,7 +2192,7 @@ export const createSQLiteClient = (
     all,
     chunk,
     read,
-    write,
+    write: writeDirect,
     stream,
     first,
     transaction,

@@ -37,11 +37,12 @@ import {
 } from './utils';
 
 /**
- * The transaction object as the library's own code sees it: `write` also takes
- * the encoded params that `bulkWrite` builds, which no consumer can construct.
+ * The transaction object as the library's own code sees it: `writeDirect` writes
+ * without asking for a verdict, and takes the encoded params that `bulkWrite`
+ * builds, which no consumer can construct.
  * Assignable to `SQLiteTransactionDB`.
  */
-type InternalTransactionDB = SQLiteTransactionDB & { write: WriteFn };
+type InternalTransactionDB = SQLiteTransactionDB & { writeDirect: WriteFn };
 
 // Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK, a
 // savepoint operation) without the chunkSize-1 + break overhead of
@@ -147,7 +148,7 @@ export const createTransaction =
     closeSignal: AbortSignal;
     /**
      * The client's bulk factory. Called per transaction with the transaction's
-     * own read/write and a pass-through `transaction`, so output()'s swap runs
+     * own read/writeDirect and a pass-through `transaction`, so output()'s swap runs
      * on the caller's transaction instead of opening a BEGIN SQLite does not
      * allow.
      */
@@ -155,7 +156,7 @@ export const createTransaction =
     checkStatement: (sql: string) => void;
     bulkFor: (target: {
       read: ReadFn;
-      write: WriteFn;
+      writeDirect: WriteFn;
       transaction: TransactionFn;
       /** See `src/bulk.ts`: the batch's place in this transaction's queue. */
       reserve?: () => { started: Promise<void>; done: () => void };
@@ -1074,7 +1075,7 @@ export const createTransaction =
                 readWorker(target, query, bound, options),
               );
             },
-            write: (sql, params, given) => {
+            writeDirect: (sql, params, given) => {
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
               const bound = prepareParams(params);
@@ -1122,6 +1123,22 @@ export const createTransaction =
             transaction: (fn) => fn(db),
           });
 
+      /** A write, asked of no verdict: the library's own, and `write()` for as long as it stays. */
+      const writeDirect = async <T extends Record<string, unknown>>(
+        input: string | SQLQuery,
+        second?: unknown,
+        third?: Interruptible,
+      ) => {
+        if (ending) return Promise.reject(closedError(ending));
+        const { sql, params, options: given } = queryArgs(input, second, third);
+        const query = checksql(sql);
+        const bound = prepareParams(params);
+        const { settled } = withSignal(given, 'write', query);
+        return settled((target, options) =>
+          runWorker<T>(target, query, bound, options).then(asWriteResult),
+        );
+      };
+
       const db: InternalTransactionDB = {
         read: async <T extends Record<string, unknown>>(
           input: string | SQLQuery,
@@ -1143,24 +1160,8 @@ export const createTransaction =
           );
         },
 
-        write: async <T extends Record<string, unknown>>(
-          input: string | SQLQuery,
-          second?: unknown,
-          third?: Interruptible,
-        ) => {
-          if (ending) return Promise.reject(closedError(ending));
-          const {
-            sql,
-            params,
-            options: given,
-          } = queryArgs(input, second, third);
-          const query = checksql(sql);
-          const bound = prepareParams(params);
-          const { settled } = withSignal(given, 'write', query);
-          return settled((target, options) =>
-            runWorker<T>(target, query, bound, options).then(asWriteResult),
-          );
-        },
+        write: writeDirect,
+        writeDirect,
 
         run: async <T extends Record<string, unknown>>(
           input: string | SQLQuery,

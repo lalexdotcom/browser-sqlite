@@ -17,7 +17,7 @@ const recorder = (locks: Locks = noOpLocks) => {
   const read = async () => [] as any[];
   const transaction = async <T>(callback: (db: any) => Promise<T>) =>
     callback({
-      write: async (s: string, params?: unknown) => {
+      writeDirect: async (s: string, params?: unknown) => {
         sql.push(expandCall(s, params).sql);
         return { result: [], affected: 0 };
       },
@@ -35,8 +35,8 @@ const recorder = (locks: Locks = noOpLocks) => {
     sql,
     forTarget,
     /** A target bound to this recorder — what most tests want. */
-    target: () => forTarget({ read, write, transaction }),
-    deps: { read, write, transaction },
+    target: () => forTarget({ read, writeDirect: write, transaction }),
+    deps: { read, writeDirect: write, transaction },
   };
 };
 
@@ -83,7 +83,7 @@ const failingRecorder = (failAt: number) => {
   const read = async () => [] as any[];
   const transaction = async <T>(callback: (db: any) => Promise<T>) =>
     callback({
-      write: async (s: string, params?: unknown) => {
+      writeDirect: async (s: string, params?: unknown) => {
         sql.push(expandCall(s, params).sql);
         return { result: [], affected: 0 };
       },
@@ -100,8 +100,8 @@ const failingRecorder = (failAt: number) => {
   return {
     sql,
     forTarget,
-    target: () => forTarget({ read, write, transaction }),
-    deps: { read, write, transaction },
+    target: () => forTarget({ read, writeDirect: write, transaction }),
+    deps: { read, writeDirect: write, transaction },
   };
 };
 
@@ -270,7 +270,7 @@ const outputRecorder = () => {
   const transaction = async <T>(callback: (db: any) => Promise<T>) => {
     sql.push('BEGIN');
     const result = await callback({
-      write: async (statement: string, params?: unknown) => {
+      writeDirect: async (statement: string, params?: unknown) => {
         sql.push(expandCall(statement, params).sql);
         return { result: [], affected: 0 };
       },
@@ -293,8 +293,8 @@ const outputRecorder = () => {
   return {
     sql,
     forTarget,
-    target: () => forTarget({ read, write, transaction }),
-    deps: { read, write, transaction },
+    target: () => forTarget({ read, writeDirect: write, transaction }),
+    deps: { read, writeDirect: write, transaction },
   };
 };
 
@@ -362,14 +362,14 @@ describe('output() staging and swap (B5)', () => {
     const read = async () => [] as any[];
     const transaction = async <T>(cb: (db: any) => Promise<T>) => {
       sql.push('BEGIN');
-      return cb({ write: async () => ({ result: [], affected: 0 }) });
+      return cb({ writeDirect: async () => ({ result: [], affected: 0 }) });
     };
     const { output } = createBulk({
       file: 'app.db',
       vfs: 'OPFSAdaptiveVFS',
       locks: noOpLocks,
       logger: noopLogger,
-    })({ write, read, transaction } as any);
+    })({ writeDirect: write, read, transaction } as any);
 
     const out = output('report', { id: 'INTEGER' });
     out.enqueue({ id: 1 });
@@ -469,14 +469,14 @@ describe('bulkWrite abort (ABORT-1)', () => {
     const read = async () => [] as any[];
     const transaction = async <T>(cb: (db: any) => Promise<T>) => {
       sql.push('BEGIN');
-      return cb({ write: async () => ({ result: [], affected: 0 }) });
+      return cb({ writeDirect: async () => ({ result: [], affected: 0 }) });
     };
     const { output } = createBulk({
       file: 'app.db',
       vfs: 'OPFSAdaptiveVFS',
       locks: noOpLocks,
       logger: noopLogger,
-    })({ write, read, transaction } as any);
+    })({ writeDirect: write, read, transaction } as any);
     const controller = new AbortController();
 
     const out = output(
@@ -522,7 +522,7 @@ describe('bulkWrite abort with a stalled batch (ABORT-1 regression)', () => {
       ]) as Promise<{ result: any[]; affected: number }>;
     const read = async () => [] as any[];
     const transaction = async <T>(cb: (db: any) => Promise<T>) =>
-      cb({ write: async () => ({ result: [], affected: 0 }) });
+      cb({ writeDirect: async () => ({ result: [], affected: 0 }) });
 
     const { bulkWrite } = createBulk({
       file: 'app.db',
@@ -530,7 +530,7 @@ describe('bulkWrite abort with a stalled batch (ABORT-1 regression)', () => {
       locks: noOpLocks,
       logger: noopLogger,
       maxVariables: 2,
-    })({ read, write, transaction } as any);
+    })({ read, writeDirect: write, transaction } as any);
 
     const controller = new AbortController();
     const bulk = bulkWrite('t', ['a'], { signal: controller.signal });
@@ -569,7 +569,7 @@ const gatedRecorder = () => {
   const read = async () => [] as any[];
   const transaction = async <T>(cb: (db: any) => Promise<T>) =>
     cb({
-      write: async () => ({ result: [], affected: 0 }),
+      writeDirect: async () => ({ result: [], affected: 0 }),
       read: async () => [],
     });
 
@@ -580,7 +580,7 @@ const gatedRecorder = () => {
     settleAll: () => {
       while (gates.length) gates.shift()?.();
     },
-    deps: { read, write, transaction } as any,
+    deps: { read, writeDirect: write, transaction } as any,
   };
 };
 
@@ -778,13 +778,13 @@ describe('bulkWrite values and types', () => {
     };
     const read = async () => [] as unknown[];
     const transaction = async <T>(cb: (db: any) => Promise<T>) =>
-      cb({ write, read });
+      cb({ writeDirect: write, read });
     const target = createBulk({
       file: 'app.db',
       vfs: 'OPFSAdaptiveVFS',
       locks: noOpLocks,
       logger: noopLogger,
-    })({ read, write, transaction });
+    })({ read, writeDirect: write, transaction });
     return { calls, target };
   };
 

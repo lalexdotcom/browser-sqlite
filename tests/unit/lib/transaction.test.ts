@@ -952,7 +952,9 @@ describe('transaction — a savepointed write, and the message after it (spec 20
         .filter(([, value]) => typeof value === 'function')
         .map(([key]) => key);
     });
-    const excluded = ['rollback', 'bulkWrite', 'output'];
+    // `writeDirect` is the very function `write` is, held under the name the
+    // library's own bulk calls: the `write` entry covers it.
+    const excluded = ['rollback', 'bulkWrite', 'output', 'writeDirect'];
     expect(methodNames.sort()).toEqual(
       [...entries.map(([entryName]) => entryName), ...excluded].sort(),
     );
