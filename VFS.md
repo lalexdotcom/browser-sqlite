@@ -253,6 +253,8 @@ What it costs is concurrency whenever one connection holds that handle for a lon
 
 **A long *read* does this as much as a write transaction.** A connection inside a single long statement cannot answer a hand-over request, so a query that runs for seconds serializes every other connection's reads for its whole duration.
 
+**The first call of a statement waits too.**<br>A client that has not run a statement yet may wait for another client's transaction before the call is even queued. `timeout` and `signal` bound that wait, as for any call.
+
 <!-- BEGIN GENERATED FOOTNOTES — edit scripts/render-vfs-matrix.ts -->
 
 ---

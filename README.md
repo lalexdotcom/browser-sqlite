@@ -9,7 +9,7 @@ A client stores its data through a wa-sqlite VFS, which decides where that data 
 browser-sqlite makes choices for you, so that one database stays correct while several workers, clients and tabs use it. You will meet each of them as a refusal or a wait if you do not know them, so here they are:
 
 - **One writer at a time, across the origin.** Every write takes a lock per database shared by every client and every tab; a second writer waits its turn. See [Writes are serialized](#writes-are-serialized).
-- **Reads and writes go through different methods.** `read()`, `stream()`, `chunk()` and `first()` accept only a statement that is provably a read; everything else goes through `write()`.
+- **One statement per call.** A string that holds several statements is refused with `MULTIPLE_STATEMENTS` before anything runs: send each in its own call, or in a [`transaction()`](API.md#clienttransaction). `run()`, `all()`, `stream()` and `chunk()` take any single statement, a write included; only `first()` is for reads and refuses a statement that writes.
 - **Transactions belong to the library.** `BEGIN`, `COMMIT`, `ROLLBACK` and savepoints sent as SQL are refused: use [`transaction()`](API.md#clienttransaction) and `tx.savepoint()`. A write transaction always opens with `BEGIN IMMEDIATE`, a `readOnly` one with a plain `BEGIN`.
 - **The build follows the browser.** Leave `build` out and each VFS loads the first build it declares that the engine supports.
 
@@ -63,10 +63,10 @@ import { createSQLiteClient, sql } from 'browser-sqlite';
 
 const db = createSQLiteClient('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 
-await db.write('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)');
-await db.write(sql`INSERT INTO users (name) VALUES (${'Alice'})`);
+await db.run('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)');
+await db.run(sql`INSERT INTO users (name) VALUES (${'Alice'})`);
 
-const users = await db.read<{ id: number; name: string }>('SELECT id, name FROM users');
+const users = await db.all<{ id: number; name: string }>('SELECT id, name FROM users');
 
 for await (const row of db.stream<{ id: number; name: string }>('SELECT * FROM users')) {
   process(row);
@@ -77,7 +77,7 @@ await db.close();
 
 [*client*.id](API.md#clientid) · [*client*.name](API.md#clientname) · [*client*.file](API.md#clientfile) · [*client*.files](API.md#clientfiles) · [*client*.vfs](API.md#clientvfs) · [*client*.build](API.md#clientbuild) · [*client*.poolSize](API.md#clientpoolsize) · [*client*.ready](API.md#clientready) · [*client*.debug](API.md#clientdebug)
 
-[createSQLiteClient()](API.md#createsqliteclient) · [*client*.read()](API.md#clientread) · [*client*.write()](API.md#clientwrite) · [*client*.stream()](API.md#clientstream) · [*client*.chunk()](API.md#clientchunk) · [*client*.first()](API.md#clientfirst) · [*client*.transaction()](API.md#clienttransaction) · [*client*.bulkWrite()](API.md#clientbulkwrite) · [*client*.output()](API.md#clientoutput) · [*client*.inspect()](API.md#clientinspect) · [*client*.close()](API.md#clientclose) · [deleteDatabase()](API.md#deletedatabase) · [inspectDatabase()](API.md#inspectdatabase) · [sql\`…\`](API.md#sql)
+[createSQLiteClient()](API.md#createsqliteclient) · [*client*.run()](API.md#clientrun) · [*client*.all()](API.md#clientall) · [*client*.stream()](API.md#clientstream) · [*client*.chunk()](API.md#clientchunk) · [*client*.first()](API.md#clientfirst) · [*client*.transaction()](API.md#clienttransaction) · [*client*.bulkWrite()](API.md#clientbulkwrite) · [*client*.output()](API.md#clientoutput) · [*client*.inspect()](API.md#clientinspect) · [*client*.close()](API.md#clientclose) · [deleteDatabase()](API.md#deletedatabase) · [inspectDatabase()](API.md#inspectdatabase) · [sql\`…\`](API.md#sql)
 
 ## Storage
 
@@ -99,7 +99,7 @@ Once a write has resolved, any read issued afterwards observes it — from any c
 
 ### Writes are serialized
 
-`write()`, a write `transaction()` and each batch of a `bulkWrite()` take one lock per database, across every client and tab: a second writer waits its turn, unbounded unless you pass a `signal` or a `timeout`. A transaction holds the lock for its whole callback, so keep it short. A `bulkWrite()` commits per batch — use `tx.bulkWrite()` for all or nothing.
+A statement that writes, a write `transaction()` and each batch of a `bulkWrite()` take one lock per database, across every client and tab: a second writer waits its turn, unbounded unless you pass a `signal` or a `timeout`. A transaction holds the lock for its whole callback, so keep it short. A `bulkWrite()` commits per batch — use `tx.bulkWrite()` for all or nothing.
 
 ## Known Limitations
 

@@ -277,7 +277,7 @@ export type SQLiteQueryAPI = {
    *
    * @param sql - One SQL statement, read or write.
    * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`chunkSize`, `signal`, `timeout`).
+   * @param options - Optional query options (`signal`, `timeout`).
    * @returns Promise resolving to every row the statement produced.
    */
   all: {

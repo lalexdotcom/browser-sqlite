@@ -8,14 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **`stream()` and `chunk()` take a write statement and carry `affected`,** a promise of the rows it changed, on the client and in a transaction. A write is completed before its first row is delivered, so a slow consumer never holds the write lock.
 - **With `debug`, a worker that waits for a database file another worker still holds reports the `boot` stage `'waiting for a held file'`,** instead of staying at `'opening the database'`.
 
 ### Changed
 
-- **Breaking:** **`stream()` and `chunk()` throw an invalid argument from the call,** instead of rejecting it at the first `next()`: a value that is neither SQL nor an `sql` query, a `params` array passed with an `sql` query, a write statement, or a param that cannot be bound.
+- **Breaking:** **`read()` is renamed `all()` and `write()` is renamed `run()`,** on the client and in a transaction. `all()` takes any single statement, a write included, and resolves with its rows; `run()` resolves with `{ rows, affected }`. Replace `db.read(…)` with `db.all(…)` and `db.write(…)` with `db.run(…)`, and `tx.read()` and `tx.write()` likewise.
+- **Breaking:** **The result of a write is `{ rows, affected }`,** where `rows` was `result`. Replace `const { result } = await db.write(…)` with `const { rows } = await db.run(…)`.
+- **Breaking:** **A string of several statements is refused with `MULTIPLE_STATEMENTS`, before anything runs,** and the per-statement binding of anonymous `?` of `1.0.0-rc.10` is gone with it. Send each statement in its own call with its own params, or in a transaction.
+- **`first()` refuses a write statement in the worker, with `NOT_A_READ_QUERY`,** and accepts the reads the previous rule refused, such as `SELECT 'INSERT'` or `EXPLAIN …`.
+- **The first call of a statement may take one more round trip,** while the pool tells whether it reads or writes; the client remembers the answer.
+- **Breaking:** **`stream()` and `chunk()` throw an invalid argument from the call,** instead of rejecting it at the first `next()`: a value that is neither SQL nor an `sql` query, a `params` array passed with an `sql` query, or a param that cannot be bound.
 - **Breaking:** **The `timeout` of `stream()` and `chunk()` counts from the call,** as for every other method, instead of from the first `next()`: a generator read after its budget is spent rejects with `OPERATION_TIMEOUT`.
-- **Breaking:** **In a transaction, `tx.read()`, `tx.write()` and `tx.first()` reject an invalid argument,** as `read()`, `write()` and `first()` do, instead of throwing it from the call.
-- **Breaking:** **In a transaction, `tx.read()`, `tx.first()`, `tx.chunk()` and `tx.stream()` refuse a write statement with `NOT_A_READ_QUERY`,** as on the client, where they ran it. A write goes through `tx.write()`, whose `result` holds its `RETURNING` rows.
+- **Breaking:** **In a transaction, `tx.run()`, `tx.all()` and `tx.first()` reject an invalid argument,** as `run()`, `all()` and `first()` do, instead of throwing it from the call.
+- **Breaking:** **In a transaction, `tx.first()` refuses a write statement with `NOT_A_READ_QUERY`,** as on the client, instead of running it. A write goes through `tx.run()`, whose `rows` hold its `RETURNING` rows.
 - **A statement that fails in its worker without SQLite reporting it rejects with a `SQLiteError` of code `WORKER_ERROR`,** the original exception as `cause`, where it was a plain `Error` with no code.
 - **An invalid or refused pragma is reported with `INVALID_PRAGMA` before a missing browser feature,** where a browser without OPFS reported the missing OPFS instead.
 - **A `wasmUrl` callback is no longer called when the client's options are invalid or the browser lacks what the VFS needs,** nor when `deleteDatabase()` is refused before starting its worker.
