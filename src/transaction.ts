@@ -114,7 +114,9 @@ export const createTransaction =
     /**
      * Whether `sql` reads or writes, as SQLite says: the client's memo, or a
      * verdict from `worker` itself, which the caller holds idle. `signal` ends
-     * the wait. Rejects `MULTIPLE_STATEMENTS` for a string of several.
+     * the wait. Rejects `MULTIPLE_STATEMENTS` for a string of several. Not
+     * through `via`, deliberately: a verdict changes nothing on the connection
+     * and carries no savepoint conclusion.
      */
     kindOf: (
       worker: PoolWorker,
@@ -654,7 +656,6 @@ export const createTransaction =
         abortedAtCall: boolean;
         savepointed: boolean;
         decide: () => boolean | Promise<boolean>;
-        ownIfSavepointed: AbortSignal | undefined;
         mark: { posted: boolean };
       } => {
         const own = withDeadline(given, method);
@@ -663,15 +664,7 @@ export const createTransaction =
         // statement has already rejected.
         const abortedAtCall = own.signal?.aborted === true;
         const merged = mergeSignals(signal, own.signal);
-        // The statement's own abort, relayed once it runs savepointed: what
-        // the stream adapter checks before each buffered row.
-        const gate =
-          own.signal && !abortedAtCall && !readOnly
-            ? new AbortController()
-            : undefined;
-        let unlink: (() => void) | undefined;
         const release = () => {
-          unlink?.();
           merged.release();
           own.release();
         };
@@ -683,15 +676,6 @@ export const createTransaction =
         const driving = { ...given, signal } as O;
         const decided = (opens: boolean) => {
           st.savepointed = opens;
-          const source = own.signal;
-          if (opens && gate && source) {
-            const relay = () => gate.abort(source.reason);
-            if (source.aborted) relay();
-            else {
-              source.addEventListener('abort', relay, { once: true });
-              unlink = () => source.removeEventListener('abort', relay);
-            }
-          }
           return opens;
         };
         const decide = () => {
@@ -792,7 +776,6 @@ export const createTransaction =
           abortedAtCall,
           savepointed: false,
           decide,
-          ownIfSavepointed: gate?.signal,
           mark,
         };
         return st;
@@ -1220,7 +1203,7 @@ export const createTransaction =
           // Built at the call when no signal of its own can open a savepoint;
           // otherwise at the first next(), once SQLite has been asked.
           const source =
-            st.own === undefined || st.abortedAtCall
+            st.own === undefined || st.abortedAtCall || readOnly
               ? start()
               : (async function* () {
                   yield* start();
@@ -1253,10 +1236,11 @@ export const createTransaction =
           })();
           // `releasing` checks its own signal once per chunk; the adapter checks
           // it before each buffered row and throws its reason into `releasing`.
-          const rows = flatten(
-            releasing(source, entry, st, 'stream'),
-            st.ownIfSavepointed ? { signal: st.ownIfSavepointed } : undefined,
-          );
+          // Read per buffered row: a stream decided not savepointed keeps the
+          // adapter's fast path, with no signal to check.
+          const rows = flatten(releasing(source, entry, st, 'stream'), {
+            signal: () => (st.savepointed ? st.own : undefined),
+          });
           // The transaction closes the adapter, which drops its buffered rows
           // and closes `releasing` in turn.
           entry.gen = rows;

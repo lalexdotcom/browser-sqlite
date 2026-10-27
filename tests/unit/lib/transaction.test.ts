@@ -21,6 +21,8 @@ const fakeWorker = (
   failOn: string[],
   hooks: Record<string, () => Promise<void> | void> = {},
   leaveOn: string[] = [],
+  /** The rows a statement yields, as one chunk, keyed by its SQL. */
+  rowsOf: Record<string, Record<string, unknown>[]> = {},
 ) => {
   const executed: string[] = [];
   const flags: {
@@ -65,7 +67,7 @@ const fakeWorker = (
         for (const [needle, hook] of Object.entries(hooks))
           if (sql.startsWith(needle)) await hook();
         if (fails) throw new SQLiteError('BUSY', `database is locked (${sql})`);
-        yield [] as Record<string, unknown>[];
+        yield rowsOf[sql] ?? ([] as Record<string, unknown>[]);
       } finally {
         if (!fails && sql.startsWith('BEGIN')) worker.inTransaction = true;
         else if (!fails && /^(COMMIT|ROLLBACK(?!\s+TO\b))/.test(sql))
@@ -1734,4 +1736,135 @@ describe('transaction — the savepoint asks SQLite (spec 2026-10-26, § Transac
       ]);
     });
   }
+});
+
+describe('transaction — the savepoint asks SQLite: queue, death, stream (fix round 1)', () => {
+  const ownSignal = () => new AbortController().signal;
+
+  // Falsifiable: in `settled`, hand the queue on (`mine.resolve(prior)`)
+  // before `decide()` — the next statement then runs during the ask.
+  it('runs nothing queued behind a statement until its verdict has come', async () => {
+    const answer = deferred();
+    const worker = fakeWorker([]);
+    const { transaction, asked } = harness(worker, {
+      kindOf: async (sql) => {
+        if (sql === 'INSERT INTO t VALUES (1)') await answer.promise;
+        return 'write';
+      },
+    });
+    let meanwhile: string[] = [];
+    await transaction(async (tx) => {
+      const a = tx.run('INSERT INTO t VALUES (1)', [], { signal: ownSignal() });
+      const b = tx.run('INSERT INTO t VALUES (2)');
+      while (asked.length === 0) await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      meanwhile = [...worker.executed];
+      answer.resolve();
+      await Promise.all([a, b]);
+    });
+    expect(meanwhile).toEqual(['BEGIN IMMEDIATE']);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT __bsq_sp',
+      'INSERT INTO t VALUES (1)',
+      'RELEASE __bsq_sp',
+      'INSERT INTO t VALUES (2)',
+      'COMMIT',
+    ]);
+  });
+
+  // Falsifiable: ask with the statement's own signal only (`own.signal` for
+  // `options.signal` in `decide`) — the death then does not end the wait, and
+  // this test times out on a verdict that never comes.
+  it('rejects a statement promptly, posting nothing, when the transaction dies during its ask', async () => {
+    const close = new AbortController();
+    const reason = new Error('client closed');
+    const worker = fakeWorker([]);
+    const { transaction, asked } = harness(worker, {
+      closeSignal: close.signal,
+      kindOf: () => new Promise<'write'>(() => {}),
+    });
+    let refused: unknown;
+    const outcome = await transaction(async (tx) => {
+      const pending = tx.run('INSERT INTO t VALUES (1)', [], {
+        signal: ownSignal(),
+      });
+      while (asked.length === 0) await Promise.resolve();
+      close.abort(reason);
+      refused = await pending.catch((e) => e);
+    }).catch((e) => e);
+    expect(outcome).toBe(reason);
+    expect(refused).toBe(reason);
+    expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'ROLLBACK']);
+  }, 5000);
+
+  // Falsifiable: in `kindAt`'s catch, clear `pending` — the abandoned write is
+  // then released by the next message instead of undone.
+  it('leaves a pending undo to the next message when a statement leaves during its ask', async () => {
+    const reached = deferred();
+    const gate = deferred();
+    const answer = deferred();
+    const worker = fakeWorker([], {
+      'INSERT INTO t VALUES (1)': async () => {
+        reached.resolve();
+        await gate.promise;
+      },
+    });
+    const { transaction, asked } = harness(worker, {
+      kindOf: async (sql) => {
+        if (sql === 'INSERT INTO t VALUES (9)') await answer.promise;
+        return 'write';
+      },
+    });
+    const first = new AbortController();
+    const second = new AbortController();
+    await transaction(async (tx) => {
+      const write = tx.run('INSERT INTO t VALUES (1)', [], {
+        signal: first.signal,
+      });
+      await reached.promise;
+      first.abort(new Error('the first write only'));
+      await write.catch(() => {});
+      gate.resolve();
+      const waiting = tx.run('INSERT INTO t VALUES (9)', [], {
+        signal: second.signal,
+      });
+      while (!asked.includes('INSERT INTO t VALUES (9)'))
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      second.abort(new Error('the second write only'));
+      await waiting.catch(() => {});
+      await tx.run('INSERT INTO t VALUES (2)');
+      answer.resolve();
+    });
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT __bsq_sp',
+      'INSERT INTO t VALUES (1)',
+      'ROLLBACK TO __bsq_sp',
+      'RELEASE __bsq_sp',
+      'INSERT INTO t VALUES (2)',
+      'COMMIT',
+    ]);
+  }, 5000);
+
+  // A buffered row on the fast path is already resolved: it wins a race
+  // against a microtask queued after the call. Falsifiable: give the adapter
+  // `st.own` whatever the decision — the row then comes a turn later.
+  it('serves the buffered rows of a stream that is not savepointed on the fast path, own signal or not', async () => {
+    const worker = fakeWorker([], {}, [], {
+      'SELECT a': [{ a: 1 }, { a: 2 }],
+    });
+    const { transaction } = harness(worker);
+    let winner: unknown;
+    await transaction(async (tx) => {
+      const rows = tx.stream('SELECT a', [], { signal: ownSignal() });
+      expect((await rows.next()).value).toEqual({ a: 1 });
+      winner = await Promise.race([
+        rows.next().then(() => 'row'),
+        Promise.resolve().then(() => 'tick'),
+      ]);
+      await rows.return(undefined);
+    });
+    expect(winner).toBe('row');
+  });
 });

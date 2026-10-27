@@ -284,7 +284,8 @@ export type SQLiteQueryAPI = {
    *
    * In a transaction both run on its connection, and SQLite is asked only
    * for a statement carrying its own `signal` or `timeout`: a write among
-   * those runs inside a savepoint, so that abandoning it alone undoes it.
+   * those runs inside a savepoint, so that abandoning it alone undoes it. A
+   * read-only transaction never asks: it refuses every write.
    *
    * A string holding more than one statement is refused with
    * `MULTIPLE_STATEMENTS`, before anything runs. `timeout` counts from the
