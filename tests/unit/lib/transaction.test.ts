@@ -148,7 +148,7 @@ describe('transaction — a poisoned connection is never re-lent', () => {
 
     await expect(
       transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
       }),
     ).rejects.toBeInstanceOf(SQLiteError);
 
@@ -170,7 +170,7 @@ describe('transaction — a poisoned connection is never re-lent', () => {
     const { transaction, poisoned } = harness(worker);
 
     await transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
     });
     expect(poisoned).toEqual([]);
   });
@@ -184,7 +184,7 @@ describe('transaction — a poisoned connection is never re-lent', () => {
 
     await expect(
       transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
       }),
     ).rejects.toBeInstanceOf(SQLiteError);
 
@@ -201,7 +201,7 @@ describe('transaction — a poisoned connection is never re-lent', () => {
 
     await expect(
       transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
       }),
     ).rejects.toBeInstanceOf(SQLiteError);
 
@@ -314,7 +314,7 @@ describe('transaction — the caller may abandon it', () => {
         async (tx) => {
           ctl.abort(reason);
           try {
-            await tx.write('INSERT INTO t VALUES (1)');
+            await tx.run('INSERT INTO t VALUES (1)');
           } catch {
             // The caller decided this statement's failure was survivable. The
             // transaction's own signal says otherwise.
@@ -380,7 +380,7 @@ describe('transaction — the caller may abandon it', () => {
     const running = transaction(
       async (tx) => {
         try {
-          await tx.write('INSERT INTO t VALUES (1)', [], {
+          await tx.run('INSERT INTO t VALUES (1)', [], {
             signal: own.signal,
           });
         } catch (error) {
@@ -413,7 +413,7 @@ describe('transaction — the caller may abandon it', () => {
 
     const running = transaction(
       async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)', [], { signal: own.signal });
+        await tx.run('INSERT INTO t VALUES (1)', [], { signal: own.signal });
       },
       { signal: ctl.signal },
     );
@@ -440,7 +440,7 @@ describe('transaction — a closed handle never reaches the worker (spec R3, R4)
     let kept!: SQLiteTransactionDB;
     await transaction(async (tx) => {
       kept = tx;
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
     });
     const executed = [...worker.executed];
 
@@ -448,9 +448,7 @@ describe('transaction — a closed handle never reaches the worker (spec R3, R4)
     expect(warnings).toEqual([]);
     await expect(kept.rollback()).resolves.toBeUndefined();
     expect(warnings).toHaveLength(1);
-    const refused = await kept
-      .write('INSERT INTO t VALUES (2)')
-      .catch((e) => e);
+    const refused = await kept.run('INSERT INTO t VALUES (2)').catch((e) => e);
     expect(refused).toMatchObject({ code: 'TRANSACTION_CLOSED' });
     expect((refused as Error).cause).toBeUndefined();
     expect(worker.executed).toEqual(executed);
@@ -463,7 +461,7 @@ describe('transaction — a closed handle never reaches the worker (spec R3, R4)
     await transaction(
       async (tx) => {
         kept = tx;
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
       },
       { autoCommit: false },
     );
@@ -506,7 +504,7 @@ describe('transaction — a closed handle never reaches the worker (spec R3, R4)
     expect(refused).toMatchObject({ code: 'TRANSACTION_CLOSED' });
     expect((refused as Error).cause).toBe(reason);
     await expect(kept.rollback()).resolves.toBeUndefined();
-    const statement = await kept.read('SELECT 1').catch((e) => e);
+    const statement = await kept.all('SELECT 1').catch((e) => e);
     expect(statement).toMatchObject({ code: 'TRANSACTION_CLOSED' });
     expect((statement as Error).cause).toBe(reason);
     expect(warnings).toEqual([]);
@@ -527,7 +525,7 @@ describe('transaction — a closed handle never reaches the worker (spec R3, R4)
       transaction(
         async (tx) => {
           kept = tx;
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
         },
         { signal: ctl.signal },
       ),
@@ -554,8 +552,8 @@ describe('transaction — what else kills it (spec R1)', () => {
     let later: unknown;
     const finished = deferred();
     const running = transaction(async (tx) => {
-      first = await tx.write('INSERT INTO t VALUES (1)').catch((e) => e);
-      later = await tx.read('SELECT 1').catch((e) => e);
+      first = await tx.run('INSERT INTO t VALUES (1)').catch((e) => e);
+      later = await tx.all('SELECT 1').catch((e) => e);
       finished.resolve();
     });
     // Captured, not `rejects.toBe(first)`: that would read `first` before the
@@ -590,14 +588,14 @@ describe('transaction — what else kills it (spec R1)', () => {
     const reason = new Error('this write only');
     let caught: unknown;
     await transaction(async (tx) => {
-      const pending = tx.write('INSERT INTO t VALUES (1)', [], {
+      const pending = tx.run('INSERT INTO t VALUES (1)', [], {
         signal: own.signal,
       });
       await reached.promise;
       own.abort(reason);
       caught = await pending.catch((e) => e);
       gate.resolve();
-      await tx.write('INSERT INTO t VALUES (2)');
+      await tx.run('INSERT INTO t VALUES (2)');
     });
     expect(caught).toBe(reason);
     expect(worker.executed).toEqual([
@@ -612,14 +610,23 @@ describe('transaction — what else kills it (spec R1)', () => {
   });
 
   it('does not die when a read is abandoned by its own signal (R7)', async () => {
-    const worker = fakeWorker([], { 'SELECT slow': never });
+    const reached = deferred();
+    const worker = fakeWorker([], {
+      'SELECT slow': async () => {
+        reached.resolve();
+        await never();
+      },
+    });
     const { transaction } = harness(worker);
     const own = new AbortController();
     await transaction(async (tx) => {
-      const pending = tx.read('SELECT slow', [], { signal: own.signal });
+      const pending = tx.all('SELECT slow', [], { signal: own.signal });
+      // After the query is posted: all() may ask a verdict first, and an abort
+      // during that wait never reaches the worker, which is not what R7 tests.
+      await reached.promise;
       own.abort(new Error('this read only'));
       await pending.catch(() => {});
-      await tx.write('INSERT INTO t VALUES (2)');
+      await tx.run('INSERT INTO t VALUES (2)');
     });
     expect(worker.executed).toEqual([
       'BEGIN IMMEDIATE',
@@ -650,16 +657,16 @@ describe('transaction — what else kills it (spec R1)', () => {
   // dieIfConnectionLeft's SUCCESS branch: the statement itself succeeded, so
   // there is no error to keep — the transaction dies with a fresh
   // TRANSACTION_CLOSED naming the method that made SQLite leave.
-  it('dies with a TRANSACTION_CLOSED naming read() when the connection reports no transaction after it succeeds', async () => {
+  it('dies with a TRANSACTION_CLOSED naming all() when the connection reports no transaction after it succeeds', async () => {
     const worker = fakeWorker([], {}, ['SELECT']);
     const { transaction } = harness(worker);
 
     const outcome = await transaction(async (tx) => {
-      await tx.read('SELECT 1');
+      await tx.all('SELECT 1');
     }).catch((e) => e);
 
     expect(outcome).toMatchObject({ code: 'TRANSACTION_CLOSED' });
-    expect((outcome as Error).message).toContain('read()');
+    expect((outcome as Error).message).toContain('all()');
   });
 });
 
@@ -674,7 +681,7 @@ describe('transaction — closed handle: chunk()/stream() do not wait on the wor
     let kept!: SQLiteTransactionDB;
     await transaction(async (tx) => {
       kept = tx;
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
     });
     // A worker whose current query never lets go — the reuse guard's
     // unbounded wait this fix must not take.
@@ -739,7 +746,7 @@ describe('tx.signal — aborts whenever transaction() rejects (spec 2026-09-10, 
 
     const outcome = await transaction(async (tx) => {
       seen = tx.signal;
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
     }).catch((e) => e);
 
     expect(outcome).toBeInstanceOf(SQLiteError);
@@ -765,7 +772,7 @@ describe('tx.signal — aborts whenever transaction() rejects (spec 2026-09-10, 
     await expect(
       transaction(async (tx) => {
         seen = tx.signal;
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
       }),
     ).resolves.toBeUndefined();
 
@@ -787,9 +794,9 @@ describe('transaction — a write whose own signal was already aborted at the ca
 
     await transaction(async (tx) => {
       refused = await tx
-        .write('INSERT INTO t VALUES (1)', [], { signal: ctl.signal })
+        .run('INSERT INTO t VALUES (1)', [], { signal: ctl.signal })
         .catch((e) => e);
-      await tx.write('INSERT INTO t VALUES (2)');
+      await tx.run('INSERT INTO t VALUES (2)');
     });
 
     expect(refused).toBe(reason);
@@ -819,7 +826,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
     const reason = new Error('this write only');
     let caught: unknown;
     await transaction(async (tx) => {
-      const write = tx.write('INSERT INTO t VALUES (1)', [], {
+      const write = tx.run('INSERT INTO t VALUES (1)', [], {
         signal: own.signal,
       });
       await reached.promise;
@@ -911,7 +918,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
       const own = new AbortController();
       await transaction(async (tx) => {
         const sp = await tx.savepoint('u');
-        const write = tx.write('INSERT INTO t VALUES (1)', [], {
+        const write = tx.run('INSERT INTO t VALUES (1)', [], {
           signal: own.signal,
         });
         await reached.promise;
@@ -939,7 +946,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
   // function-valued member of `tx` except `rollback` (its own test, just
   // below — a full ROLLBACK concludes nothing, so it has no T7 case to
   // share) and `bulkWrite`/`output` (they issue no query of their own; each
-  // batch is a `tx.write()` under the hood, so they run through the very
+  // batch is a `tx.run()` under the hood, so they run through the very
   // `settled`/`via` this file already exercises via `write`). A new entry
   // point that skips `entries` — and so skips its own T7 case — fails this
   // instead of going unnoticed.
@@ -978,8 +985,8 @@ describe('transaction — a savepointed write, and the message after it (spec 20
     const worker = fakeWorker([]);
     const { transaction } = harness(worker);
     await transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)', [], { timeout: 60_000 });
-      await tx.write('INSERT INTO t VALUES (2)');
+      await tx.run('INSERT INTO t VALUES (1)', [], { timeout: 60_000 });
+      await tx.run('INSERT INTO t VALUES (2)');
     });
     expect(worker.executed).toEqual([
       'BEGIN IMMEDIATE',
@@ -1012,19 +1019,19 @@ describe('transaction — a savepointed write, and the message after it (spec 20
     const reason = new Error('the second write only');
     let refused: unknown;
     await transaction(async (tx) => {
-      const write = tx.write('INSERT INTO t VALUES (1)', [], {
+      const write = tx.run('INSERT INTO t VALUES (1)', [], {
         signal: own.signal,
       });
       await reached.promise;
       own.abort(new Error('the first write only'));
       await write.catch(() => {});
-      const waiting = tx.write('INSERT INTO t VALUES (2)', [], {
+      const waiting = tx.run('INSERT INTO t VALUES (2)', [], {
         signal: second.signal,
       });
       second.abort(reason);
       refused = await waiting.catch((e) => e);
       gate.resolve();
-      await tx.write('INSERT INTO t VALUES (3)');
+      await tx.run('INSERT INTO t VALUES (3)');
     });
     expect(refused).toBe(reason);
     expect(worker.executed).toEqual([
@@ -1053,7 +1060,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
     const failure = new Error('give up');
     await expect(
       transaction(async (tx) => {
-        const write = tx.write('INSERT INTO t VALUES (1)', [], {
+        const write = tx.run('INSERT INTO t VALUES (1)', [], {
           signal: own.signal,
         });
         await reached.promise;
@@ -1078,7 +1085,7 @@ describe('transaction — BEGIN announces write intent (spec 2026-09-15, A4)', (
     const writeWorker = fakeWorker([]);
     const { transaction: writeTransaction } = harness(writeWorker);
     await writeTransaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
     });
     expect(writeWorker.executed[0]).toBe('BEGIN IMMEDIATE');
 
@@ -1086,7 +1093,7 @@ describe('transaction — BEGIN announces write intent (spec 2026-09-15, A4)', (
     const { transaction: readOnlyTransaction } = harness(readOnlyWorker);
     await readOnlyTransaction(
       async (tx) => {
-        await tx.read('SELECT 1');
+        await tx.all('SELECT 1');
       },
       { readOnly: true },
     );
@@ -1100,7 +1107,7 @@ describe('transaction — the control flag (spec 2026-10-04, § 4)', () => {
     const worker = fakeWorker([]);
     const { transaction } = harness(worker);
     await transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
     });
     expect(worker.flags).toEqual([
       { sql: 'BEGIN IMMEDIATE', control: true, uncached: false },
@@ -1144,8 +1151,8 @@ describe('transaction — the statement queue advisory', () => {
 
       await transaction(async (tx) => {
         // Issued in one tick: the second waits for the first, which is held.
-        const first = tx.read('SELECT slow');
-        const queued = tx.read('SELECT 1');
+        const first = tx.all('SELECT slow');
+        const queued = tx.all('SELECT 1');
 
         await vi.advanceTimersByTimeAsync(5_000);
         expect(warnings.some((w) => w.includes('waited several seconds'))).toBe(
@@ -1294,7 +1301,7 @@ describe('tx.savepoint() — refusals at the call (spec 2026-10-04, E1-E8, U3)',
     const { transaction } = harness(worker);
     await transaction(async (tx) => {
       const sp = tx.savepoint('u');
-      const write = tx.write('INSERT INTO t VALUES (1)');
+      const write = tx.run('INSERT INTO t VALUES (1)');
       await Promise.all([sp, write]);
     });
     expect(worker.executed).toEqual([
@@ -1333,7 +1340,7 @@ describe('tx.savepoint() — failures and endings (spec 2026-10-04, E12, D5, U4,
     const outcome = await transaction(async (tx) => {
       const sp = await tx.savepoint('u');
       caught = await sp.release().catch((e) => e);
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
     }).catch((e) => e);
     expect(outcome).toBe(caught);
     expect(worker.executed).toEqual([
@@ -1352,7 +1359,7 @@ describe('tx.savepoint() — failures and endings (spec 2026-10-04, E12, D5, U4,
     const outcome = await transaction(async (tx) => {
       const sp = await tx.savepoint('u');
       caught = await sp.rollback().catch((e) => e);
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
     }).catch((e) => e);
     expect(caught).toMatchObject({ code: 'BUSY' });
     expect(outcome).toBe(caught);
@@ -1451,22 +1458,20 @@ describe('transaction — a refused argument rejects, never throws', () => {
   }
 });
 
-// As on the client: read() and first() take only a read; chunk() and stream()
-// take any single statement.
-// Falsifiable: drop the assertReadable() call from tx.read() in
-// src/transaction.ts; the write then reaches the worker.
-describe('transaction — read methods refuse a write, as the client does', () => {
+// As on the client: only first() refuses a write; all(), run(), chunk() and
+// stream() take any single statement.
+describe('transaction — only first() refuses a write, as the client does', () => {
   const WRITE = 'INSERT INTO t VALUES (1) RETURNING a';
 
-  it('tx.read() rejects a write with NOT_A_READ_QUERY, and sends nothing', async () => {
+  // Falsifiable: put an assertReadable() call back in tx.all() in
+  // src/transaction.ts; the write is then refused before it is sent.
+  it('tx.all() takes a write, and sends it', async () => {
     const worker = fakeWorker([]);
     const { transaction } = harness(worker);
-    let outcome: unknown;
     await transaction(async (tx) => {
-      outcome = await tx.read(WRITE).catch((e: unknown) => e);
+      await tx.all(WRITE);
     });
-    expect(outcome).toMatchObject({ code: 'NOT_A_READ_QUERY' });
-    expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+    expect(worker.executed).toEqual(['BEGIN IMMEDIATE', WRITE, 'COMMIT']);
   });
 
   // The worker decides, from what SQLite reports: tx.first() sends the
@@ -1489,8 +1494,8 @@ describe('transaction — read methods refuse a write, as the client does', () =
     const { transaction } = harness(worker);
     await transaction(
       async (tx) => {
-        await tx.read('SELECT 1');
-        await tx.write(WRITE).catch(() => {});
+        await tx.all('SELECT 1');
+        await tx.run(WRITE).catch(() => {});
       },
       { readOnly: true },
     );

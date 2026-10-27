@@ -148,7 +148,7 @@ describe('a pool capped by its environment', () => {
       poolSize: 4,
       onWorkerLost: ({ index }) => lost.push(index),
     });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     expect(db.poolSize).toBe(1);
     expect(lost).toEqual([]);
@@ -174,7 +174,7 @@ describe('a pool capped by its environment', () => {
       poolSize: 4,
       onWorkerLost: ({ index }) => lost.push(index),
     });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     expect(db.poolSize).toBe(4);
     expect(lost).toEqual([]);
@@ -190,7 +190,7 @@ describe('a pool capped by its environment', () => {
   }, async () => {
     const warnings = captureWarnings();
     const db = await createTestClient();
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     expect(db.poolSize).toBe(1);
     expect(warnings).toEqual([]);
     await db.close();
@@ -201,7 +201,7 @@ describe('a pool capped by its environment', () => {
   }, async () => {
     const warnings = captureWarnings();
     const db = await createTestClient();
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     expect(db.poolSize).toBe(2);
     expect(warnings).toEqual([]);
     await db.close();
@@ -218,14 +218,14 @@ describe('a pool capped by its environment', () => {
       maxWorkerRestarts: 0,
       onWorkerLost: ({ size, live }) => events.push({ size, live }),
     });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     records[0]?.worker.dispatchEvent(
       new ErrorEvent('error', { message: 'simulated worker failure' }),
     );
     expect(events).toEqual([{ size: 1, live: 0 }]);
     // The loss above must actually fail the client — the last worker is
     // gone, so a query issued afterwards has nothing left to run on.
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
     });
     await db.close();
@@ -257,7 +257,7 @@ describe('a pool capped by its environment', () => {
       poolSize: 1,
       onWorkerLost: ({ cause }) => causes.push(cause),
     });
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
     });
     expect(causes).toHaveLength(1);
@@ -385,7 +385,7 @@ describe('a pool capped by its environment', () => {
       openTimeout: scaled(3000),
       onWorkerLost: (e) => lost.push(e),
     });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     expect(lost).toEqual([]);
     expect(db.poolSize).toBe(1);
     expect(warnings.some((w) => w.includes(' lost;'))).toBe(false);
@@ -425,7 +425,7 @@ describe('a pool capped by its environment', () => {
         causes.push(cause);
       },
     });
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
     });
     expect(events).toEqual([{ index: 0, size: 1, live: 0 }]);

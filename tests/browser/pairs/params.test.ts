@@ -18,7 +18,7 @@ const typed = 'SELECT typeof(v) AS t, quote(v) AS q FROM p ORDER BY rowid';
 describe('params', () => {
   it('binds every kind of value as the conversion rules say', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE p (v)');
+    await db.run('CREATE TABLE p (v)');
     const at = new Date(Date.UTC(2026, 9, 6, 12, 34, 56, 789));
     const values: unknown[] = [
       2 ** 31 - 1,
@@ -39,8 +39,8 @@ describe('params', () => {
       at,
       '\ud800',
     ];
-    for (const v of values) await db.write('INSERT INTO p VALUES (?)', [v]);
-    expect(await db.read(typed)).toEqual([
+    for (const v of values) await db.run('INSERT INTO p VALUES (?)', [v]);
+    expect(await db.all(typed)).toEqual([
       { t: 'integer', q: '2147483647' },
       { t: 'integer', q: '-2147483648' },
       { t: 'real', q: '2147483648.0' },
@@ -64,12 +64,12 @@ describe('params', () => {
 
   it('refuses an unbindable param before any worker sees it', async () => {
     const db = await createTestClient({ debug: true });
-    await db.write('CREATE TABLE p (v)');
+    await db.run('CREATE TABLE p (v)');
     const before = (db.debug?.requests ?? []).length;
     await expect(
-      db.write('INSERT INTO p VALUES (?)', [Symbol('s')]),
+      db.run('INSERT INTO p VALUES (?)', [Symbol('s')]),
     ).rejects.toMatchObject({ code: 'INVALID_VALUE' });
-    await expect(db.read('SELECT ?', [() => 1])).rejects.toMatchObject({
+    await expect(db.all('SELECT ?', [() => 1])).rejects.toMatchObject({
       code: 'INVALID_VALUE',
     });
     await expect(db.first('SELECT ?', [2n ** 64n])).rejects.toMatchObject({
@@ -82,7 +82,7 @@ describe('params', () => {
       expect.objectContaining({ code: 'INVALID_VALUE' }),
     );
     await db.transaction(async (tx) => {
-      await expect(tx.read('SELECT ?', [Symbol('s')])).rejects.toMatchObject({
+      await expect(tx.all('SELECT ?', [Symbol('s')])).rejects.toMatchObject({
         code: 'INVALID_VALUE',
       });
     });
@@ -97,7 +97,7 @@ describe('params', () => {
 
   it('binds an ArrayBuffer, a DataView and a typed array as the BLOB of their bytes', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE p (v)');
+    await db.run('CREATE TABLE p (v)');
     const buf = Uint8Array.of(0, 1, 2, 3, 4, 5, 6, 7).buffer;
     const values: unknown[] = [
       Float32Array.of(1, 2),
@@ -105,30 +105,30 @@ describe('params', () => {
       new DataView(buf, 2, 3),
       new Int16Array(buf, 4, 2),
     ];
-    for (const v of values) await db.write('INSERT INTO p VALUES (?)', [v]);
-    expect(await db.read(typed)).toEqual([
+    for (const v of values) await db.run('INSERT INTO p VALUES (?)', [v]);
+    expect(await db.all(typed)).toEqual([
       { t: 'blob', q: "X'0000803F00000040'" },
       { t: 'blob', q: "X'0908'" },
       { t: 'blob', q: "X'020304'" },
       { t: 'blob', q: "X'04050607'" },
     ]);
-    expect(
-      await db.read('SELECT hex(?) AS h', [new Float32Array([1])]),
-    ).toEqual([{ h: '0000803F' }]);
+    expect(await db.all('SELECT hex(?) AS h', [new Float32Array([1])])).toEqual(
+      [{ h: '0000803F' }],
+    );
     await db.close();
   });
 
   it('refuses params that are not an array', async () => {
     const db = await createTestClient();
     await expect(
-      db.read('SELECT :a', { ':a': 1 } as never),
+      db.all('SELECT :a', { ':a': 1 } as never),
     ).rejects.toMatchObject({ code: 'INVALID_VALUE' });
     await db.close();
   });
 
   it('takes null params as no params, as untyped code may pass them', async () => {
     const db = await createTestClient();
-    expect(await db.read('SELECT 1 AS x, ? AS y', null as never)).toEqual([
+    expect(await db.all('SELECT 1 AS x, ? AS y', null as never)).toEqual([
       { x: 1, y: null },
     ]);
     await db.close();
@@ -136,14 +136,14 @@ describe('params', () => {
 
   it('binds as many values as the statement has parameters, by index', async () => {
     const db = await createTestClient();
-    expect(await db.read('SELECT ? AS a', [1, 2])).toEqual([{ a: 1 }]);
-    expect(await db.read('SELECT ? AS a, ? AS b', [1])).toEqual([
+    expect(await db.all('SELECT ? AS a', [1, 2])).toEqual([{ a: 1 }]);
+    expect(await db.all('SELECT ? AS a, ? AS b', [1])).toEqual([
       { a: 1, b: null },
     ]);
-    expect(await db.read('SELECT ?2 AS a, ?1 AS b', [1, 2])).toEqual([
+    expect(await db.all('SELECT ?2 AS a, ?1 AS b', [1, 2])).toEqual([
       { a: 2, b: 1 },
     ]);
-    expect(await db.read('SELECT :x AS a', [7])).toEqual([{ a: 7 }]);
+    expect(await db.all('SELECT :x AS a', [7])).toEqual([{ a: 7 }]);
     await db.close();
   });
 
@@ -151,10 +151,10 @@ describe('params', () => {
     // Fails if `settle()` in worker.ts stops calling `clear_bindings`: the
     // second run would still carry the first run's `'y'` in the second slot.
     const db = await createTestClient({ poolSize: 1 });
-    expect(await db.read('SELECT ? AS a, ? AS b', ['x', 'y'])).toEqual([
+    expect(await db.all('SELECT ? AS a, ? AS b', ['x', 'y'])).toEqual([
       { a: 'x', b: 'y' },
     ]);
-    expect(await db.read('SELECT ? AS a, ? AS b', ['x'])).toEqual([
+    expect(await db.all('SELECT ? AS a, ? AS b', ['x'])).toEqual([
       { a: 'x', b: null },
     ]);
     await db.close();
@@ -163,19 +163,19 @@ describe('params', () => {
   describe('a multi-statement string', () => {
     it('is refused before anything runs, whatever the statements are', async () => {
       const db = await createTestClient();
-      await db.write('CREATE TABLE t (a, b)');
+      await db.run('CREATE TABLE t (a, b)');
       await expect(
-        db.write('INSERT INTO t VALUES (1, 1); INSERT INTO t VALUES (2, 2)'),
+        db.run('INSERT INTO t VALUES (1, 1); INSERT INTO t VALUES (2, 2)'),
       ).rejects.toMatchObject({
         code: 'MULTIPLE_STATEMENTS',
         message: 'Only one statement per call; this string holds more.',
       });
-      expect(await db.read('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
+      expect(await db.all('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
       await expect(
-        db.write('CREATE TABLE n (a); INSERT INTO n VALUES (1)'),
+        db.run('CREATE TABLE n (a); INSERT INTO n VALUES (1)'),
       ).rejects.toMatchObject({ code: 'MULTIPLE_STATEMENTS' });
       expect(
-        await db.read("SELECT name FROM sqlite_master WHERE name = 'n'"),
+        await db.all("SELECT name FROM sqlite_master WHERE name = 'n'"),
       ).toEqual([]);
       await db.close();
     });
@@ -183,30 +183,30 @@ describe('params', () => {
     // A tail that does not prepare is a refusal too: it holds more than one.
     it('is refused when the second statement is not valid SQL', async () => {
       const db = await createTestClient();
-      await db.write('CREATE TABLE t (a)');
+      await db.run('CREATE TABLE t (a)');
       await expect(
-        db.write('INSERT INTO t VALUES (1); NOT SQL AT ALL'),
+        db.run('INSERT INTO t VALUES (1); NOT SQL AT ALL'),
       ).rejects.toMatchObject({ code: 'MULTIPLE_STATEMENTS' });
-      expect(await db.read('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
+      expect(await db.all('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
       await db.close();
     });
 
     it('is refused on a read, and the worker serves the next call', async () => {
       const db = await createTestClient({ poolSize: 1 });
-      await expect(db.read('SELECT 1; SELECT 2')).rejects.toMatchObject({
+      await expect(db.all('SELECT 1; SELECT 2')).rejects.toMatchObject({
         code: 'MULTIPLE_STATEMENTS',
       });
-      expect(await db.read('SELECT 1 AS x')).toEqual([{ x: 1 }]);
+      expect(await db.all('SELECT 1 AS x')).toEqual([{ x: 1 }]);
       await db.close();
     });
 
     it('is one statement when only `;`, whitespace or a comment follows', async () => {
       const db = await createTestClient();
-      expect(await db.read('SELECT 1; ')).toEqual([{ 1: 1 }]);
+      expect(await db.all('SELECT 1; ')).toEqual([{ 1: 1 }]);
       // SQLite names the column after the text, comment included.
-      const [row] = await db.read('SELECT 1 -- note');
+      const [row] = await db.all('SELECT 1 -- note');
       expect(Object.values(row as object)).toEqual([1]);
-      expect(await db.read('SELECT 1; /* note */ ;\n')).toEqual([{ 1: 1 }]);
+      expect(await db.all('SELECT 1; /* note */ ;\n')).toEqual([{ 1: 1 }]);
       await db.close();
     });
   });
@@ -215,11 +215,11 @@ describe('params', () => {
     'round-trips a param larger than the wasm heap',
     async () => {
       const db = await createTestClient();
-      await db.write('CREATE TABLE b (v)');
+      await db.run('CREATE TABLE b (v)');
       const big = new Uint8Array(64 << 20);
       for (let i = 0; i < big.length; i += 4096) big[i] = (i / 4096) & 255;
-      await db.write('INSERT INTO b VALUES (?)', [big]);
-      const [row] = await db.read<{ n: number; h: string }>(
+      await db.run('INSERT INTO b VALUES (?)', [big]);
+      const [row] = await db.all<{ n: number; h: string }>(
         'SELECT length(v) AS n, hex(substr(v, 1 + 4096 * 3, 1)) AS h FROM b',
       );
       // Byte 1 + 4096 * 3 (1-based) is index 3 * 4096, set to 3 above.
@@ -237,14 +237,12 @@ describe('params', () => {
     const sql =
       'WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < ?) SELECT max(i) AS m, ? AS tag FROM c';
     const controller = new AbortController();
-    const slow = db.read(sql, [50_000_000, 'first'], {
+    const slow = db.all(sql, [50_000_000, 'first'], {
       signal: controller.signal,
     });
     setTimeout(() => controller.abort(), 50);
     await expect(slow).rejects.toBeDefined();
-    expect(await db.read(sql, [3, 'second'])).toEqual([
-      { m: 3, tag: 'second' },
-    ]);
+    expect(await db.all(sql, [3, 'second'])).toEqual([{ m: 3, tag: 'second' }]);
     await db.close();
   });
 });

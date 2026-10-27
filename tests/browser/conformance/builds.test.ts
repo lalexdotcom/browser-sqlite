@@ -27,11 +27,9 @@ describe('declared build combinations', () => {
       it(`${vfs} on ${build} opens and serves a query`, async () => {
         const { db } = conformanceClient(vfs, build);
 
-        await db.write('CREATE TABLE t (a INTEGER)');
-        await db.write('INSERT INTO t VALUES (1)');
-        const rows = await db.read<{ n: number }>(
-          'SELECT count(*) AS n FROM t',
-        );
+        await db.run('CREATE TABLE t (a INTEGER)');
+        await db.run('INSERT INTO t VALUES (1)');
+        const rows = await db.all<{ n: number }>('SELECT count(*) AS n FROM t');
 
         expect(rows[0].n).toBe(1);
         await db.close();

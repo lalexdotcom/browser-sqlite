@@ -27,8 +27,8 @@ const SLOW_DELETE =
 type Db = Awaited<ReturnType<typeof createTestClient>>;
 
 const seed = async (db: Db) => {
-  await db.write('CREATE TABLE t (a INTEGER PRIMARY KEY, b)');
-  await db.write(SEED);
+  await db.run('CREATE TABLE t (a INTEGER PRIMARY KEY, b)');
+  await db.run(SEED);
   return db;
 };
 

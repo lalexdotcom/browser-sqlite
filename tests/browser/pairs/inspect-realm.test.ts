@@ -38,7 +38,7 @@ describe('resolveRealmId', () => {
       await db.close().catch(() => {});
       await deleteDatabase(file, { vfs: pair.vfs }).catch(() => {});
     });
-    await db.read('SELECT 1');
+    await db.all('SELECT 1');
 
     const snapshot = await locks.entries();
     const mine = snapshot.held.find((e) => e.name.startsWith('bsq:client:'));

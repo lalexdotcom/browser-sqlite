@@ -18,10 +18,10 @@ describe('a worker killed without closing', () => {
   }, async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 0 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     crash(records[0].worker);
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
     });
     await waitUntil(() => records[0].terminated, 'the kill');
@@ -43,7 +43,7 @@ describe('a worker killed without closing', () => {
   }, async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 0 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     // The request is lost on its way, as it is for a worker inside one long
     // step: it never reaches the worker, so no answer can come back.
@@ -74,13 +74,13 @@ describe('a worker killed without closing', () => {
   }, async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 0 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     crash(records[0].worker);
 
     expect(records[0].terminated).toBe(true);
     expect(records[0].log).not.toContain('post:quiesce');
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
     });
   });

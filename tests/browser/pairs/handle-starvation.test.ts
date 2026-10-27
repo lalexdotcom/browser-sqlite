@@ -40,7 +40,7 @@ describe('handle starvation during open (reduced mode)', () => {
     onTestFinished(() => deleteDatabase(file, { vfs, build }).catch(() => {}));
 
     const holder = createSQLiteClient(file, { vfs, build, poolSize: 1 });
-    await holder.write('CREATE TABLE t (v)');
+    await holder.run('CREATE TABLE t (v)');
 
     // Enter a write transaction and stay in it. This is what keeps the single
     // rotated exclusive handle away from every other connection on the origin.
@@ -54,7 +54,7 @@ describe('handle starvation during open (reduced mode)', () => {
     });
 
     const transaction = holder.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
       transactionEntered();
       await held;
     });
@@ -72,7 +72,7 @@ describe('handle starvation during open (reduced mode)', () => {
     // `holder` is live and holds its client marker on the same file, so the
     // roster can answer and the message must name other clients of this
     // library rather than hedge about a lock that may be held by anyone.
-    await expect(starved.read('SELECT 1')).rejects.toMatchObject({
+    await expect(starved.all('SELECT 1')).rejects.toMatchObject({
       code: 'TIMEOUT',
       message: expect.stringContaining(
         'Other clients of this library still hold the database.',

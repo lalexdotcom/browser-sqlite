@@ -35,13 +35,13 @@ describe('statements issued in the same tick inside a transaction', () => {
   it('runs two reads in issue order instead of refusing the second', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write('INSERT INTO t (n) VALUES (1), (2), (3)');
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run('INSERT INTO t (n) VALUES (1), (2), (3)');
 
       const rows = await db.transaction(async (tx) => {
         const [a, b] = await Promise.all([
-          tx.read<{ n: number }>('SELECT n FROM t WHERE n = 1'),
-          tx.read<{ n: number }>('SELECT n FROM t WHERE n = 2'),
+          tx.all<{ n: number }>('SELECT n FROM t WHERE n = 1'),
+          tx.all<{ n: number }>('SELECT n FROM t WHERE n = 2'),
         ]);
         return [a, b];
       });
@@ -56,8 +56,8 @@ describe('statements issued in the same tick inside a transaction', () => {
   it('runs a read issued while a for-await loop drains a generator', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
 
       const seen: number[] = [];
       const counted = await db.transaction(async (tx) => {
@@ -73,7 +73,7 @@ describe('statements issued in the same tick inside a transaction', () => {
               seen.push(...batch.map((r) => r.n));
             }
           })(),
-          tx.read<{ c: number }>('SELECT COUNT(*) AS c FROM t'),
+          tx.all<{ c: number }>('SELECT COUNT(*) AS c FROM t'),
         ]);
         return rows;
       });
@@ -88,8 +88,8 @@ describe('statements issued in the same tick inside a transaction', () => {
   it('runs a bulkWrite close() issued in the same tick as a read', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write('INSERT INTO t (n) VALUES (1), (2)');
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run('INSERT INTO t (n) VALUES (1), (2)');
 
       const [affected, rows] = await db.transaction(async (tx) => {
         const bulk = tx.bulkWrite('t', ['n']);
@@ -98,7 +98,7 @@ describe('statements issued in the same tick inside a transaction', () => {
         // close() posts the batch; the read is created in the same tick.
         return Promise.all([
           bulk.close(),
-          tx.read<{ c: number }>('SELECT COUNT(*) AS c FROM t'),
+          tx.all<{ c: number }>('SELECT COUNT(*) AS c FROM t'),
         ]);
       });
 
@@ -113,18 +113,18 @@ describe('statements issued in the same tick inside a transaction', () => {
   it('commits after the write issued in the same tick, never before it', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
+      await db.run('CREATE TABLE t (n INTEGER)');
 
       await db.transaction(async (tx) => {
         // An explicit commit created alongside the write it is meant to
         // conclude. COMMIT is a statement on the same worker like any other.
         await Promise.all([
-          tx.write('INSERT INTO t (n) VALUES (1)'),
+          tx.run('INSERT INTO t (n) VALUES (1)'),
           tx.commit(),
         ]);
       });
 
-      expect(await db.read<{ n: number }>('SELECT n FROM t')).toEqual([
+      expect(await db.all<{ n: number }>('SELECT n FROM t')).toEqual([
         { n: 1 },
       ]);
     } finally {
@@ -141,11 +141,11 @@ describe('statements issued in the same tick inside a transaction', () => {
 
         const outcome = await db.transaction(async (tx) => {
           // First holds the connection; the other two are created behind it.
-          const first = tx.read(longQuery(2_000_000));
-          const queued = tx.read('SELECT 1 AS one', [], {
+          const first = tx.all(longQuery(2_000_000));
+          const queued = tx.all('SELECT 1 AS one', [], {
             signal: controller.signal,
           });
-          const after = tx.read<{ two: number }>('SELECT 2 AS two');
+          const after = tx.all<{ two: number }>('SELECT 2 AS two');
           // The abort lands while `queued` is still waiting its turn, so the
           // statement never reaches the database. Falsifiable: pass `undefined`
           // instead of the statement's signal to the queue wait in
@@ -187,8 +187,8 @@ describe('statements issued in the same tick inside a transaction', () => {
         await expect(
           db.transaction(
             async (tx) => {
-              const first = tx.read(longQuery(2_000_000));
-              const queued = tx.read('SELECT 1 AS one').catch((e: unknown) => {
+              const first = tx.all(longQuery(2_000_000));
+              const queued = tx.all('SELECT 1 AS one').catch((e: unknown) => {
                 queuedError = e;
                 throw e;
               });
@@ -213,7 +213,7 @@ describe('statements issued in the same tick inside a transaction', () => {
     async () => {
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.run('CREATE TABLE t (n INTEGER)');
         // A write carrying its OWN signal takes the savepointed branch of
         // settled() (`opensSavepoint`), which has its own abort handling — so
         // the queue has to hold there too, not only on the plain path.
@@ -222,17 +222,17 @@ describe('statements issued in the same tick inside a transaction', () => {
 
         await db.transaction(async (tx) => {
           await Promise.all([
-            tx.write('INSERT INTO t (n) VALUES (1)', [], {
+            tx.run('INSERT INTO t (n) VALUES (1)', [], {
               signal: first.signal,
             }),
-            tx.write('INSERT INTO t (n) VALUES (2)', [], {
+            tx.run('INSERT INTO t (n) VALUES (2)', [], {
               signal: second.signal,
             }),
           ]);
         });
 
         expect(
-          await db.read<{ n: number }>('SELECT n FROM t ORDER BY n'),
+          await db.all<{ n: number }>('SELECT n FROM t ORDER BY n'),
         ).toEqual([{ n: 1 }, { n: 2 }]);
       } finally {
         await db.close();
@@ -246,19 +246,19 @@ describe('statements issued in the same tick inside a transaction', () => {
     async () => {
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.run('CREATE TABLE t (n INTEGER)');
         const controller = new AbortController();
 
         const outcome = await db.transaction(async (tx) => {
           // Abandoned mid-flight, the savepointed write resolves its caller at
           // once and runs on; the wait moves to `abandoned`, which the statement
           // behind it must still observe through the queue.
-          const abandonedWrite = tx.write(
+          const abandonedWrite = tx.run(
             `INSERT INTO t (n) SELECT 1 FROM (${longQuery(2_000_000)})`,
             [],
             { signal: controller.signal },
           );
-          const behind = tx.read<{ c: number }>('SELECT COUNT(*) AS c FROM t');
+          const behind = tx.all<{ c: number }>('SELECT COUNT(*) AS c FROM t');
           controller.abort(new Error('the write is abandoned'));
           const settled = await Promise.allSettled([abandonedWrite, behind]);
           return settled.map((s) => s.status);
@@ -280,12 +280,12 @@ describe('statements issued in the same tick inside a transaction', () => {
       const warnings = captureWarnings();
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.run('CREATE TABLE t (n INTEGER)');
 
         await db.transaction(async (tx) => {
           await Promise.all([
-            tx.write('INSERT INTO t (n) VALUES (1)'),
-            tx.read('SELECT 1 AS one'),
+            tx.run('INSERT INTO t (n) VALUES (1)'),
+            tx.all('SELECT 1 AS one'),
           ]);
         });
 

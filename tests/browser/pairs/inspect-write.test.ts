@@ -22,7 +22,10 @@ describe('inspectDatabase write', () => {
     const shared = sharedDatabase();
     const a = shared.open();
     const b = shared.open();
-    await a.write('CREATE TABLE t (v)');
+    await a.run('CREATE TABLE t (v)');
+    // Run once while the lock is free: b remembers the statement's verdict, so
+    // the run below queues on the write lock and not on a verdict.
+    await b.run('INSERT INTO t VALUES (2)');
 
     let seen: Awaited<ReturnType<typeof inspectDatabase>> | undefined;
     // Initialised inside the transaction callback; hoisted so we can await it
@@ -32,14 +35,14 @@ describe('inspectDatabase write', () => {
     let queued: Promise<unknown> = Promise.resolve();
 
     const held = a.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
 
       // b requests the write lock — because a's transaction holds it, this queues.
       // navigator.locks.request() is called synchronously inside locks.hold's
       // Promise constructor (before any microtask yield), so the pending entry
       // is normally visible on the very first inspectDatabase call. We still
       // poll to guard against any browser that defers the registration slightly.
-      queued = b.write('INSERT INTO t VALUES (2)');
+      queued = b.run('INSERT INTO t VALUES (2)');
 
       for (let attempt = 0; attempt < 50; attempt++) {
         seen = await inspectDatabase(shared.name, { vfs: TEST_TARGET.vfs });

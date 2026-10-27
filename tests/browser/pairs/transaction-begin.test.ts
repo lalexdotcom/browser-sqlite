@@ -23,8 +23,8 @@ const SHAPES = {
   'reads, then writes': {
     run: (db) =>
       db.transaction(async (tx) => {
-        await tx.read('SELECT n FROM t');
-        await tx.write('INSERT INTO t VALUES (2)');
+        await tx.all('SELECT n FROM t');
+        await tx.run('INSERT INTO t VALUES (2)');
       }),
     after: 'SELECT count(*) AS n FROM t',
     rows: 2,
@@ -32,8 +32,8 @@ const SHAPES = {
   'runs a write that changes nothing, then writes': {
     run: (db) =>
       db.transaction(async (tx) => {
-        await tx.write('DROP TABLE IF EXISTS missing');
-        await tx.write('INSERT INTO t VALUES (2)');
+        await tx.run('DROP TABLE IF EXISTS missing');
+        await tx.run('INSERT INTO t VALUES (2)');
       }),
     after: 'SELECT count(*) AS n FROM t',
     rows: 2,
@@ -51,7 +51,7 @@ const SHAPES = {
     run: (db) =>
       db.transaction(
         async (tx) => {
-          await tx.read('SELECT n FROM t');
+          await tx.all('SELECT n FROM t');
         },
         { readOnly: true },
       ),
@@ -81,11 +81,11 @@ describe('a transaction that does not write first', () => {
   const check = (shape: keyof typeof SHAPES) => async () => {
     const { run, after, rows } = SHAPES[shape];
     const db = await fresh();
-    await db.write('CREATE TABLE t (n)');
-    await db.write('INSERT INTO t VALUES (1)');
+    await db.run('CREATE TABLE t (n)');
+    await db.run('INSERT INTO t VALUES (1)');
     await run(db);
     // The client is still usable: the failure left it broken for good.
-    const [row] = await db.read<{ n: number }>(after);
+    const [row] = await db.all<{ n: number }>(after);
     expect(row?.n).toBe(rows);
   };
   it('reads, then writes', check('reads, then writes'));

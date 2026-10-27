@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, theQueryIsRunning, waitUntil } from '../helpers';
+import {
+  createTestClient,
+  scaled,
+  theQueryIsRunning,
+  waitUntil,
+} from '../helpers';
 
 /**
  * `tx.stream()` hands out rows of chunks the worker has already delivered:
@@ -13,25 +18,25 @@ const SERIES = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c W
 
 const setUp = async () => {
   const db = await createTestClient({ poolSize: 1 });
-  await db.write('CREATE TABLE t (a INTEGER)');
+  await db.run('CREATE TABLE t (a INTEGER)');
   return db;
 };
 
 /** `setUp`, with the debug tree `theQueryIsRunning` reads and a `big` table. */
 const setUpWrites = async () => {
   const db = await createTestClient({ poolSize: 1, debug: true });
-  await db.write('CREATE TABLE t (a INTEGER)');
-  await db.write('CREATE TABLE big (x INTEGER)');
+  await db.run('CREATE TABLE t (a INTEGER)');
+  await db.run('CREATE TABLE big (x INTEGER)');
   return db;
 };
 
 type Db = Awaited<ReturnType<typeof setUp>>;
 
 const rowsOf = async (db: Db) =>
-  (await db.read<{ a: number }>('SELECT a FROM t ORDER BY a')).map((r) => r.a);
+  (await db.all<{ a: number }>('SELECT a FROM t ORDER BY a')).map((r) => r.a);
 
 const bigCount = async (db: Db) =>
-  (await db.read<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n;
+  (await db.all<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n;
 
 /** Steps for hundreds of milliseconds and inserts ten rows. */
 const SLOW_INSERT =
@@ -54,7 +59,7 @@ describe('tx.stream() between two rows of a chunk', () => {
     expect(outcome).toBe('returned');
     expect(first).toEqual({ value: { x: 1 }, done: false });
     expect(await kept.next()).toEqual({ value: undefined, done: true });
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 
   // Falsifiable: in flatten's return(), skip the source's return() on an open
@@ -70,7 +75,7 @@ describe('tx.stream() between two rows of a chunk', () => {
         seen++;
         break;
       }
-      after = await tx.read('SELECT 1 AS one');
+      after = await tx.all('SELECT 1 AS one');
     });
     expect(seen).toBe(1);
     expect(after).toEqual([{ one: 1 }]);
@@ -95,7 +100,7 @@ describe('tx.stream() between two rows of a chunk', () => {
         (e: unknown) => ({ rejected: e }),
       );
       after = await rows.next();
-      read = await tx.read('SELECT 1 AS one');
+      read = await tx.all('SELECT 1 AS one');
       return 'returned';
     });
     expect(first).toEqual({ rejected: reason });
@@ -111,16 +116,16 @@ describe('tx.stream() between two rows of a chunk', () => {
     const db = await setUp();
     let read: unknown;
     const outcome = await db.transaction(async (tx) => {
-      const before = tx.read('SELECT 1 AS one');
+      const before = tx.all('SELECT 1 AS one');
       tx.stream(SERIES, [], { chunkSize: CHUNK_SIZE });
       read = await before;
-      await tx.write('INSERT INTO t VALUES (7)');
+      await tx.run('INSERT INTO t VALUES (7)');
       return 'returned';
     });
     expect(read).toEqual([{ one: 1 }]);
     expect(outcome).toBe('returned');
     expect(await rowsOf(db)).toEqual([7]);
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 });
 
@@ -154,14 +159,14 @@ describe('tx.stream() takes a write (spec 2026-10-26, § Streaming a write)', ()
     let caught: unknown;
     let affected: unknown;
     await db.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
       const rows = tx.stream(SLOW_INSERT, [], { signal: ctl.signal });
       const pending = rows[Symbol.asyncIterator]().next();
       await waitUntil(theQueryIsRunning(db, SLOW_INSERT), 'the INSERT running');
       ctl.abort(reason);
       caught = await pending.catch((e: unknown) => e);
       affected = await rows.affected.catch((e: unknown) => ({ rejected: e }));
-      await tx.write('INSERT INTO t VALUES (2)');
+      await tx.run('INSERT INTO t VALUES (2)');
     });
     expect(caught).toBe(reason);
     expect(affected).toEqual({ rejected: reason });
@@ -179,7 +184,7 @@ describe('tx.stream() takes a write (spec 2026-10-26, § Streaming a write)', ()
     let affected: number | undefined;
     let second: unknown;
     const outcome = await db.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
       const stream = tx.stream<{ x: number }>(
         `INSERT INTO big ${SERIES} RETURNING x`,
         [],
@@ -196,7 +201,7 @@ describe('tx.stream() takes a write (spec 2026-10-26, § Streaming a write)', ()
       // Here, not after the callback: a row served instead keeps the stream
       // open, and the write below would wait behind it for ever.
       expect(second).toEqual({ rejected: reason });
-      await tx.write('INSERT INTO t VALUES (2)');
+      await tx.run('INSERT INTO t VALUES (2)');
       return 'returned';
     });
     expect(first).toEqual({ value: { x: 1 }, done: false });
@@ -221,7 +226,9 @@ describe('tx.stream() takes a write (spec 2026-10-26, § Streaming a write)', ()
     const waited = (pending: Promise<number> | undefined) =>
       Promise.race([
         pending,
-        new Promise((resolve) => setTimeout(() => resolve('waited'), 5_000)),
+        new Promise((resolve) =>
+          setTimeout(() => resolve('waited'), scaled(5_000)),
+        ),
       ]);
     expect(await waited(rows?.affected)).toBe(0);
     expect(await waited(chunks?.affected)).toBe(0);

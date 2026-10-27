@@ -22,16 +22,16 @@ const workerIdentity = (db: unknown) =>
 
 const setUp = async () => {
   const db = await createTestClient({ poolSize: 1, debug: true });
-  await db.write('CREATE TABLE t (a INTEGER)');
-  await db.write('CREATE TABLE big (x INTEGER)');
-  await db.write('INSERT INTO t VALUES (0)');
+  await db.run('CREATE TABLE t (a INTEGER)');
+  await db.run('CREATE TABLE big (x INTEGER)');
+  await db.run('INSERT INTO t VALUES (0)');
   return db;
 };
 
 type Db = Awaited<ReturnType<typeof setUp>>;
 
 const rowsOf = async (db: Db) =>
-  (await db.read<{ a: number }>('SELECT a FROM t ORDER BY a')).map((r) => r.a);
+  (await db.all<{ a: number }>('SELECT a FROM t ORDER BY a')).map((r) => r.a);
 
 /**
  * One INSERT whose single step() runs for hundreds of milliseconds (Chromium)
@@ -47,7 +47,7 @@ const abortAfter = (ms: number, reason: unknown) => {
 };
 
 const bigCount = async (db: Db) =>
-  (await db.read<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n;
+  (await db.all<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n;
 
 /** Milliseconds `fn` takes. */
 const timed = async (fn: () => Promise<unknown>) => {
@@ -64,12 +64,12 @@ describe('an SQL error the callback catches (spec 2026-09-11 §1)', () => {
   it('lets the transaction go on and commit what preceded it (T11)', async () => {
     const db = await setUp();
     try {
-      await db.write('CREATE UNIQUE INDEX t_a ON t (a)');
+      await db.run('CREATE UNIQUE INDEX t_a ON t (a)');
       let caught: unknown;
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
-        caught = await tx.write('INSERT INTO t VALUES (1)').catch((e) => e);
-        await tx.write('INSERT INTO t VALUES (2)');
+        await tx.run('INSERT INTO t VALUES (1)');
+        caught = await tx.run('INSERT INTO t VALUES (1)').catch((e) => e);
+        await tx.run('INSERT INTO t VALUES (2)');
       });
       expect((caught as Error).message).toMatch(/UNIQUE/);
       expect(await rowsOf(db)).toEqual([0, 1, 2]);
@@ -85,18 +85,18 @@ describe('an SQL error the callback catches (spec 2026-09-11 §1)', () => {
   it('dies when ON CONFLICT ROLLBACK takes the transaction with it (T10)', async () => {
     const db = await setUp();
     try {
-      await db.write('CREATE UNIQUE INDEX t_a ON t (a)');
+      await db.run('CREATE UNIQUE INDEX t_a ON t (a)');
       const before = workerIdentity(db);
       let caught: unknown;
       let later: unknown;
       const finished = deferred();
       const outcome = await db
         .transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
           caught = await tx
-            .write('INSERT OR ROLLBACK INTO t VALUES (1)')
+            .run('INSERT OR ROLLBACK INTO t VALUES (1)')
             .catch((e) => e);
-          later = await tx.read('SELECT a FROM t').catch((e) => e);
+          later = await tx.all('SELECT a FROM t').catch((e) => e);
           finished.resolve();
         })
         .catch((e) => e);
@@ -221,8 +221,8 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   }, async () => {
     const db = await setUp();
     try {
-      const natural = await timed(() => db.write(HUGE_INSERT));
-      await db.write('DELETE FROM big');
+      const natural = await timed(() => db.run(HUGE_INSERT));
+      await db.run('DELETE FROM big');
       const before = workerIdentity(db);
       const reason = new Error('abandon the write');
       let seen!: AbortSignal;
@@ -264,8 +264,8 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   }, async () => {
     const db = await setUp();
     try {
-      const natural = await timed(() => db.write(HUGE_INSERT));
-      await db.write('DELETE FROM big');
+      const natural = await timed(() => db.run(HUGE_INSERT));
+      await db.run('DELETE FROM big');
       let outcome: unknown;
       const took = await timed(async () => {
         outcome = await db
@@ -406,10 +406,10 @@ describe('a load the callback abandons (spec 2026-09-11, R4, D6)', () => {
           await writer.enqueue({ a: 2 });
           ctl.abort(reason);
           closed = await writer.close().catch((e) => e);
-          await tx.write('INSERT INTO t VALUES (3)');
+          await tx.run('INSERT INTO t VALUES (3)');
         });
         expect(closed).toBe(reason);
-        const counts = await db.read<{ a: number; n: number }>(
+        const counts = await db.all<{ a: number; n: number }>(
           'SELECT a, count(*) AS n FROM t GROUP BY a ORDER BY a',
         );
         expect(counts).toEqual([
@@ -440,11 +440,11 @@ describe('a consumer savepoint and a RELEASE riding on a write (spec 2026-10-04)
         let first: unknown;
         await db.transaction(async (tx) => {
           const sp = await tx.savepoint('u');
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
           first = await tx
-            .write(`${BIG_INSERT}; RELEASE u`, [], { timeout: 30 })
+            .run(`${BIG_INSERT}; RELEASE u`, [], { timeout: 30 })
             .catch((e) => e);
-          await tx.write('INSERT INTO t VALUES (2)');
+          await tx.run('INSERT INTO t VALUES (2)');
           await sp.release();
         });
         expect(first).toMatchObject({ code: 'MULTIPLE_STATEMENTS' });

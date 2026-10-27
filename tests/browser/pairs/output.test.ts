@@ -22,7 +22,7 @@ describe('output() create and populate', () => {
 
     expect(affected).toBe(2);
 
-    const rows = await db.read<{ id: number; name: string }>(
+    const rows = await db.all<{ id: number; name: string }>(
       'SELECT * FROM out_basic ORDER BY id',
     );
     expect(rows).toHaveLength(2);
@@ -36,14 +36,14 @@ describe('output() create and populate', () => {
     // The barrier now supplies the RYOW guarantee; that property is pinned in tests/browser/barrier.test.ts.
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE out_replace (old_col TEXT)');
-    await db.write("INSERT INTO out_replace VALUES ('stale')");
+    await db.run('CREATE TABLE out_replace (old_col TEXT)');
+    await db.run("INSERT INTO out_replace VALUES ('stale')");
 
     const out = db.output('out_replace', { n: 'INTEGER' });
     out.enqueue({ n: 42 });
     await out.close();
 
-    const rows = await db.read<{ n: number }>('SELECT * FROM out_replace');
+    const rows = await db.all<{ n: number }>('SELECT * FROM out_replace');
     expect(rows).toHaveLength(1);
     expect(rows[0].n).toBe(42);
     expect('old_col' in rows[0]).toBe(false);
@@ -59,7 +59,7 @@ describe('output() create and populate', () => {
 
     expect(affected).toBe(0);
 
-    const rows = await db.read('SELECT id FROM out_empty');
+    const rows = await db.all('SELECT id FROM out_empty');
     expect(rows).toHaveLength(0);
 
     db.close();
@@ -85,7 +85,7 @@ describe('output() schema modifiers', () => {
     expect(ddl?.sql).toContain('UNIQUE');
 
     await expect(
-      db.write("INSERT INTO out_modifiers (id, code) VALUES (2, 'A')"),
+      db.run("INSERT INTO out_modifiers (id, code) VALUES (2, 'A')"),
     ).rejects.toThrow();
 
     db.close();
@@ -125,7 +125,7 @@ describe('output() indexes', () => {
     out.enqueue({ id: 1, name: 'x' });
     await out.close();
 
-    const indexes = await db.read<{ name: string }>(
+    const indexes = await db.all<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?",
       ['out_idx'],
     );
@@ -146,14 +146,14 @@ describe('output() indexes', () => {
     out.enqueue({ a: 1, b: 2 });
     await out.close();
 
-    const indexes = await db.read<{ name: string }>(
+    const indexes = await db.all<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?",
       ['out_idx_u'],
     );
     expect(indexes.map((i) => i.name)).toContain('out_idx_u_a_b_U');
 
     await expect(
-      db.write('INSERT INTO out_idx_u VALUES (1, 1)'),
+      db.run('INSERT INTO out_idx_u VALUES (1, 1)'),
     ).rejects.toThrow();
 
     db.close();
@@ -161,7 +161,7 @@ describe('output() indexes', () => {
 });
 
 describe('output() atomicity and sweep', () => {
-  // Falsifiability pin: deleting `await tx.write('ALTER TABLE ... RENAME TO
+  // Falsifiability pin: deleting `await tx.run('ALTER TABLE ... RENAME TO
   // ...')` from output.close() makes `created` empty → test fails.
   it('does not create the target until close()', async () => {
     const db = await createTestClient();
@@ -172,14 +172,14 @@ describe('output() atomicity and sweep', () => {
 
       // The staging table (__bsq_staging_<uuid>) may be created by now, but
       // the final target must not exist until the atomic RENAME in close().
-      const existing = await db.read(
+      const existing = await db.all(
         "SELECT name FROM sqlite_master WHERE name = 'late_target'",
       );
       expect(existing).toHaveLength(0);
 
       await out.close();
 
-      const created = await db.read(
+      const created = await db.all(
         "SELECT name FROM sqlite_master WHERE name = 'late_target'",
       );
       expect(created).toHaveLength(1);
@@ -188,7 +188,7 @@ describe('output() atomicity and sweep', () => {
     }
   });
 
-  // Falsifiability pin: deleting `await tx.write('ALTER TABLE ... RENAME TO
+  // Falsifiability pin: deleting `await tx.run('ALTER TABLE ... RENAME TO
   // ...')` from output.close() makes `after` keep the old rows → test fails.
   it('leaves the previous table intact and complete until close()', async () => {
     const db = await createTestClient();
@@ -204,14 +204,14 @@ describe('output() atomicity and sweep', () => {
 
       // Mid-load: the OLD rows are still there, whole — DROP happens only inside
       // the atomic transaction in close(), not eagerly at output() call time.
-      const during = await db.read<{ id: number }>(
+      const during = await db.all<{ id: number }>(
         'SELECT id FROM swap_target ORDER BY id',
       );
       expect(during.map((r) => r.id)).toEqual([1, 2]);
 
       await second.close();
 
-      const after = await db.read<{ id: number }>('SELECT id FROM swap_target');
+      const after = await db.all<{ id: number }>('SELECT id FROM swap_target');
       expect(after.map((r) => r.id)).toEqual([99]);
     } finally {
       await db.close();
@@ -224,8 +224,8 @@ describe('output() atomicity and sweep', () => {
     const db = await createTestClient();
 
     try {
-      await db.write('CREATE TABLE keep_me (id INTEGER PRIMARY KEY)');
-      await db.write('INSERT INTO keep_me (id) VALUES (1), (2)');
+      await db.run('CREATE TABLE keep_me (id INTEGER PRIMARY KEY)');
+      await db.run('INSERT INTO keep_me (id) VALUES (1), (2)');
 
       const out = db.output('keep_me', { id: 'INTEGER PRIMARY KEY' as string });
       out.enqueue({ id: 7 });
@@ -237,13 +237,13 @@ describe('output() atomicity and sweep', () => {
 
       // The original table must be untouched — the DROP only happens inside the
       // atomic transaction which never ran because the load failed first.
-      const rows = await db.read<{ id: number }>(
+      const rows = await db.all<{ id: number }>(
         'SELECT id FROM keep_me ORDER BY id',
       );
       expect(rows.map((r) => r.id)).toEqual([1, 2]);
 
       // The failed staging table must be cleaned up by the error path.
-      const staging = await db.read(
+      const staging = await db.all(
         "SELECT name FROM sqlite_master WHERE name LIKE '__bsq_staging_%'",
       );
       expect(staging).toHaveLength(0);
@@ -259,7 +259,7 @@ describe('output() atomicity and sweep', () => {
 
     try {
       // An orphan exactly as a crashed tab would leave: no lock is held for it.
-      await db.write('CREATE TABLE __bsq_staging_deadbeef (id INTEGER)');
+      await db.run('CREATE TABLE __bsq_staging_deadbeef (id INTEGER)');
 
       const out = db.output('sweep_target', { id: 'INTEGER' });
       out.enqueue({ id: 1 });
@@ -267,7 +267,7 @@ describe('output() atomicity and sweep', () => {
 
       // Both the orphan and the output's own staging table must be gone: the
       // orphan was swept, and the output's staging was renamed to sweep_target.
-      const staging = await db.read<{ name: string }>(
+      const staging = await db.all<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE name LIKE '__bsq_staging_%'",
       );
       expect(staging).toHaveLength(0);
@@ -297,7 +297,7 @@ describe('output() atomicity and sweep', () => {
       expect((error as Error).message).toMatch(/closed/i);
 
       // The target table must survive with its rows intact.
-      const rows = await db.read<{ id: number }>(
+      const rows = await db.all<{ id: number }>(
         'SELECT id FROM double_close_target ORDER BY id',
       );
       expect(rows.map((r) => r.id)).toEqual([1, 2]);
@@ -328,7 +328,7 @@ describe('output() atomicity and sweep', () => {
     let stagingName: string | undefined;
     for (let i = 0; i < 100 && !stagingName; i++) {
       await new Promise<void>((r) => setTimeout(r, 20));
-      const rows = await dbA.read<{ name: string }>(
+      const rows = await dbA.all<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'",
       );
       if (rows.length) stagingName = rows[0].name;
@@ -342,7 +342,7 @@ describe('output() atomicity and sweep', () => {
     await outB.close();
 
     // A's staging table must still exist — B's sweep left it intact.
-    const stillThere = await dbA.read<{ name: string }>(
+    const stillThere = await dbA.all<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'",
     );
     // B's staging was renamed to target_b; only A's staging should remain.
@@ -351,7 +351,7 @@ describe('output() atomicity and sweep', () => {
     // A can still complete successfully with its staging table intact.
     await outA.close();
 
-    const target = await dbA.read<{ id: number }>('SELECT id FROM target_a');
+    const target = await dbA.all<{ id: number }>('SELECT id FROM target_a');
     expect(target).toHaveLength(1);
     expect(target[0].id).toBe(1);
   });
@@ -367,7 +367,7 @@ describe('output() values', () => {
     });
     out.enqueue({ id: 1, doc: { a: [1] }, raw: { b: 2 } });
     await out.close();
-    const [row] = await db.read<Record<string, unknown>>(
+    const [row] = await db.all<Record<string, unknown>>(
       'SELECT typeof(doc) AS t, json(doc) AS j, raw FROM out_json',
     );
     expect(row).toEqual({ t: 'blob', j: '{"a":[1]}', raw: '{"b":2}' });

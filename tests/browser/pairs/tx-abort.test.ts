@@ -23,9 +23,9 @@ const abortAfter = (ms: number, reason: unknown) => {
 
 const setUp = async () => {
   const db = await createTestClient({ poolSize: 1, debug: true });
-  await db.write('CREATE TABLE t (a INTEGER)');
-  await db.write('CREATE TABLE big (x INTEGER)');
-  await db.write('INSERT INTO t VALUES (0)');
+  await db.run('CREATE TABLE t (a INTEGER)');
+  await db.run('CREATE TABLE big (x INTEGER)');
+  await db.run('INSERT INTO t VALUES (0)');
   return db;
 };
 
@@ -48,16 +48,14 @@ describe('a write abandoned inside a transaction', () => {
 
       await expect(
         db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          await tx.write(BIG_INSERT, [], { signal: abortAfter(30, reason) });
+          await tx.run('INSERT INTO t VALUES (1)');
+          await tx.run(BIG_INSERT, [], { signal: abortAfter(30, reason) });
         }),
       ).rejects.toBe(reason);
 
       expect(workerIdentity(db)).toBe(before);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
-      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
-        { n: 0 },
-      ]);
+      expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+      expect(await db.all('SELECT count(*) AS n FROM big')).toEqual([{ n: 0 }]);
     } finally {
       await db.close();
     }
@@ -75,22 +73,20 @@ describe('a write abandoned inside a transaction', () => {
       const reason = new Error('abandon the write');
       let caught: unknown;
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
         caught = await tx
-          .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+          .run(BIG_INSERT, [], { signal: abortAfter(30, reason) })
           .catch((e) => e);
-        await tx.write('INSERT INTO t VALUES (2)');
+        await tx.run('INSERT INTO t VALUES (2)');
       });
 
       expect(caught).toBe(reason);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+      expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
         { a: 0 },
         { a: 1 },
         { a: 2 },
       ]);
-      expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
-        { n: 0 },
-      ]);
+      expect(await db.all('SELECT count(*) AS n FROM big')).toEqual([{ n: 0 }]);
       expect(workerIdentity(db)).toBe(before);
     } finally {
       await db.close();
@@ -107,15 +103,15 @@ describe('a write abandoned inside a transaction', () => {
         const reason = new Error('abandon the write');
         await db.transaction(async (tx) => {
           await tx
-            .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+            .run(BIG_INSERT, [], { signal: abortAfter(30, reason) })
             .catch(() => {});
-          await tx.write('INSERT INTO t VALUES (2)');
+          await tx.run('INSERT INTO t VALUES (2)');
         });
 
-        expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+        expect(await db.all('SELECT count(*) AS n FROM big')).toEqual([
           { n: 0 },
         ]);
-        expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+        expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
           { a: 0 },
           { a: 2 },
         ]);
@@ -138,15 +134,15 @@ describe('a write abandoned inside a transaction', () => {
       ctl.abort(reason);
       let refused: unknown;
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
         refused = await tx
-          .write('INSERT INTO t VALUES (2)', [], { signal: ctl.signal })
+          .run('INSERT INTO t VALUES (2)', [], { signal: ctl.signal })
           .catch((e) => e);
-        await tx.write('INSERT INTO t VALUES (3)');
+        await tx.run('INSERT INTO t VALUES (3)');
       });
 
       expect(refused).toBe(reason);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+      expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
         { a: 0 },
         { a: 1 },
         { a: 3 },
@@ -165,23 +161,23 @@ describe('a write abandoned inside a transaction', () => {
         const before = workerIdentity(db);
         let caught: unknown;
         await db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
           caught = await tx
-            .write(BIG_INSERT, [], { timeout: 30 })
+            .run(BIG_INSERT, [], { timeout: 30 })
             .catch((e) => e);
-          await tx.write('INSERT INTO t VALUES (2)');
+          await tx.run('INSERT INTO t VALUES (2)');
         });
 
         expect(caught).toMatchObject({
           code: 'OPERATION_TIMEOUT',
           timeout: 30,
         });
-        expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+        expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
           { a: 0 },
           { a: 1 },
           { a: 2 },
         ]);
-        expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+        expect(await db.all('SELECT count(*) AS n FROM big')).toEqual([
           { n: 0 },
         ]);
         expect(workerIdentity(db)).toBe(before);
@@ -204,17 +200,17 @@ describe('a write abandoned inside a transaction', () => {
       const slow = longQuery(20_000_000);
       // Prepare and cache the exact statement first, so the measured run takes
       // the cached path and the abort lands inside step() (mem:lessons, 2026-09-05).
-      await db.read(slow, [], { timeout: 50 }).catch(() => {});
+      await db.all(slow, [], { timeout: 50 }).catch(() => {});
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
         await tx
-          .read(slow, [], {
+          .all(slow, [], {
             signal: abortAfter(30, new Error('this read only')),
           })
           .catch(() => {});
-        await tx.write('INSERT INTO t VALUES (2)');
+        await tx.run('INSERT INTO t VALUES (2)');
       });
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+      expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
         { a: 0 },
         { a: 1 },
         { a: 2 },
@@ -233,16 +229,16 @@ describe('a write abandoned inside a transaction', () => {
       const ctl = new AbortController();
       let closed: unknown;
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
         const writer = tx.bulkWrite('t', ['a'], { signal: ctl.signal });
         await writer.enqueue({ a: 2 });
         ctl.abort(reason);
         closed = await writer.close().catch((e) => e);
-        await tx.write('INSERT INTO t VALUES (3)');
+        await tx.run('INSERT INTO t VALUES (3)');
       });
 
       expect(closed).toBe(reason);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+      expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
         { a: 0 },
         { a: 1 },
         { a: 3 },
@@ -267,18 +263,18 @@ describe('a write abandoned inside a transaction', () => {
       let refused: unknown;
 
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
         const writer = tx.bulkWrite('t', ['a'], { signal: ctl.signal });
         try {
           writer.enqueue({ a: 2 });
         } catch (e) {
           refused = e;
         }
-        await tx.write('INSERT INTO t VALUES (3)');
+        await tx.run('INSERT INTO t VALUES (3)');
       });
 
       expect(refused).toBe(reason);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+      expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
         { a: 0 },
         { a: 1 },
         { a: 3 },
@@ -296,7 +292,7 @@ describe('a write abandoned inside a transaction', () => {
       const ctl = new AbortController();
       let closed: unknown;
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
         const out = tx.output(
           'target',
           { a: 'INTEGER' },
@@ -305,17 +301,17 @@ describe('a write abandoned inside a transaction', () => {
         await out.enqueue({ a: 2 });
         ctl.abort(reason);
         closed = await out.close().catch((e) => e);
-        await tx.write('INSERT INTO t VALUES (3)');
+        await tx.run('INSERT INTO t VALUES (3)');
       });
 
       expect(closed).toBe(reason);
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+      expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
         { a: 0 },
         { a: 1 },
         { a: 3 },
       ]);
       expect(
-        await db.read(
+        await db.all(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND (name = 'target' OR name LIKE '__bsq_staging_%')",
         ),
       ).toEqual([]);

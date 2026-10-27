@@ -21,7 +21,7 @@ const SERIES = (n: number) =>
 const setUp = async (options: Record<string, unknown> = {}) => {
   const records = interceptWorkers();
   const db = await createTestClient({ poolSize: 1, ...options });
-  await db.write('CREATE TABLE t (a, b)');
+  await db.run('CREATE TABLE t (a, b)');
   const worker = records[0]?.worker as unknown as PoolWorker;
   return { db, worker, records };
 };
@@ -46,7 +46,7 @@ describe('verdict', () => {
   it('calls an INSERT a write, and runs nothing', async () => {
     const { db, worker, records } = await setUp();
     expect(await worker.verdict('INSERT INTO t VALUES (1, 1)')).toBe('write');
-    expect(await db.read('SELECT * FROM t')).toEqual([]);
+    expect(await db.all('SELECT * FROM t')).toEqual([]);
     expect(records[0]?.posted).toContain('verdict');
   });
 
@@ -92,25 +92,27 @@ describe('verdict', () => {
   it('answers on a worker held by a transaction, which carries on, and caches nothing there', async () => {
     const { db, worker } = await setUp({ debug: true });
     await db.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1, 1)');
+      await tx.run('INSERT INTO t VALUES (1, 1)');
       // A miss, then a hit on the statement the transaction just ran.
-      expect(await worker.verdict('SELECT 42')).toBe('read');
+      expect(await worker.verdict('SELECT 42 WHERE 0')).toBe('read');
       expect(await worker.verdict('INSERT INTO t VALUES (1, 1)')).toBe('write');
-      await tx.write('INSERT INTO t VALUES (2, 2)');
+      await tx.run('INSERT INTO t VALUES (2, 2)');
     });
-    expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+    expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
       { a: 1 },
       { a: 2 },
     ]);
-    await db.read('SELECT 42');
-    expect(runsOf(db, 'SELECT 42')[0]?.prepared).toBe(1);
+    // first() asks no verdict: all() would compile the statement there. No row,
+    // because first() stops at one and the reply that counts is the last.
+    await db.first('SELECT 42 WHERE 0');
+    expect(runsOf(db, 'SELECT 42 WHERE 0')[0]?.prepared).toBe(1);
   });
 
   // Falsifiable: never insert the verdict's statement in the cache.
   it('caches its statement on a free worker', async () => {
     const { db, worker } = await setUp({ debug: true });
     expect(await worker.verdict('SELECT 43')).toBe('read');
-    await db.read('SELECT 43');
+    await db.all('SELECT 43');
     expect(runsOf(db, 'SELECT 43')[0]?.prepared).toBe(0);
   });
 
@@ -132,7 +134,7 @@ describe('verdict', () => {
   it('leaves alone the cached statement of a stream it answers beside', async () => {
     const { db, worker } = await setUp();
     const sql = SERIES(1000);
-    await db.read(sql);
+    await db.all(sql);
     const rows = db.stream<{ x: number }>(sql, [], { chunkSize: 1 });
     let count = 0;
     for await (const _ of rows) {
@@ -151,7 +153,7 @@ describe('verdict', () => {
     const { db, worker } = await setUp({ debug: true });
     const sql = longQuery(2_000_000);
     let read = false;
-    const reading = db.read<{ n: number }>(sql).finally(() => {
+    const reading = db.all<{ n: number }>(sql).finally(() => {
       read = true;
     });
     await waitUntil(theQueryIsRunning(db, sql), 'the long read to run');
@@ -186,7 +188,9 @@ describe('verdict', () => {
     const pending = worker.verdict('SELECT 1');
     pending.catch(() => {});
     await expect(
-      db.read('SELECT 1', [], { signal: AbortSignal.timeout(200) }),
+      // first(): a query is posted at once, and its unanswered stop is what
+      // tells of the death. all() would wait on the verdict instead.
+      db.first('SELECT 1', [], { signal: AbortSignal.timeout(200) }),
     ).rejects.toThrow();
     await expect(pending).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
     await expect(worker.verdict('SELECT 1')).rejects.toMatchObject({

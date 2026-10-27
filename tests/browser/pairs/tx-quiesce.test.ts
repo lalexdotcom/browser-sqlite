@@ -33,8 +33,8 @@ describe('a statement following a short-circuited statement in the same callback
   it('follows tx.first()', { timeout: 30_000 }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write(SEED);
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run(SEED);
 
       const counted = await db.transaction(async (tx) => {
         // More than one row left to produce is the whole condition: first()
@@ -43,9 +43,7 @@ describe('a statement following a short-circuited statement in the same callback
         // ends by itself and breaks nothing.
         const row = await tx.first<{ n: number }>('SELECT n FROM t ORDER BY n');
         expect(row?.n).toBe(1);
-        const rows = await tx.read<{ c: number }>(
-          'SELECT count(*) AS c FROM t',
-        );
+        const rows = await tx.all<{ c: number }>('SELECT count(*) AS c FROM t');
         return rows[0]?.c;
       });
 
@@ -60,8 +58,8 @@ describe('a statement following a short-circuited statement in the same callback
   }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write(SEED);
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run(SEED);
 
       const counted = await db.transaction(async (tx) => {
         // Abandoned BETWEEN two statements, which closeOpenStatements() does
@@ -74,9 +72,7 @@ describe('a statement following a short-circuited statement in the same callback
           expect(rows.length).toBe(10);
           break;
         }
-        const rows = await tx.read<{ c: number }>(
-          'SELECT count(*) AS c FROM t',
-        );
+        const rows = await tx.all<{ c: number }>('SELECT count(*) AS c FROM t');
         return rows[0]?.c;
       });
 
@@ -86,14 +82,14 @@ describe('a statement following a short-circuited statement in the same callback
     }
   });
 
-  it('follows a tx.read() aborted by its own signal', {
+  it('follows a tx.all() aborted by its own signal', {
     timeout: scaled(30_000),
   }, async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write(SEED);
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run(SEED);
 
       const counted = await db.transaction(async (tx) => {
         const controller = new AbortController();
@@ -109,7 +105,7 @@ describe('a statement following a short-circuited statement in the same callback
             }
           });
         }
-        const pending = tx.read('SELECT n FROM t', [], {
+        const pending = tx.all('SELECT n FROM t', [], {
           signal: controller.signal,
           chunkSize: 1,
         });
@@ -123,9 +119,7 @@ describe('a statement following a short-circuited statement in the same callback
 
         // The transaction's own signal never fired, so the callback runs on
         // and the next statement is the one that trips.
-        const rows = await tx.read<{ c: number }>(
-          'SELECT count(*) AS c FROM t',
-        );
+        const rows = await tx.all<{ c: number }>('SELECT count(*) AS c FROM t');
         return rows[0]?.c;
       });
 
@@ -158,8 +152,8 @@ describe('the boundary of that wait', {
   }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write(SEED);
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run(SEED);
 
       let code: string | undefined;
       await db.transaction(async (tx) => {
@@ -169,7 +163,7 @@ describe('the boundary of that wait', {
         await rows.next();
         // Dropped, not closed: no `break`, no `return()`, no exhaustion.
         try {
-          await tx.read('SELECT count(*) AS c FROM t', [], { timeout: 500 });
+          await tx.all('SELECT count(*) AS c FROM t', [], { timeout: 500 });
         } catch (error) {
           code = (error as { code?: string }).code;
         }
@@ -193,8 +187,8 @@ describe('the boundary of that wait', {
   }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write(SEED);
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run(SEED);
 
       let code: string | undefined;
       await db.transaction(async (tx) => {
@@ -234,8 +228,8 @@ describe('the boundary of that wait', {
     // Both workers must stay alive and unevicted here, not merely exist.
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write(SEED);
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run(SEED);
 
       let code: string | undefined;
       try {
@@ -244,7 +238,7 @@ describe('the boundary of that wait', {
             chunkSize: 10,
           });
           await dropped.next();
-          await tx.read('SELECT count(*) AS c FROM t', [], { timeout: 500 });
+          await tx.all('SELECT count(*) AS c FROM t', [], { timeout: 500 });
         });
       } catch (error) {
         code = (error as { code?: string }).code;
@@ -254,7 +248,7 @@ describe('the boundary of that wait', {
       expect(records.some((record) => record.terminated)).toBe(false);
       expect(records.length).toBe(2);
 
-      const rows = await db.read<{ c: number }>('SELECT count(*) AS c FROM t');
+      const rows = await db.all<{ c: number }>('SELECT count(*) AS c FROM t');
       expect(rows[0]?.c).toBe(2000);
     } finally {
       await db.close();

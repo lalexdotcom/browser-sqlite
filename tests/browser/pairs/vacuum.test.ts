@@ -27,14 +27,14 @@ describe('a VACUUM that shrinks the database', () => {
     tags: ['requires:in-place-file'],
   }, async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE t (a)');
-    await db.write(
+    await db.run('CREATE TABLE t (a)');
+    await db.run(
       'INSERT INTO t WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 20000) SELECT randomblob(100) FROM c',
     );
-    await db.write('DELETE FROM t');
+    await db.run('DELETE FROM t');
     const before = await footprint(db.files);
 
-    await db.write('VACUUM');
+    await db.run('VACUUM');
 
     // Measured before any statement: the next one on the writer would publish
     // the truncation itself and hide a missing one.

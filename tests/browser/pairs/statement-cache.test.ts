@@ -24,10 +24,13 @@ const runsOf = (
 describe('prepare counter', () => {
   it('reports one compilation for one statement', async () => {
     const db = await createTestClient(single);
-    await db.write('CREATE TABLE t (a)');
+    // first(): run() and all() compile the statement for the verdict, so the
+    // query that follows finds it cached and reports 0. No row, because first()
+    // stops at one and the reply that counts is the last.
+    await db.first('SELECT 1 AS a WHERE 0');
     // Falsifiability: stop incrementing `prepared` in worker.ts's query loop
     // and this is 0.
-    expect(runsOf(db, 'CREATE TABLE t (a)')[0]?.prepared).toBe(1);
+    expect(runsOf(db, 'SELECT 1 AS a WHERE 0')[0]?.prepared).toBe(1);
     await db.close();
   });
 });
@@ -35,9 +38,9 @@ describe('prepare counter', () => {
 describe('statement cache', () => {
   it('compiles repeated SQL once', async () => {
     const db = await createTestClient(single);
-    await db.write('CREATE TABLE t (a)');
-    await db.read('SELECT * FROM t');
-    await db.read('SELECT * FROM t');
+    await db.run('CREATE TABLE t (a)');
+    await db.first('SELECT * FROM t');
+    await db.first('SELECT * FROM t');
     const runs = runsOf(db, 'SELECT * FROM t');
     expect(runs[0]?.prepared).toBe(1);
     // Falsifiability: return `undefined` unconditionally from `cache.get` and
@@ -57,8 +60,8 @@ describe('statement cache', () => {
       'SELECT 1 -- note',
       'SELECT 1; /* note */',
     ]) {
-      await db.read(sql);
-      await db.read(sql);
+      await db.all(sql);
+      await db.all(sql);
       // Falsifiability: make `refuseMore` in `query` refuse unconditionally and
       // every read rejects.
       expect(runsOf(db, sql)[1]?.prepared).toBe(0);
@@ -70,24 +73,24 @@ describe('statement cache', () => {
     const db = await createTestClient(single);
     const sql = 'SELECT 1; SELECT 2';
     const refused = { code: 'MULTIPLE_STATEMENTS' };
-    await expect(db.read(sql)).rejects.toMatchObject(refused);
+    await expect(db.all(sql)).rejects.toMatchObject(refused);
     // The worst defect available here: a first statement kept after the
     // refusal would answer the second call, running `SELECT 1` alone.
     // Falsifiability: let a refusal settle its statement as a success in
     // `query` (`failed = false`) and this resolves.
-    await expect(db.read(sql)).rejects.toMatchObject(refused);
+    await expect(db.all(sql)).rejects.toMatchObject(refused);
     await db.close();
   });
 
   it('does not carry a binding from one execution to the next', async () => {
     const db = await createTestClient(single);
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     const insert = 'INSERT INTO t (a) VALUES (?)';
-    await db.write(insert, [7]);
+    await db.run(insert, [7]);
     // bind_collection skips an `undefined` value, so on a reused statement
     // the previous execution's binding would survive (spec §2.3).
-    await db.write(insert, [undefined]);
-    const rows = await db.read<{ a: number | null }>(
+    await db.run(insert, [undefined]);
+    const rows = await db.all<{ a: number | null }>(
       'SELECT a FROM t ORDER BY rowid',
     );
     // Falsifiability: delete the `clear_bindings` call in `settle` and the
@@ -98,8 +101,8 @@ describe('statement cache', () => {
 
   it('closes cleanly after caching statements', async () => {
     const db = await createTestClient(single);
-    await db.write('CREATE TABLE t (a)');
-    await db.read('SELECT * FROM t');
+    await db.run('CREATE TABLE t (a)');
+    await db.all('SELECT * FROM t');
     // Verifies that close() resolves and does not reject after statements have
     // been cached. The drain's structural necessity — SQLite returns SQLITE_BUSY
     // when live statements exist — is not observable from JavaScript: the close
@@ -111,8 +114,8 @@ describe('statement cache', () => {
 
   it('caches a statement abandoned by first()', async () => {
     const db = await createTestClient(single);
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t (a) VALUES (1), (2)');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t (a) VALUES (1), (2)');
     const sql = 'SELECT a FROM t';
     await db.first(sql);
     await db.first(sql);
@@ -135,21 +138,21 @@ describe('statement cache', () => {
     const database = sharedDatabase();
     const reader = database.open({ poolSize: 1 });
     const writer = database.open({ poolSize: 1 });
-    await reader.write('CREATE TABLE t (a)');
-    await reader.write('INSERT INTO t (a) VALUES (1), (2)');
+    await reader.run('CREATE TABLE t (a)');
+    await reader.run('INSERT INTO t (a) VALUES (1), (2)');
     await reader.first('SELECT a FROM t');
-    await writer.write('UPDATE t SET a = a * 10', [], { timeout: 5_000 });
-    const rows = await reader.read<{ a: number }>('SELECT min(a) AS a FROM t');
+    await writer.run('UPDATE t SET a = a * 10', [], { timeout: 5_000 });
+    const rows = await reader.all<{ a: number }>('SELECT min(a) AS a FROM t');
     expect(rows[0]?.a).toBe(10);
   });
 
   it('sees a column added after the statement was cached', async () => {
     const db = await createTestClient(single);
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t (a) VALUES (1)');
-    await db.read('SELECT * FROM t');
-    await db.write('ALTER TABLE t ADD COLUMN b');
-    const rows = await db.read<Record<string, unknown>>('SELECT * FROM t');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t (a) VALUES (1)');
+    await db.all('SELECT * FROM t');
+    await db.run('ALTER TABLE t ADD COLUMN b');
+    const rows = await db.all<Record<string, unknown>>('SELECT * FROM t');
     // The cached statement re-prepares itself during step() when the schema
     // has moved. Column names read before that step describe the old table
     // while row() returns the new one — correct values under wrong keys.
@@ -169,8 +172,8 @@ describe('statement cache', () => {
     // out — past this test's 30 s on a CI runner (mem:measurements,
     // CI-QUERY-TIMEOUT).
     const db = await createTestClient({ ...single });
-    await db.write('CREATE TABLE t (a INTEGER)');
-    await db.write('INSERT INTO t VALUES (1)');
+    await db.run('CREATE TABLE t (a INTEGER)');
+    await db.run('INSERT INTO t VALUES (1)');
 
     // Slow enough that the signal fires while `step()` is still running. This
     // is the exit `first()` does not reach: there, the loop breaks after a row
@@ -186,9 +189,9 @@ describe('statement cache', () => {
       'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 2000000) ' +
       'SELECT count(*) AS n FROM t CROSS JOIN (SELECT count(*) FROM c)';
 
-    await db.read(sql);
+    await db.all(sql);
     await expect(
-      db.read(sql, [], { signal: AbortSignal.timeout(100) }),
+      db.all(sql, [], { signal: AbortSignal.timeout(100) }),
     ).rejects.toThrow();
 
     // Falsifiability, verified by experiment: change `if (failed)` to
@@ -197,7 +200,7 @@ describe('statement cache', () => {
     // kept. What this test does NOT pin is that the abandoned statement left
     // no read transaction open; that half is not observable from JavaScript
     // and is recorded in `mem:follow-ups`.
-    await db.read(sql);
+    await db.all(sql);
     expect(runsOf(db, sql)[2]?.prepared).toBe(0);
 
     await db.close();
@@ -230,12 +233,12 @@ const insertRuns = (db: Awaited<ReturnType<typeof createTestClient>>) =>
 describe('the byte bound', () => {
   it('holds two statements at the default budget', async () => {
     const db = await createTestClient(single);
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     const first = 'SELECT a FROM t';
     const second = 'SELECT a FROM t WHERE a = 1';
-    await db.read(first);
-    await db.read(second);
-    await db.read(first);
+    await db.all(first);
+    await db.all(second);
+    await db.all(first);
     // THE CONTROL, and it is the one the 2026-09-02 campaign proved is
     // load-bearing: if the budget never reaches the worker it defaults to 0,
     // which evicts on every insertion of a DIFFERENT key, and the third read
@@ -251,11 +254,11 @@ describe('the byte bound', () => {
       ...single,
       __unsafeTestStatementCacheBytes: 1,
     } as never);
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     const first = 'SELECT a FROM t';
-    await db.read(first);
-    await db.read('SELECT a FROM t WHERE a = 1');
-    await db.read(first);
+    await db.all(first);
+    await db.all('SELECT a FROM t WHERE a = 1');
+    await db.all(first);
     // A one-byte budget cannot hold the other statement, so each insertion
     // evicts its predecessor and the third read compiles.
     // Falsifiability: delete the byte loop from `insert` and this is 0.
@@ -265,7 +268,7 @@ describe('the byte bound', () => {
 
   it('retains a bulkWrite template across its batches', async () => {
     const db = await createTestClient(single);
-    await db.write(`CREATE TABLE ta (${BULK_COLUMNS.join(',')})`);
+    await db.run(`CREATE TABLE ta (${BULK_COLUMNS.join(',')})`);
     await feed(db.bulkWrite('ta', BULK_COLUMNS));
     const runs = insertRuns(db);
     // The full template weighs ~2.4 MB and is compiled once for three batches.
@@ -279,8 +282,8 @@ describe('the byte bound', () => {
 
   it('holds both templates of two concurrent bulkWrites', async () => {
     const db = await createTestClient(single);
-    await db.write(`CREATE TABLE ta (${BULK_COLUMNS.join(',')})`);
-    await db.write(`CREATE TABLE tb (${BULK_COLUMNS.join(',')})`);
+    await db.run(`CREATE TABLE ta (${BULK_COLUMNS.join(',')})`);
+    await db.run(`CREATE TABLE tb (${BULK_COLUMNS.join(',')})`);
     await Promise.all([
       feed(db.bulkWrite('ta', BULK_COLUMNS)),
       feed(db.bulkWrite('tb', BULK_COLUMNS)),
@@ -302,7 +305,7 @@ describe('the byte bound', () => {
       ...single,
       __unsafeTestStatementCacheBytes: 1024,
     } as never);
-    await db.write(`CREATE TABLE ta (${BULK_COLUMNS.join(',')})`);
+    await db.run(`CREATE TABLE ta (${BULK_COLUMNS.join(',')})`);
     await feed(db.bulkWrite('ta', BULK_COLUMNS));
     const runs = insertRuns(db);
     // The rule never refuses an entry and never reads the incoming weight: a

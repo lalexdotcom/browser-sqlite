@@ -2,18 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { createTestClient } from '../helpers';
 
 /**
- * INT-03: db.read() executes a SELECT and returns typed rows
+ * INT-03: db.all() executes a SELECT and returns typed rows
  */
-describe('db.read() (INT-03)', () => {
+describe('db.all() (INT-03)', () => {
   it('returns an array of rows for a simple SELECT', async () => {
     const db = await createTestClient();
 
-    await db.write(
+    await db.run(
       'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)',
     );
-    await db.write("INSERT INTO items VALUES (1, 'alpha'), (2, 'beta')");
+    await db.run("INSERT INTO items VALUES (1, 'alpha'), (2, 'beta')");
 
-    const rows = await db.read<{ id: number; name: string }>(
+    const rows = await db.all<{ id: number; name: string }>(
       'SELECT * FROM items ORDER BY id',
     );
 
@@ -29,8 +29,8 @@ describe('db.read() (INT-03)', () => {
   it('returns an empty array for SELECT with no results', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE empty_table (id INTEGER)');
-    const rows = await db.read('SELECT * FROM empty_table');
+    await db.run('CREATE TABLE empty_table (id INTEGER)');
+    const rows = await db.all('SELECT * FROM empty_table');
 
     expect(rows).toHaveLength(0);
     expect(Array.isArray(rows)).toBe(true);
@@ -41,10 +41,10 @@ describe('db.read() (INT-03)', () => {
   it('supports positional parameters', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE params_test (val INTEGER)');
-    await db.write('INSERT INTO params_test VALUES (10), (20), (30)');
+    await db.run('CREATE TABLE params_test (val INTEGER)');
+    await db.run('INSERT INTO params_test VALUES (10), (20), (30)');
 
-    const rows = await db.read<{ val: number }>(
+    const rows = await db.all<{ val: number }>(
       'SELECT val FROM params_test WHERE val > ?',
       [15],
     );
@@ -58,21 +58,19 @@ describe('db.read() (INT-03)', () => {
 });
 
 /**
- * INT-04: db.write() executes INSERT/UPDATE/DELETE and returns { result, affected }
+ * INT-04: db.run() executes INSERT/UPDATE/DELETE and returns { rows, affected }
  */
-describe('db.write() (INT-04)', () => {
+describe('db.run() (INT-04)', () => {
   it('INSERT returns affected > 0', async () => {
     const db = await createTestClient();
 
-    await db.write(
-      'CREATE TABLE write_test (id INTEGER PRIMARY KEY, val TEXT)',
-    );
-    const result = await db.write(
+    await db.run('CREATE TABLE write_test (id INTEGER PRIMARY KEY, val TEXT)');
+    const result = await db.run(
       "INSERT INTO write_test VALUES (1, 'foo'), (2, 'bar')",
     );
 
     expect(result.affected).toBe(2);
-    expect(Array.isArray(result.result)).toBe(true);
+    expect(Array.isArray(result.rows)).toBe(true);
 
     db.close();
   });
@@ -80,11 +78,11 @@ describe('db.write() (INT-04)', () => {
   it('UPDATE returns the number of modified rows', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE update_test (id INTEGER, status TEXT)');
-    await db.write(
+    await db.run('CREATE TABLE update_test (id INTEGER, status TEXT)');
+    await db.run(
       "INSERT INTO update_test VALUES (1, 'old'), (2, 'old'), (3, 'new')",
     );
-    const result = await db.write(
+    const result = await db.run(
       "UPDATE update_test SET status = 'updated' WHERE status = 'old'",
     );
 
@@ -96,14 +94,14 @@ describe('db.write() (INT-04)', () => {
   it('DELETE returns the number of deleted rows', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE delete_test (id INTEGER)');
-    await db.write('INSERT INTO delete_test VALUES (1), (2), (3), (4)');
-    const result = await db.write('DELETE FROM delete_test WHERE id <= 2');
+    await db.run('CREATE TABLE delete_test (id INTEGER)');
+    await db.run('INSERT INTO delete_test VALUES (1), (2), (3), (4)');
+    const result = await db.run('DELETE FROM delete_test WHERE id <= 2');
 
     expect(result.affected).toBe(2);
 
     // Verify remaining rows are correct
-    const remaining = await db.read<{ id: number }>(
+    const remaining = await db.all<{ id: number }>(
       'SELECT id FROM delete_test ORDER BY id',
     );
     expect(remaining).toHaveLength(2);
@@ -123,9 +121,9 @@ describe('affected', () => {
   it('is 0 for a DDL statement after an INSERT', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t VALUES (1),(2),(3)');
-    const result = await db.write('CREATE TABLE u (a)');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t VALUES (1),(2),(3)');
+    const result = await db.run('CREATE TABLE u (a)');
 
     expect(result.affected).toBe(0);
 
@@ -135,9 +133,9 @@ describe('affected', () => {
   it('is 0 for a SELECT after an INSERT', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t VALUES (1),(2),(3)');
-    const result = await db.write('SELECT 1');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t VALUES (1),(2),(3)');
+    const result = await db.run('SELECT 1');
 
     expect(result.affected).toBe(0);
 
@@ -147,9 +145,9 @@ describe('affected', () => {
   it('still reports an UPDATE of 2 rows', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t VALUES (1),(2),(3)');
-    const result = await db.write('UPDATE t SET a = a + 1 WHERE a <= 2');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t VALUES (1),(2),(3)');
+    const result = await db.run('UPDATE t SET a = a + 1 WHERE a <= 2');
 
     expect(result.affected).toBe(2);
 
@@ -159,12 +157,12 @@ describe('affected', () => {
   it("counts only the direct changes, not a trigger's", async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE t (a)');
-    await db.write('CREATE TABLE log (a)');
-    await db.write(
+    await db.run('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE log (a)');
+    await db.run(
       'CREATE TRIGGER tr AFTER INSERT ON t BEGIN INSERT INTO log VALUES (new.a); END',
     );
-    const result = await db.write('INSERT INTO t VALUES (9)');
+    const result = await db.run('INSERT INTO t VALUES (9)');
 
     expect(result.affected).toBe(1);
 
@@ -179,10 +177,10 @@ describe('db.chunk() (INT-05)', () => {
   it('yields chunks whose size does not exceed chunkSize', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE stream_test (n INTEGER)');
+    await db.run('CREATE TABLE stream_test (n INTEGER)');
     // Insert 50 rows via batch INSERT
     const values = Array.from({ length: 50 }, (_, i) => `(${i + 1})`).join(',');
-    await db.write(`INSERT INTO stream_test VALUES ${values}`);
+    await db.run(`INSERT INTO stream_test VALUES ${values}`);
 
     const chunkSize = 10;
     const chunks: number[][] = [];
@@ -208,8 +206,8 @@ describe('db.chunk() (INT-05)', () => {
   it('yields at least one chunk for a non-empty result', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE stream_one (x INTEGER)');
-    await db.write('INSERT INTO stream_one VALUES (42)');
+    await db.run('CREATE TABLE stream_one (x INTEGER)');
+    await db.run('INSERT INTO stream_one VALUES (42)');
 
     let chunkCount = 0;
     for await (const chunk of db.chunk<{ x: number }>(
@@ -234,8 +232,8 @@ describe('db.first() (INT-06)', () => {
   it('returns the first row when a result exists', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE one_test (id INTEGER, label TEXT)');
-    await db.write("INSERT INTO one_test VALUES (1, 'first'), (2, 'second')");
+    await db.run('CREATE TABLE one_test (id INTEGER, label TEXT)');
+    await db.run("INSERT INTO one_test VALUES (1, 'first'), (2, 'second')");
 
     const row = await db.first<{ id: number; label: string }>(
       'SELECT * FROM one_test ORDER BY id LIMIT 1',
@@ -251,7 +249,7 @@ describe('db.first() (INT-06)', () => {
   it('returns undefined when no result', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE one_empty (id INTEGER)');
+    await db.run('CREATE TABLE one_empty (id INTEGER)');
     const row = await db.first('SELECT * FROM one_empty WHERE id = 999');
 
     expect(row).toBeUndefined();
@@ -262,8 +260,8 @@ describe('db.first() (INT-06)', () => {
   it('returns only the first row even when multiple exist', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE one_multi (val INTEGER)');
-    await db.write('INSERT INTO one_multi VALUES (100), (200), (300)');
+    await db.run('CREATE TABLE one_multi (val INTEGER)');
+    await db.run('INSERT INTO one_multi VALUES (100), (200), (300)');
 
     const row = await db.first<{ val: number }>(
       'SELECT val FROM one_multi ORDER BY val',

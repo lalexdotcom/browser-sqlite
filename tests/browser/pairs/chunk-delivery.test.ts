@@ -25,8 +25,8 @@ const seed = async (
   db: Awaited<ReturnType<typeof createTestClient>>,
   rows = ROWS,
 ) => {
-  await db.write('CREATE TABLE t (a INTEGER)');
-  await db.write(
+  await db.run('CREATE TABLE t (a INTEGER)');
+  await db.run(
     `INSERT INTO t SELECT x FROM (WITH RECURSIVE c(x) AS ` +
       `(SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${rows}) SELECT x FROM c)`,
   );
@@ -90,7 +90,7 @@ describe('chunk delivery', () => {
         rows += chunk.length;
       }
       expect(rows).toBe(ROWS);
-      expect((await db.read('SELECT a FROM t')).length).toBe(ROWS);
+      expect((await db.all('SELECT a FROM t')).length).toBe(ROWS);
       expect(await db.first('SELECT a FROM t')).toEqual({ a: 1 });
     } finally {
       await db.close();
@@ -128,7 +128,7 @@ describe('chunk delivery', () => {
         expect(chunks).toBe(1);
         // The lease came back and the worker is serving again: a delivery loop
         // that exited without stopping-and-draining would leave it stepping.
-        expect(await db.read('SELECT count(*) AS n FROM t')).toEqual([
+        expect(await db.all('SELECT count(*) AS n FROM t')).toEqual([
           { n: ROWS },
         ]);
       } finally {

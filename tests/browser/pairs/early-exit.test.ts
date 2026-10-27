@@ -20,13 +20,13 @@ describe('leaving a read early, with no signal and no timeout', {
     // poolSize 1: the next query MUST land on the worker that served first().
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.read('SELECT 1');
+      await db.all('SELECT 1');
       expect(await db.first<{ n: number }>(SLOW_SECOND_ROW)).toEqual({ n: 1 });
       // `started` is the moment first() resolved: the stop leaves with it, and
       // the timer captures stop -> worker drain -> SELECT 1. Broken, the step
       // runs to its end and the total lands past the bound.
       const started = performance.now();
-      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       expect(performance.now() - started).toBeLessThan(3000);
     } finally {
       await db.close();
@@ -39,7 +39,7 @@ describe('leaving a read early, with no signal and no timeout', {
   }, async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.read('SELECT 1');
+      await db.all('SELECT 1');
       for await (const rows of db.chunk<{ n: number }>(
         SLOW_SECOND_ROW_CTE,
         [],
@@ -54,7 +54,7 @@ describe('leaving a read early, with no signal and no timeout', {
         break;
       }
       const started = performance.now();
-      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       expect(performance.now() - started).toBeLessThan(3000);
     } finally {
       await db.close();

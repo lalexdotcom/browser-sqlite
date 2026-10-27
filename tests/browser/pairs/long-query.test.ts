@@ -12,7 +12,7 @@ describe('a long single step', () => {
   // Falsifiable: bound the query itself with any timer and this fails.
   it('runs to completion untouched', async () => {
     const db = await createTestClient({ poolSize: 1 });
-    const rows = await db.read<{ n: number }>(longQuery(2_000_000));
+    const rows = await db.all<{ n: number }>(longQuery(2_000_000));
     expect(rows[0]?.n).toBe(2_000_000);
   });
 
@@ -27,10 +27,10 @@ describe('a long single step', () => {
     // teardown drains the whole 20M-row query.
     const db = await createTestClient({ poolSize: 2 });
     // Booted first: the bound is on the abort, not on the pool's startup.
-    await db.read('SELECT 1');
+    await db.all('SELECT 1');
     const started = performance.now();
     await expect(
-      db.read(longQuery(20_000_000), [], {
+      db.all(longQuery(20_000_000), [], {
         signal: AbortSignal.timeout(200),
       }),
     ).rejects.toThrow();
@@ -51,10 +51,10 @@ describe('a long single step', () => {
       drainTimeout: 60_000,
       debug: true,
     });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     await expect(
-      db.read(longQuery(20_000_000), [], { signal: AbortSignal.timeout(200) }),
+      db.all(longQuery(20_000_000), [], { signal: AbortSignal.timeout(200) }),
     ).rejects.toThrow();
 
     // At least two macrotask boundaries separate us from the worker returning
@@ -82,9 +82,9 @@ describe('a worker killed silently', () => {
     if (webkit) return skip(webkit);
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
-    const running = db.read(longQuery(20_000_000), [], {
+    const running = db.all(longQuery(20_000_000), [], {
       signal: AbortSignal.timeout(200),
     });
     await sleep(100);
@@ -92,7 +92,7 @@ describe('a worker killed silently', () => {
 
     await expect(running).rejects.toThrow();
     await sleep(2000); // drainTimeout, then the replacement's boot
-    const rows = await db.read<{ n: number }>('SELECT 1 AS n');
+    const rows = await db.all<{ n: number }>('SELECT 1 AS n');
     expect(rows[0]?.n).toBe(1);
     expect(records.length).toBe(2);
   });

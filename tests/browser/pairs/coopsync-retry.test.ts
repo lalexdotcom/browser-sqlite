@@ -63,15 +63,15 @@ describe('OPFSCoopSyncVFS handle-transfer BUSY', () => {
     // worker, so the handle transfer this test chases now happens between
     // these two clients rather than between workers of one pool.
     const dbA = database.open();
-    await dbA.write('CREATE TABLE t (a INTEGER)');
+    await dbA.run('CREATE TABLE t (a INTEGER)');
     const dbB = database.open();
     const clients = [dbA, dbB];
     for (let round = 0; round < ROUNDS; round++) {
       const work = Array.from({ length: CONCURRENT }, (_, i) => {
         const db = clients[i % clients.length];
         return i % 3 === 0
-          ? db.write('INSERT INTO t (a) VALUES (?)', [round * CONCURRENT + i])
-          : db.read<{ n: number }>('SELECT count(*) AS n FROM t');
+          ? db.run('INSERT INTO t (a) VALUES (?)', [round * CONCURRENT + i])
+          : db.all<{ n: number }>('SELECT count(*) AS n FROM t');
       });
       // Falsifiability, verified by experiment (see header): drop the
       // catch from `readWithRetry` in client.ts so it just awaits

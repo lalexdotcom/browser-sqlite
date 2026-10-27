@@ -21,14 +21,21 @@ type TestClient = Awaited<ReturnType<typeof createTestClient>>;
 const slotOf = (record: WorkerRecord) =>
   (record.worker as unknown as PoolWorker).index;
 
-/** Verdicts posted to every worker so far. */
-const verdictsPosted = (records: WorkerRecord[]) =>
+/** What `setUp()`'s own statement had already posted, per records. */
+const setUpVerdicts = new WeakMap<WorkerRecord[], number>();
+
+const allVerdicts = (records: WorkerRecord[]) =>
   records.flatMap((r) => r.posted).filter((t) => t === 'verdict').length;
+
+/** Verdicts posted to every worker since `setUp()`. */
+const verdictsPosted = (records: WorkerRecord[]) =>
+  allVerdicts(records) - (setUpVerdicts.get(records) ?? 0);
 
 const setUp = async (options: Record<string, unknown> = {}) => {
   const records = interceptWorkers();
   const db = await createTestClient({ poolSize: 1, ...options });
-  await db.write('CREATE TABLE t (a, b)');
+  await db.run('CREATE TABLE t (a, b)');
+  setUpVerdicts.set(records, allVerdicts(records));
   return { db, records };
 };
 
@@ -297,7 +304,7 @@ describe('run() and all() on two workers', {
     let txWorker: number | undefined;
     await db.transaction(async (tx) => {
       running = db.run('SELECT 3 AS x');
-      await tx.write('INSERT INTO t VALUES (1, 1)');
+      await tx.run('INSERT INTO t VALUES (1, 1)');
       txWorker = db.debug?.requests.find((r) =>
         r.queries.some((q) => q.sql === 'INSERT INTO t VALUES (1, 1)'),
       )?.worker;
@@ -307,7 +314,7 @@ describe('run() and all() on two workers', {
         );
       for (let i = 0; i < 500 && !posted(); i++) await sleep(5);
       expect(posted()).toBe(true);
-      await tx.write('INSERT INTO t VALUES (2, 2)');
+      await tx.run('INSERT INTO t VALUES (2, 2)');
     });
     expect(txWorker).toBeDefined();
     const others = records.filter((r) => slotOf(r) !== txWorker);

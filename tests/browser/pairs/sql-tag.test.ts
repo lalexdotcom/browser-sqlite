@@ -5,12 +5,12 @@ import { createTestClient } from '../helpers';
 
 /** Every query method with a query built by `sql`, options in second position. */
 const exercise = async (db: SQLiteQueryAPI) => {
-  await db.write(sql`CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`);
-  const inserted = await db.write(
+  await db.run(sql`CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)`);
+  const inserted = await db.run(
     sql`INSERT INTO t (id, v) VALUES (${1}, ${'a'}), (${2}, ${'b'})`,
   );
   expect(inserted.affected).toBe(2);
-  expect(await db.read(sql`SELECT v FROM t WHERE id = ${2}`)).toEqual([
+  expect(await db.all(sql`SELECT v FROM t WHERE id = ${2}`)).toEqual([
     { v: 'b' },
   ]);
   expect(await db.first(sql`SELECT v FROM t WHERE id = ${1}`)).toEqual({
@@ -32,7 +32,7 @@ const exercise = async (db: SQLiteQueryAPI) => {
 
 /** Untyped code passing params anyway: rejected, never read as options. */
 const misuse = (db: SQLiteQueryAPI) =>
-  Promise.resolve().then(() => db.read(sql`SELECT ${1} AS one`, [1] as never));
+  Promise.resolve().then(() => db.all(sql`SELECT ${1} AS one`, [1] as never));
 
 describe('sql tag', () => {
   it('runs on every query method of the client', async () => {
@@ -44,7 +44,7 @@ describe('sql tag', () => {
   it('runs on every query method of a transaction', async () => {
     const db = await createTestClient();
     await db.transaction((tx) => exercise(tx));
-    expect(await db.read(sql`SELECT count(*) AS n FROM t`)).toEqual([{ n: 2 }]);
+    expect(await db.all(sql`SELECT count(*) AS n FROM t`)).toEqual([{ n: 2 }]);
     await db.close();
   });
 
@@ -59,12 +59,12 @@ describe('sql tag', () => {
 
   it('stores sql.jsonb objects as JSONB and plain sql objects as JSON text', async () => {
     const db = await createTestClient();
-    await db.write(sql`CREATE TABLE j (doc)`);
+    await db.run(sql`CREATE TABLE j (doc)`);
     const doc = { a: [1, 'x'], b: null };
-    await db.write(sql.jsonb`INSERT INTO j VALUES (${doc})`);
-    await db.write(sql`INSERT INTO j VALUES (${doc})`);
+    await db.run(sql.jsonb`INSERT INTO j VALUES (${doc})`);
+    await db.run(sql`INSERT INTO j VALUES (${doc})`);
     expect(
-      await db.read(
+      await db.all(
         sql`SELECT typeof(doc) AS t, json(doc) AS j FROM j ORDER BY rowid`,
       ),
     ).toEqual([
@@ -80,13 +80,13 @@ describe('sql tag', () => {
 
   it('matches sql.list against integers, strings, dates and a bigint past 2^53', async () => {
     const db = await createTestClient();
-    await db.write(sql`CREATE TABLE n (id INTEGER, s TEXT, at TEXT)`);
-    await db.write(
+    await db.run(sql`CREATE TABLE n (id INTEGER, s TEXT, at TEXT)`);
+    await db.run(
       sql`INSERT INTO n VALUES (${1}, ${'a'}, strftime('%Y-%m-%d %H:%M:%f', '2026-10-08 12:00:00')), (${2}, ${'b'}, NULL), (${3}, ${'c'}, NULL), (${2n ** 53n}, ${'big'}, NULL)`,
     );
     const names = async (where: SQLQuery) =>
       (
-        await db.read<{ s: string }>(
+        await db.all<{ s: string }>(
           sql`SELECT s FROM n WHERE ${where} ORDER BY s`,
         )
       ).map((r) => r.s);
@@ -107,25 +107,25 @@ describe('sql tag', () => {
 
   it('refuses a multi-statement string, params and all', async () => {
     const db = await createTestClient();
-    await db.write(sql`CREATE TABLE t (a, b)`);
+    await db.run(sql`CREATE TABLE t (a, b)`);
     await expect(
-      db.write(
+      db.run(
         sql`INSERT INTO t VALUES (${1}, ${2}); INSERT INTO t VALUES (${3}, ${4})`,
       ),
     ).rejects.toMatchObject({ code: 'MULTIPLE_STATEMENTS' });
-    expect(await db.read(sql`SELECT count(*) AS n FROM t`)).toEqual([{ n: 0 }]);
+    expect(await db.all(sql`SELECT count(*) AS n FROM t`)).toEqual([{ n: 0 }]);
     await db.close();
   });
 
   it('sends an object interpolated twice once, into two columns', async () => {
     const db = await createTestClient();
-    await db.write(sql`CREATE TABLE d (x, y)`);
+    await db.run(sql`CREATE TABLE d (x, y)`);
     const doc = { a: [1, 'x'] };
     const q = sql`INSERT INTO d VALUES (${doc}, ${doc})`;
     expect(q.params).toHaveLength(1);
-    await db.write(q);
+    await db.run(q);
     const json = '{"a":[1,"x"]}';
-    expect(await db.read(sql`SELECT x, y FROM d`)).toEqual([
+    expect(await db.all(sql`SELECT x, y FROM d`)).toEqual([
       { x: json, y: json },
     ]);
     await db.close();
@@ -133,12 +133,12 @@ describe('sql tag', () => {
 
   it('reads a sql.list array when the query is sent', async () => {
     const db = await createTestClient();
-    await db.write(sql`CREATE TABLE n (id INTEGER)`);
-    await db.write(sql`INSERT INTO n VALUES (${1}), (${2}), (${3})`);
+    await db.run(sql`CREATE TABLE n (id INTEGER)`);
+    await db.run(sql`INSERT INTO n VALUES (${1}), (${2}), (${3})`);
     const ids = [1];
     const q = sql`SELECT id FROM n WHERE id IN ${sql.list(ids)} ORDER BY id`;
     ids.push(3);
-    expect(await db.read(q)).toEqual([{ id: 1 }, { id: 3 }]);
+    expect(await db.all(q)).toEqual([{ id: 1 }, { id: 3 }]);
     await db.close();
   });
 });

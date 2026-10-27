@@ -1387,9 +1387,9 @@
           applies: () => true,
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ctx.db.write('CREATE TABLE t (a INTEGER)', undefined, { signal });
-              await ctx.db.write('INSERT INTO t VALUES (1)', undefined, { signal });
-              const rows = await ctx.db.read('SELECT count(*) AS n FROM t', undefined, {
+              await ctx.db.run('CREATE TABLE t (a INTEGER)', undefined, { signal });
+              await ctx.db.run('INSERT INTO t VALUES (1)', undefined, { signal });
+              const rows = await ctx.db.all('SELECT count(*) AS n FROM t', undefined, {
                 signal,
               });
               if (rows[0].n !== 1) throw new Error(`expected 1, got ${rows[0].n}`);
@@ -1402,9 +1402,9 @@
           applies: () => true,
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ctx.db.write('CREATE TABLE inv1 (a INTEGER)', undefined, { signal });
-              await ctx.db.write('INSERT INTO inv1 VALUES (42)', undefined, { signal });
-              const rows = await ctx.db.read('SELECT a FROM inv1', undefined, { signal });
+              await ctx.db.run('CREATE TABLE inv1 (a INTEGER)', undefined, { signal });
+              await ctx.db.run('INSERT INTO inv1 VALUES (42)', undefined, { signal });
+              const rows = await ctx.db.all('SELECT a FROM inv1', undefined, { signal });
               if (rows.length !== 1 || rows[0].a !== 42) {
                 throw new Error(`expected [{a:42}], got ${JSON.stringify(rows)}`);
               }
@@ -1419,10 +1419,10 @@
           applies: (cap) => cap.persistent,
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ctx.db.write('CREATE TABLE inv2 (a INTEGER)', undefined, {
+              await ctx.db.run('CREATE TABLE inv2 (a INTEGER)', undefined, {
                 signal,
               });
-              await ctx.db.write('INSERT INTO inv2 VALUES (7)', undefined, {
+              await ctx.db.run('INSERT INTO inv2 VALUES (7)', undefined, {
                 signal,
               });
               await ctx.db.close();
@@ -1438,7 +1438,7 @@
                 poolSize: poolFor(ctx.pair.cap),
                 openTimeout: OPEN_TIMEOUT_MS,
               });
-              const rows = await ctx.db.read('SELECT a FROM inv2', undefined, {
+              const rows = await ctx.db.all('SELECT a FROM inv2', undefined, {
                 signal,
               });
               if (rows.length !== 1 || rows[0].a !== 7) {
@@ -1453,16 +1453,16 @@
           applies: (cap) => !oneWorkerHere(cap),
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ctx.db.write('CREATE TABLE inv3 (a INTEGER)', undefined, {
+              await ctx.db.run('CREATE TABLE inv3 (a INTEGER)', undefined, {
                 signal,
               });
               const N = 20;
               await Promise.all(
                 Array.from({ length: N }, (_, i) =>
-                  ctx.db.write('INSERT INTO inv3 VALUES (?)', [i], { signal }),
+                  ctx.db.run('INSERT INTO inv3 VALUES (?)', [i], { signal }),
                 ),
               );
-              const rows = await ctx.db.read(
+              const rows = await ctx.db.all(
                 'SELECT count(*) AS n FROM inv3',
                 undefined,
                 { signal },
@@ -1477,20 +1477,20 @@
           applies: () => true,
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ctx.db.write('CREATE TABLE inv4 (a INTEGER)', undefined, {
+              await ctx.db.run('CREATE TABLE inv4 (a INTEGER)', undefined, {
                 signal,
               });
               let threw = false;
               try {
                 await ctx.db.transaction(async (tx) => {
-                  await tx.write('INSERT INTO inv4 VALUES (1)');
+                  await tx.run('INSERT INTO inv4 VALUES (1)');
                   throw new Error('deliberate rollback');
                 });
               } catch (error) {
                 threw = /deliberate rollback/.test(String(error?.message ?? error));
               }
               if (!threw) throw new Error('transaction did not reject');
-              const rows = await ctx.db.read(
+              const rows = await ctx.db.all(
                 'SELECT count(*) AS n FROM inv4',
                 undefined,
                 { signal },
@@ -1505,7 +1505,7 @@
           applies: () => true,
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ctx.db.write('CREATE TABLE inv5 (a INTEGER)', undefined, {
+              await ctx.db.run('CREATE TABLE inv5 (a INTEGER)', undefined, {
                 signal,
               });
               // close() accepts no AbortSignal; the library's drainTimeout
@@ -1516,7 +1516,7 @@
               await closeWithTimeout(ctx.db);
               let rejected = false;
               try {
-                await ctx.db.read('SELECT 1 AS n');
+                await ctx.db.all('SELECT 1 AS n');
               } catch {
                 rejected = true;
               }
@@ -1549,21 +1549,21 @@
            * proved something we did not.
            */
           run: async (ctx) => {
-            await ctx.db.write('CREATE TABLE inv6 (a INTEGER)');
+            await ctx.db.run('CREATE TABLE inv6 (a INTEGER)');
 
             let release;
             const held = new Promise((resolve) => {
               release = resolve;
             });
             const tx = ctx.db.transaction(async (inner) => {
-              await inner.write('INSERT INTO inv6 VALUES (1)');
+              await inner.run('INSERT INTO inv6 VALUES (1)');
               await held;
             });
 
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 2000);
             const readOutcome = ctx.db
-              .read('SELECT count(*) AS n FROM inv6', undefined, {
+              .all('SELECT count(*) AS n FROM inv6', undefined, {
                 signal: controller.signal,
               })
               .then(
@@ -1766,7 +1766,7 @@
        */
       const ensureDataset = async (ctx, signal) => {
         if (ctx.datasetReady) return;
-        await ctx.db.write(
+        await ctx.db.run(
           'CREATE TABLE bench (id INTEGER PRIMARY KEY, label TEXT, n INTEGER)',
           undefined,
           { signal },
@@ -1776,7 +1776,7 @@
           bulk.enqueue({ id: i, label: `row-${i}`, n: i % 97 });
         }
         await bulk.close();
-        await ctx.db.write('CREATE INDEX bench_n ON bench (n)', undefined, {
+        await ctx.db.run('CREATE INDEX bench_n ON bench (n)', undefined, {
           signal,
         });
         ctx.datasetReady = true;
@@ -1832,7 +1832,7 @@
         // What the final bound cost, when the search itself timed it.
         let measured = null;
         for (let attempt = 0; attempt < 6; attempt++) {
-          const ms = await time(() => ctx.db.read(longQuery(bound)));
+          const ms = await time(() => ctx.db.all(longQuery(bound)));
           calibration.attempts.push({ bound, ms: Math.round(ms) });
           if (ms >= 1500 && ms <= 3000) {
             measured = ms;
@@ -1848,7 +1848,7 @@
           );
         }
         if (measured === null) {
-          measured = await time(() => ctx.db.read(longQuery(bound)));
+          measured = await time(() => ctx.db.all(longQuery(bound)));
           calibration.verify.push({ bound, ms: Math.round(measured) });
         }
         ctx.longIterations = measured >= 1000 && measured <= 4000 ? bound : null;
@@ -1885,8 +1885,8 @@
           run: (ctx) =>
             abortableRow(async (signal) => {
               await ensureDataset(ctx, signal);
-              await ctx.db.write('CREATE TABLE lat (a INTEGER)', undefined, { signal });
-              await ctx.db.write('INSERT INTO lat VALUES (0)', undefined, { signal }); // warmup
+              await ctx.db.run('CREATE TABLE lat (a INTEGER)', undefined, { signal });
+              await ctx.db.run('INSERT INTO lat VALUES (0)', undefined, { signal }); // warmup
               // Still 100 inserts; twenty samples of five rather than a
               // hundred of one, so the clock has something it can resolve.
               let n = 0;
@@ -1895,7 +1895,7 @@
                 samples.push(
                   await timeGroup(
                     () =>
-                      ctx.db.write('INSERT INTO lat VALUES (?)', [++n], {
+                      ctx.db.run('INSERT INTO lat VALUES (?)', [++n], {
                         signal,
                       }),
                     WRITE_GROUP,
@@ -1961,7 +1961,7 @@
               // is the honest cost of OFFSET pagination at median depth, not
               // just the cost of fetching 50 rows.
               const page = (offset) =>
-                ctx.db.read(
+                ctx.db.all(
                   'SELECT id, label FROM bench ORDER BY n, id LIMIT 50 OFFSET ?',
                   [offset],
                   { signal },
@@ -2055,7 +2055,7 @@
             abortableRow(async (signal) => {
               await ensureDataset(ctx, signal);
               const scan = () =>
-                ctx.db.read(
+                ctx.db.all(
                   'SELECT count(*) AS n, sum(n) AS total, max(label) AS last FROM bench',
                   undefined,
                   { signal },
@@ -2077,13 +2077,13 @@
           // developer learns from this page.
           run: (ctx) =>
             abortableRow(async (signal) => {
-              await ctx.db.write('CREATE TABLE txput (a INTEGER)', undefined, {
+              await ctx.db.run('CREATE TABLE txput (a INTEGER)', undefined, {
                 signal,
               });
               return time(() =>
                 ctx.db.transaction(async (tx) => {
                   for (let i = 0; i < 500; i++) {
-                    await tx.write('INSERT INTO txput VALUES (?)', [i]);
+                    await tx.run('INSERT INTO txput VALUES (?)', [i]);
                   }
                 }),
               );
@@ -2133,7 +2133,7 @@
               return time(() =>
                 ctx.db.transaction(async (tx) => {
                   for (let i = 1; i <= 500; i++) {
-                    await tx.write(
+                    await tx.run(
                       "UPDATE bench SET label = 'upd-' || substr(label, 5) WHERE id = ?",
                       [i * stride],
                     );
@@ -2253,7 +2253,7 @@
               // So it cannot be cancelled once the verdict is in — and need not
               // be: the next row would only contend with the cross-join
               // instead of waiting for it. The `finally` below waits for it.
-              const long = ctx.db.read(longQuery(bound));
+              const long = ctx.db.all(longQuery(bound));
               long.catch(() => {});
               let longSettled = false;
               const longRace = long.then(
@@ -2353,7 +2353,7 @@
               });
               let tables;
               try {
-                const rows = await probe.read(
+                const rows = await probe.all(
                   "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'",
                   undefined,
                   { signal },

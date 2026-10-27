@@ -3,44 +3,43 @@ import { describe, expect, it } from 'vitest';
 import { createTestClient } from '../helpers';
 
 describe('routing — strictness', () => {
-  // Falsifiable: delete the assertReadable call in read() in src/client.ts
-  // and this case silently runs the DELETE.
-  it('read() rejects a write statement', async () => {
+  // Spec 2026-10-26: all() takes any single statement; the refusal of a write
+  // is first()'s alone. Falsifiable: put the assertReadable call back in
+  // runStatement() in src/client.ts.
+  it('all() takes a write statement', async () => {
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t (a) VALUES (1)');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t (a) VALUES (1)');
 
-    await expect(db.read('DELETE FROM t')).rejects.toMatchObject({
-      code: 'NOT_A_READ_QUERY',
-    });
-    const rows = await db.read('SELECT * FROM t');
-    expect(rows.length).toBe(1);
+    expect(await db.all('DELETE FROM t')).toEqual([]);
+    const rows = await db.all('SELECT * FROM t');
+    expect(rows.length).toBe(0);
   });
 
   // Spec 2026-10-26: chunk() and stream() take any single statement.
   // Falsifiable: put the assertReadable call back in chunk() in src/client.ts.
   it('chunk() takes a write statement', async () => {
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t (a) VALUES (1)');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t (a) VALUES (1)');
 
     for await (const _ of db.chunk('DELETE FROM t')) {
       // A DELETE without RETURNING delivers no chunk.
     }
-    const rows = await db.read('SELECT * FROM t');
+    const rows = await db.all('SELECT * FROM t');
     expect(rows.length).toBe(0);
   });
 
   // Falsifiable: put the assertReadable call back in stream() in src/client.ts.
   it('stream() takes a write statement', async () => {
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t (a) VALUES (1)');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t (a) VALUES (1)');
 
     for await (const _ of db.stream('DELETE FROM t')) {
       // A DELETE without RETURNING delivers no row.
     }
-    const rows = await db.read('SELECT * FROM t');
+    const rows = await db.all('SELECT * FROM t');
     expect(rows.length).toBe(0);
   });
 
@@ -48,61 +47,60 @@ describe('routing — strictness', () => {
   // and this case silently runs the DELETE.
   it('first() rejects a write statement', async () => {
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t (a) VALUES (1)');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t (a) VALUES (1)');
 
     await expect(db.first('DELETE FROM t')).rejects.toMatchObject({
       code: 'NOT_A_READ_QUERY',
     });
-    const rows = await db.read('SELECT * FROM t');
+    const rows = await db.all('SELECT * FROM t');
     expect(rows.length).toBe(1);
   });
 
-  // Falsifiable: drop the method passed to checksql() by tx.read() in
-  // src/transaction.ts and the DELETE runs.
-  it("a transaction's read() and first() reject a write statement", async () => {
+  // Falsifiable: drop the `refuseWrite` option tx.first() passes to firstWorker()
+  // in src/transaction.ts and the DELETE runs; or refuse a write in tx.all().
+  it("a transaction's first() rejects a write statement, its all() takes one", async () => {
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t (a) VALUES (1)');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t (a) VALUES (1)');
 
     await db.transaction(async (tx) => {
-      await expect(tx.read('DELETE FROM t')).rejects.toMatchObject({
-        code: 'NOT_A_READ_QUERY',
-      });
       await expect(tx.first('DELETE FROM t')).rejects.toMatchObject({
         code: 'NOT_A_READ_QUERY',
       });
+      expect(await tx.all('SELECT * FROM t')).toHaveLength(1);
+      expect(await tx.all('DELETE FROM t')).toEqual([]);
     });
-    const rows = await db.read('SELECT * FROM t');
-    expect(rows.length).toBe(1);
+    const rows = await db.all('SELECT * FROM t');
+    expect(rows.length).toBe(0);
   });
 
-  // Falsifiable: put the ternary back on write()'s acquire in src/client.ts.
-  it('write() accepts a read statement and routes it to the writer', {
-    tags: ['requires:two-workers'],
-  }, async () => {
-    // "Routed to the WRITER" only means something where a reader exists too,
-    // so the pair has to keep two workers.
+  // run() routes a read to the read path, so the old write()-on-a-read case
+  // (a read sent to the writer) is gone with write(). Falsifiable: make
+  // runStatement() in src/client.ts drop the rows of a read.
+  it('run() takes a read statement and returns its rows', async () => {
     const db = await createTestClient({ poolSize: 2 });
-    const { result } = await db.write<{ n: number }>('SELECT 1 AS n');
-    expect(result[0]?.n).toBe(1);
+    const { rows, affected } = await db.run<{ n: number }>('SELECT 1 AS n');
+    expect(rows[0]?.n).toBe(1);
+    expect(affected).toBe(0);
   });
 
-  // Falsifiable: remove READ_PRAGMA from isReadQuery in src/utils.ts and both
-  // of these cases break.
-  it('accepts a bare read pragma through read()', async () => {
+  // The refusal belongs to first() now: all() takes both. Falsifiable: make
+  // the worker's verdict answer 'write' for a bare read pragma, or 'read' for
+  // one that assigns.
+  it('accepts a bare read pragma through first()', async () => {
     const db = await createTestClient();
-    const rows = await db.read<{ journal_mode: string }>('PRAGMA journal_mode');
-    expect(rows[0]?.journal_mode).toBeDefined();
+    const row = await db.first<{ journal_mode: string }>('PRAGMA journal_mode');
+    expect(row?.journal_mode).toBeDefined();
     await db.close();
   });
 
   it('still rejects a pragma that assigns', async () => {
     const db = await createTestClient();
-    await expect(db.read('PRAGMA journal_mode=WAL')).rejects.toMatchObject({
+    await expect(db.first('PRAGMA journal_mode=WAL')).rejects.toMatchObject({
       code: 'NOT_A_READ_QUERY',
     });
-    await expect(db.read('PRAGMA user_version(5)')).rejects.toMatchObject({
+    await expect(db.first('PRAGMA user_version(5)')).rejects.toMatchObject({
       code: 'NOT_A_READ_QUERY',
     });
     await db.close();
@@ -111,15 +109,15 @@ describe('routing — strictness', () => {
   // Falsifiable: drop table_info from INTROSPECTION_PRAGMAS in src/utils.ts.
   it('accepts an introspection pragma with its argument, in a read-only transaction too', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE "we""ird" (a INTEGER, b TEXT)');
+    await db.run('CREATE TABLE "we""ird" (a INTEGER, b TEXT)');
 
-    const columns = await db.read<{ name: string }>(
+    const columns = await db.all<{ name: string }>(
       'PRAGMA table_info("we""ird")',
     );
     expect(columns.map((c) => c.name)).toEqual(['a', 'b']);
 
     const inTx = await db.transaction(
-      (tx) => tx.read<{ name: string }>('PRAGMA main.table_xinfo("we""ird")'),
+      (tx) => tx.all<{ name: string }>('PRAGMA main.table_xinfo("we""ird")'),
       { readOnly: true },
     );
     expect(inTx.map((c) => c.name)).toEqual(['a', 'b']);
@@ -130,7 +128,7 @@ describe('routing — strictness', () => {
 describe('chunk() and stream() — arguments are validated at the call', () => {
   // Falsifiable: move queryArgs, assertReadable or prepareParams back inside
   // the generator in src/client.ts and the call returns instead of throwing.
-  // The read() on a one-worker pool shows the refused call left the pool usable.
+  // The all() on a one-worker pool shows the refused call left the pool usable.
 
   it('chunk() throws at the call for a first argument that is not a query', async () => {
     const db = await createTestClient({ poolSize: 1 });
@@ -138,7 +136,7 @@ describe('chunk() and stream() — arguments are validated at the call', () => {
     expect(() => db.chunk(42 as never)).toThrow(
       expect.objectContaining({ code: 'INVALID_VALUE' }),
     );
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 
   it('stream() throws at the call for a first argument that is not a query', async () => {
@@ -147,7 +145,7 @@ describe('chunk() and stream() — arguments are validated at the call', () => {
     expect(() => db.stream(42 as never)).toThrow(
       expect.objectContaining({ code: 'INVALID_VALUE' }),
     );
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 
   it('chunk() throws at the call for a query built by sql followed by a params array', async () => {
@@ -158,7 +156,7 @@ describe('chunk() and stream() — arguments are validated at the call', () => {
     expect(() => db.chunk(sql`SELECT ${1} AS one`, [1] as never)).toThrow(
       expect.objectContaining({ code: 'INVALID_VALUE' }),
     );
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 
   it('stream() throws at the call for a query built by sql followed by a params array', async () => {
@@ -169,7 +167,7 @@ describe('chunk() and stream() — arguments are validated at the call', () => {
     expect(() => db.stream(sql`SELECT ${1} AS one`, [1] as never)).toThrow(
       expect.objectContaining({ code: 'INVALID_VALUE' }),
     );
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 
   it('chunk() runs a CREATE TABLE, with affected 0', async () => {
@@ -179,7 +177,7 @@ describe('chunk() and stream() — arguments are validated at the call', () => {
       // No rows.
     }
     expect(await created.affected).toBe(0);
-    expect(await db.read('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
+    expect(await db.all('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
   });
 
   it('stream() runs a CREATE TABLE, with affected 0', async () => {
@@ -189,7 +187,7 @@ describe('chunk() and stream() — arguments are validated at the call', () => {
       // No rows.
     }
     expect(await created.affected).toBe(0);
-    expect(await db.read('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
+    expect(await db.all('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
   });
 
   it('chunk() throws at the call for an unbindable param', async () => {
@@ -198,7 +196,7 @@ describe('chunk() and stream() — arguments are validated at the call', () => {
     expect(() => db.chunk('SELECT ?', [Symbol('s')])).toThrow(
       expect.objectContaining({ code: 'INVALID_VALUE' }),
     );
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 
   it('stream() throws at the call for an unbindable param', async () => {
@@ -207,17 +205,17 @@ describe('chunk() and stream() — arguments are validated at the call', () => {
     expect(() => db.stream('SELECT ?', [Symbol('s')])).toThrow(
       expect.objectContaining({ code: 'INVALID_VALUE' }),
     );
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 });
 
 describe('first() and a read-only transaction refuse writes in the worker', () => {
   const seeded = async () => {
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a INTEGER PRIMARY KEY, b)');
-    await db.write('INSERT INTO t VALUES (1, 1)');
+    await db.run('CREATE TABLE t (a INTEGER PRIMARY KEY, b)');
+    await db.run('INSERT INTO t VALUES (1, 1)');
     const count = async () =>
-      (await db.read<{ n: number }>('SELECT count(*) AS n FROM t'))[0]?.n;
+      (await db.all<{ n: number }>('SELECT count(*) AS n FROM t'))[0]?.n;
     return { db, count };
   };
 
@@ -288,7 +286,7 @@ describe('first() and a read-only transaction refuse writes in the worker', () =
   it('a read-only transaction refuses a write, and runs a read whose text holds DELETE', async () => {
     const { db, count } = await seeded();
     await expect(
-      db.transaction((tx) => tx.write('INSERT INTO t VALUES (3, 3)'), {
+      db.transaction((tx) => tx.run('INSERT INTO t VALUES (3, 3)'), {
         readOnly: true,
       }),
     ).rejects.toMatchObject({
@@ -296,8 +294,7 @@ describe('first() and a read-only transaction refuse writes in the worker', () =
       message: 'Cannot write in a read-only transaction.',
     });
     expect(await count()).toBe(1);
-    // read() still takes the page-side check until the routing lands, so the
-    // reads that the text would condemn go through first() and write().
+    // Neither first() nor run() judges by the text: SQLite says it reads.
     expect(
       await db.transaction((tx) => tx.first("SELECT 'DELETE' AS word"), {
         readOnly: true,
@@ -305,7 +302,7 @@ describe('first() and a read-only transaction refuse writes in the worker', () =
     ).toEqual({ word: 'DELETE' });
     expect(
       await db.transaction(
-        (tx) => tx.write("SELECT 'DELETE' AS word").then((r) => r.result),
+        (tx) => tx.run("SELECT 'DELETE' AS word").then((r) => r.rows),
         { readOnly: true },
       ),
     ).toEqual([{ word: 'DELETE' }]);

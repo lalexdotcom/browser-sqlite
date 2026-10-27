@@ -23,8 +23,8 @@ const SQL = 'SELECT id, v FROM t';
 
 const seeded = async () => {
   const db = await createTestClient();
-  await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
-  await db.write(
+  await db.run('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
+  await db.run(
     'INSERT INTO t (v) WITH RECURSIVE c(x) AS ' +
       `(SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${ROWS}) ` +
       'SELECT hex(randomblob(256)) FROM c',

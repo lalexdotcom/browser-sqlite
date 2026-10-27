@@ -39,10 +39,10 @@ const pausedTransaction = async (
   const inside = gate();
   const resume = gate();
   const done = db.transaction(async (tx) => {
-    await tx.write("INSERT INTO t VALUES ('b1')");
+    await tx.run("INSERT INTO t VALUES ('b1')");
     inside.open();
     await resume.promise;
-    await tx.write("INSERT INTO t VALUES ('b2')");
+    await tx.run("INSERT INTO t VALUES ('b2')");
   });
   done.catch(() => {});
   await inside.promise;
@@ -51,11 +51,11 @@ const pausedTransaction = async (
 
 describe('a transaction handle used after its transaction ended (spec §1.2)', () => {
   // Falsifiable, all three: remove the `if (ending)` guards in transaction.ts's
-  // rollback() and write(); B is destroyed or contaminated, as measured.
+  // rollback() and run(); B is destroyed or contaminated, as measured.
   it("an abandoned transaction's rollback() leaves the next transaction alone", async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
     try {
-      await db.write('CREATE TABLE t (a TEXT)');
+      await db.run('CREATE TABLE t (a TEXT)');
       const before = workerIdentity(db);
       const ctl = new AbortController();
       const entered = gate();
@@ -64,7 +64,7 @@ describe('a transaction handle used after its transaction ended (spec §1.2)', (
       const a = db.transaction(
         async (tx) => {
           kept = tx;
-          await tx.write("INSERT INTO t VALUES ('a1')");
+          await tx.run("INSERT INTO t VALUES ('a1')");
           entered.open();
           await late.promise;
         },
@@ -81,7 +81,7 @@ describe('a transaction handle used after its transaction ended (spec §1.2)', (
       await expect(b.done).resolves.toBeUndefined();
       late.open();
 
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+      expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
         { a: 'b1' },
         { a: 'b2' },
       ]);
@@ -94,11 +94,11 @@ describe('a transaction handle used after its transaction ended (spec §1.2)', (
   it("a committed transaction's rollback() leaves the next transaction alone", async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
     try {
-      await db.write('CREATE TABLE t (a TEXT)');
+      await db.run('CREATE TABLE t (a TEXT)');
       let kept!: SQLiteTransactionDB;
       await db.transaction(async (tx) => {
         kept = tx;
-        await tx.write("INSERT INTO t VALUES ('a1')");
+        await tx.run("INSERT INTO t VALUES ('a1')");
       });
 
       const b = await pausedTransaction(db);
@@ -106,7 +106,7 @@ describe('a transaction handle used after its transaction ended (spec §1.2)', (
       b.resume();
       await expect(b.done).resolves.toBeUndefined();
 
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+      expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
         { a: 'a1' },
         { a: 'b1' },
         { a: 'b2' },
@@ -116,26 +116,26 @@ describe('a transaction handle used after its transaction ended (spec §1.2)', (
     }
   });
 
-  it("a committed transaction's write() is refused and lands nowhere", async () => {
+  it("a committed transaction's run() is refused and lands nowhere", async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a TEXT)');
+      await db.run('CREATE TABLE t (a TEXT)');
       let kept!: SQLiteTransactionDB;
       await db.transaction(async (tx) => {
         kept = tx;
-        await tx.write("INSERT INTO t VALUES ('a1')");
+        await tx.run("INSERT INTO t VALUES ('a1')");
       });
 
       const b = await pausedTransaction(db);
       const refused = await kept
-        .write("INSERT INTO t VALUES ('late')")
+        .run("INSERT INTO t VALUES ('late')")
         .catch((e) => e);
       b.resume();
       await expect(b.done).resolves.toBeUndefined();
 
       expect(refused).toMatchObject({ code: 'TRANSACTION_CLOSED' });
       expect((refused as Error).cause).toBeUndefined();
-      expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+      expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
         { a: 'a1' },
         { a: 'b1' },
         { a: 'b2' },
@@ -147,25 +147,25 @@ describe('a transaction handle used after its transaction ended (spec §1.2)', (
 });
 
 describe('a statement after an explicit end, inside the callback', () => {
-  // Falsifiable: remove the `if (ending)` guard in transaction.ts's write();
+  // Falsifiable: remove the `if (ending)` guard in transaction.ts's run();
   // the statement runs in autocommit on the leased worker and lands.
   const refusedAfter = (end: 'commit' | 'rollback') => async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a TEXT)');
+      await db.run('CREATE TABLE t (a TEXT)');
       let refused: unknown;
       await db.transaction(
         async (tx) => {
-          await tx.write("INSERT INTO t VALUES ('in')");
+          await tx.run("INSERT INTO t VALUES ('in')");
           await tx[end]();
           refused = await tx
-            .write("INSERT INTO t VALUES ('after')")
+            .run("INSERT INTO t VALUES ('after')")
             .catch((e) => e);
         },
         { autoCommit: false },
       );
       expect(refused).toMatchObject({ code: 'TRANSACTION_CLOSED' });
-      const rows = await db.read('SELECT a FROM t ORDER BY a');
+      const rows = await db.all('SELECT a FROM t ORDER BY a');
       expect(rows).toEqual(end === 'commit' ? [{ a: 'in' }] : []);
     } finally {
       await db.close();
@@ -193,15 +193,15 @@ describe('tx.signal', () => {
     async () => {
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (a INTEGER)');
-        await db.write('CREATE TABLE big (x INTEGER)');
+        await db.run('CREATE TABLE t (a INTEGER)');
+        await db.run('CREATE TABLE big (x INTEGER)');
         const reason = new Error('abandon the write');
         let seen!: AbortSignal;
 
         const outcome = await db
           .transaction(async (tx) => {
             seen = tx.signal;
-            await tx.write(BIG_INSERT, [], { signal: abortAfter(30, reason) });
+            await tx.run(BIG_INSERT, [], { signal: abortAfter(30, reason) });
           })
           .catch((e) => e);
 
@@ -224,22 +224,22 @@ describe('tx.signal', () => {
     async () => {
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (a INTEGER)');
-        await db.write('CREATE TABLE big (x INTEGER)');
+        await db.run('CREATE TABLE t (a INTEGER)');
+        await db.run('CREATE TABLE big (x INTEGER)');
         const reason = new Error('abandon the write');
         let seen!: AbortSignal;
 
         await db.transaction(async (tx) => {
           seen = tx.signal;
           await tx
-            .write(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+            .run(BIG_INSERT, [], { signal: abortAfter(30, reason) })
             .catch(() => {});
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
         });
 
         expect(seen.aborted).toBe(false);
-        expect(await db.read('SELECT a FROM t')).toEqual([{ a: 1 }]);
-        expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+        expect(await db.all('SELECT a FROM t')).toEqual([{ a: 1 }]);
+        expect(await db.all('SELECT count(*) AS n FROM big')).toEqual([
           { n: 0 },
         ]);
       } finally {
@@ -255,21 +255,21 @@ describe('tx.signal', () => {
   it('aborts with the error the callback throws', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       const boom = new Error('boom');
       let seen!: AbortSignal;
 
       await expect(
         db.transaction(async (tx) => {
           seen = tx.signal;
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
           throw boom;
         }),
       ).rejects.toBe(boom);
 
       expect(seen.aborted).toBe(true);
       expect(seen.reason).toBe(boom);
-      expect(await db.read('SELECT a FROM t')).toEqual([]);
+      expect(await db.all('SELECT a FROM t')).toEqual([]);
     } finally {
       await db.close();
     }
@@ -325,13 +325,13 @@ describe('tx.signal', () => {
   it('is not aborted by a normal end, an explicit commit, or a later close()', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       let seen!: AbortSignal;
       let afterCommit: boolean | undefined;
       await db.transaction(
         async (tx) => {
           seen = tx.signal;
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
           await tx.commit();
           afterCommit = tx.signal.aborted;
         },

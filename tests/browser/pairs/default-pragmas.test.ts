@@ -35,11 +35,11 @@ const modesOf = async (pragmas?: Record<string, string>) => {
     poolSize: 1,
     ...(pragmas ? { pragmas } : {}),
   });
-  await db.write('CREATE TABLE t (a INTEGER)');
-  const [journal] = await db.read<{ journal_mode: string }>(
+  await db.run('CREATE TABLE t (a INTEGER)');
+  const [journal] = await db.all<{ journal_mode: string }>(
     'PRAGMA journal_mode',
   );
-  const [locking] = await db.read<{ locking_mode: string }>(
+  const [locking] = await db.all<{ locking_mode: string }>(
     'PRAGMA locking_mode',
   );
   await db.close();
@@ -88,8 +88,8 @@ describe('per-VFS default pragmas', () => {
     // The property is the premise: against a VFS that declares defaults
     // (AccessHandlePoolVFS declares `locking_mode: exclusive`) this read 'exclusive'.
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a INTEGER)');
-    const [locking] = await db.read<{ locking_mode: string }>(
+    await db.run('CREATE TABLE t (a INTEGER)');
+    const [locking] = await db.all<{ locking_mode: string }>(
       'PRAGMA locking_mode',
     );
     // `locking_mode` rather than `journal_mode`: SQLite's default journal mode

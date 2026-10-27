@@ -32,7 +32,7 @@ describe('inspectDatabase', {
       await db.close().catch(() => {});
       await deleteDatabase('norm.db', { vfs: VFS }).catch(() => {});
     });
-    await db.read('SELECT 1');
+    await db.all('SELECT 1');
     const viaDotSlash = await inspectDatabase('./norm.db', { vfs: VFS });
     expect(viaDotSlash.clients).toHaveLength(1);
   });
@@ -45,7 +45,7 @@ describe('inspectDatabase', {
       await db.close().catch(() => {});
       await deleteDatabase(file, { vfs: VFS }).catch(() => {});
     });
-    await db.read('SELECT 1');
+    await db.all('SELECT 1');
 
     // A marker held from a second realm, built with the same rule the client
     // uses. `holdIn` is the existing helper; the iframe is what makes the

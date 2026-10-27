@@ -29,9 +29,8 @@ const CASES: [sql: string, expected: unknown][] = [
 ];
 
 const seed = async (db: Awaited<ReturnType<typeof createTestClient>>) => {
-  await db.write('CREATE TABLE r (id INTEGER PRIMARY KEY, v)');
-  for (const [sql] of CASES)
-    await db.write(`INSERT INTO r (v) VALUES (${sql})`);
+  await db.run('CREATE TABLE r (id INTEGER PRIMARY KEY, v)');
+  for (const [sql] of CASES) await db.run(`INSERT INTO r (v) VALUES (${sql})`);
 };
 const expected = CASES.map(([, v], i) => ({ id: i + 1, v }));
 
@@ -40,7 +39,7 @@ describe('result rows', () => {
     const db = await createTestClient();
     await seed(db);
     const sql = 'SELECT id, v FROM r ORDER BY id';
-    expect(await db.read(sql)).toEqual(expected);
+    expect(await db.all(sql)).toEqual(expected);
     expect(await db.first(sql)).toEqual(expected[0]);
     const streamed: unknown[] = [];
     for await (const row of db.stream(sql, [], { chunkSize: 5 }))
@@ -50,20 +49,20 @@ describe('result rows', () => {
     for await (const rows of db.chunk(sql, [], { chunkSize: 7 }))
       chunked.push(...rows);
     expect(chunked).toEqual(expected);
-    expect(await db.transaction((tx) => tx.read(sql))).toEqual(expected);
+    expect(await db.transaction((tx) => tx.all(sql))).toEqual(expected);
     await db.close();
   });
 
-  it('come back as today through write() RETURNING and the tx.* paths', async () => {
+  it('come back as today through run() RETURNING and the tx.* paths', async () => {
     const db = await createTestClient();
     await seed(db);
     const sql = 'SELECT id, v FROM r ORDER BY id';
-    // write() resolves to { result, affected }: the returned rows are `result`.
-    await db.write('CREATE TABLE s (id INTEGER PRIMARY KEY, v)');
-    const returned = await db.write(
+    // run() resolves to { rows, affected }: the returned rows are `rows`.
+    await db.run('CREATE TABLE s (id INTEGER PRIMARY KEY, v)');
+    const returned = await db.run(
       'INSERT INTO s (id, v) SELECT id, v FROM r ORDER BY id RETURNING id, v',
     );
-    expect(returned.result).toEqual(expected);
+    expect(returned.rows).toEqual(expected);
     expect(returned.affected).toBe(CASES.length);
     await db.transaction(async (tx) => {
       expect(await tx.first(sql)).toEqual(expected[0]);
@@ -75,15 +74,15 @@ describe('result rows', () => {
       for await (const row of tx.stream(sql, [], { chunkSize: 5 }))
         streamed.push(row);
       expect(streamed).toEqual(expected);
-      const txReturned = await tx.write('UPDATE s SET id = id RETURNING id, v');
-      expect(txReturned.result).toEqual(expected);
+      const txReturned = await tx.run('UPDATE s SET id = id RETURNING id, v');
+      expect(txReturned.rows).toEqual(expected);
     });
     await db.close();
   });
 
   it('keeps a negative zero and the SQL types', async () => {
     const db = await createTestClient();
-    const [row] = await db.read('SELECT -0.0 AS z, typeof(-0.0) AS t');
+    const [row] = await db.all('SELECT -0.0 AS z, typeof(-0.0) AS t');
     expect(row).toEqual({ z: -0, t: 'real' });
     expect(Object.is(row?.z, -0)).toBe(true);
     await db.close();
@@ -91,7 +90,7 @@ describe('result rows', () => {
 
   it('gives each blob a buffer of its own', async () => {
     const db = await createTestClient();
-    const rows = await db.read<{ b: Uint8Array }>(
+    const rows = await db.all<{ b: Uint8Array }>(
       "SELECT x'010203' AS b UNION ALL SELECT zeroblob(102400)",
     );
     expect(rows[0]?.b).toEqual(Uint8Array.of(1, 2, 3));
@@ -103,12 +102,12 @@ describe('result rows', () => {
 
   it('carries values larger than a chunk buffer, after small rows', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE k (id INTEGER PRIMARY KEY, v TEXT)');
-    await db.write(
+    await db.run('CREATE TABLE k (id INTEGER PRIMARY KEY, v TEXT)');
+    await db.run(
       "WITH RECURSIVE s(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM s WHERE i < 50) INSERT INTO k SELECT i, 'x' || i FROM s",
     );
-    await db.write("INSERT INTO k VALUES (51, printf('%.300000c', 'é'))");
-    const rows = await db.read<{ id: number; v: string }>(
+    await db.run("INSERT INTO k VALUES (51, printf('%.300000c', 'é'))");
+    const rows = await db.all<{ id: number; v: string }>(
       'SELECT * FROM k ORDER BY id',
     );
     expect(rows).toHaveLength(51);
@@ -119,14 +118,14 @@ describe('result rows', () => {
 
   it('keeps duplicated column names as today', async () => {
     const db = await createTestClient();
-    expect(await db.read('SELECT 1 AS a, 2 AS a')).toEqual([{ a: 2 }]);
+    expect(await db.all('SELECT 1 AS a, 2 AS a')).toEqual([{ a: 2 }]);
     await db.close();
   });
 
   it('drops a column named __proto__, as the structured clone did', async () => {
     const db = await createTestClient();
     for (const value of ['NULL', "x'01'"]) {
-      const [row] = await db.read(`SELECT 1 AS id, ${value} AS "__proto__"`);
+      const [row] = await db.all(`SELECT 1 AS id, ${value} AS "__proto__"`);
       expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
       expect(Object.keys(row as object)).toEqual(['id']);
     }
@@ -135,11 +134,11 @@ describe('result rows', () => {
 
   it('decodes short, long and invalid texts as before', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE e (id INTEGER PRIMARY KEY, v TEXT)');
+    await db.run('CREATE TABLE e (id INTEGER PRIMARY KEY, v TEXT)');
     const texts: string[] = [];
     for (let n = 1; n <= 40; n++)
       texts.push('a'.repeat(n), 'é'.repeat(n), '😀'.repeat(Math.ceil(n / 4)));
-    for (const t of texts) await db.write('INSERT INTO e (v) VALUES (?)', [t]);
+    for (const t of texts) await db.run('INSERT INTO e (v) VALUES (?)', [t]);
     const invalid = [
       'ff',
       'c0af',
@@ -158,13 +157,11 @@ describe('result rows', () => {
     const expectedInvalid: string[] = [];
     for (const h of invalid) {
       for (const pad of ['', '61'.repeat(40)]) {
-        await db.write(
-          `INSERT INTO e (v) VALUES (CAST(x'${pad}${h}' AS TEXT))`,
-        );
+        await db.run(`INSERT INTO e (v) VALUES (CAST(x'${pad}${h}' AS TEXT))`);
         expectedInvalid.push(reference.decode(hexBytes(pad + h)));
       }
     }
-    const rows = await db.read<{ v: string }>('SELECT v FROM e ORDER BY id');
+    const rows = await db.all<{ v: string }>('SELECT v FROM e ORDER BY id');
     expect(rows.map((r) => r.v)).toEqual([...texts, ...expectedInvalid]);
     await db.close();
   });

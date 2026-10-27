@@ -8,8 +8,8 @@ import {
 
 /** 5000 rows, one column — enough chunks that running ahead is obvious. */
 const seed = async (db: Awaited<ReturnType<typeof createTestClient>>) => {
-  await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
-  await db.write(
+  await db.run('CREATE TABLE t (id INTEGER PRIMARY KEY)');
+  await db.run(
     `INSERT INTO t(id) SELECT x FROM (
        WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 5000)
        SELECT x FROM c)`,
@@ -60,7 +60,7 @@ describe('back-pressure', () => {
     await sleep(1500); // past drainTimeout, plus a replacement's boot
     expect(records.length).toBe(1);
 
-    const rows = await db.read<{ n: number }>('SELECT 1 AS n');
+    const rows = await db.all<{ n: number }>('SELECT 1 AS n');
     expect(rows[0]?.n).toBe(1);
   });
 
@@ -91,7 +91,7 @@ describe('back-pressure', () => {
 
     await expect(consuming).rejects.toThrow();
     await sleep(1500); // past drainTimeout (500 ms), plus a replacement's boot
-    const rows = await db.read<{ n: number }>('SELECT 1 AS n');
+    const rows = await db.all<{ n: number }>('SELECT 1 AS n');
     expect(rows[0]?.n).toBe(1);
     expect(records.length).toBe(2); // the dead one was replaced
   });
@@ -99,7 +99,7 @@ describe('back-pressure', () => {
   it('still delivers every row when the consumer keeps up', async () => {
     const db = await createTestClient({ poolSize: 1 });
     await seed(db);
-    const rows = await db.read<{ id: number }>('SELECT id FROM t');
+    const rows = await db.all<{ id: number }>('SELECT id FROM t');
     expect(rows).toHaveLength(5000);
     expect(rows[4999]?.id).toBe(5000);
   });
@@ -158,6 +158,6 @@ describe('close() during a query', () => {
     expect(performance.now() - started).toBeLessThan(3000);
 
     expect(await streaming).toBe('rejected');
-    await expect(db.read('SELECT 1 AS n')).rejects.toThrow();
+    await expect(db.all('SELECT 1 AS n')).rejects.toThrow();
   });
 });

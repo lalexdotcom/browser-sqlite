@@ -14,9 +14,9 @@ const setUp = async () => {
   const db = await createTestClient({
     poolSize: 1,
   });
-  await db.write('CREATE TABLE t (a INTEGER)');
-  await db.write('CREATE TABLE big (x INTEGER)');
-  await db.write('INSERT INTO t VALUES (0)');
+  await db.run('CREATE TABLE t (a INTEGER)');
+  await db.run('CREATE TABLE big (x INTEGER)');
+  await db.run('INSERT INTO t VALUES (0)');
   return db;
 };
 
@@ -32,16 +32,16 @@ describe('a savepointed write on the sync isolated build (spec 2026-09-11)', {
       const db = await setUp();
       try {
         await db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-          await tx.write('INSERT INTO t VALUES (2)');
+          await tx.run('INSERT INTO t VALUES (1)');
+          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          await tx.run('INSERT INTO t VALUES (2)');
         });
-        expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+        expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
           { a: 0 },
           { a: 1 },
           { a: 2 },
         ]);
-        expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+        expect(await db.all('SELECT count(*) AS n FROM big')).toEqual([
           { n: 0 },
         ]);
       } finally {
@@ -63,14 +63,14 @@ describe('a savepointed write on the sync isolated build (spec 2026-09-11)', {
         const reason = new Error('abandon the write');
         await expect(
           db.transaction(async (tx) => {
-            await tx.write('INSERT INTO t VALUES (1)');
+            await tx.run('INSERT INTO t VALUES (1)');
             const ctl = new AbortController();
             setTimeout(() => ctl.abort(reason), 30);
-            await tx.write(BIG_INSERT, [], { signal: ctl.signal });
+            await tx.run(BIG_INSERT, [], { signal: ctl.signal });
           }),
         ).rejects.toBe(reason);
-        expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
-        expect(await db.read('SELECT count(*) AS n FROM big')).toEqual([
+        expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);
+        expect(await db.all('SELECT count(*) AS n FROM big')).toEqual([
           { n: 0 },
         ]);
       } finally {

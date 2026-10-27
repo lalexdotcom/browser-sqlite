@@ -37,8 +37,8 @@ describe('calls issued in the same tick on one worker', () => {
     async () => {
       const db = await createTestClient(ONE_WORKER);
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
-        await db.write('INSERT INTO t (n) VALUES (1), (2)');
+        await db.run('CREATE TABLE t (n INTEGER)');
+        await db.run('INSERT INTO t (n) VALUES (1), (2)');
 
         const [a, b] = await Promise.all([
           db.first<{ n: number }>('SELECT n FROM t WHERE n = 1'),
@@ -59,15 +59,15 @@ describe('calls issued in the same tick on one worker', () => {
     async () => {
       const db = await createTestClient(ONE_WORKER);
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.run('CREATE TABLE t (n INTEGER)');
 
         await Promise.all([
-          db.write('INSERT INTO t (n) VALUES (1)'),
-          db.write('INSERT INTO t (n) VALUES (2)'),
+          db.run('INSERT INTO t (n) VALUES (1)'),
+          db.run('INSERT INTO t (n) VALUES (2)'),
         ]);
 
         expect(
-          await db.read<{ n: number }>('SELECT n FROM t ORDER BY n'),
+          await db.all<{ n: number }>('SELECT n FROM t ORDER BY n'),
         ).toEqual([{ n: 1 }, { n: 2 }]);
       } finally {
         await db.close();
@@ -81,8 +81,8 @@ describe('calls issued in the same tick on one worker', () => {
     async () => {
       const db = await createTestClient(ONE_WORKER);
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
-        await db.write('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
+        await db.run('CREATE TABLE t (n INTEGER)');
+        await db.run('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
 
         const drain = async (sql: string) => {
           const seen: number[] = [];
@@ -113,8 +113,8 @@ describe('calls issued in the same tick on one worker', () => {
     async () => {
       const db = await createTestClient(ONE_WORKER);
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
-        await db.write('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
+        await db.run('CREATE TABLE t (n INTEGER)');
+        await db.run('INSERT INTO t (n) VALUES (1), (2), (3), (4)');
 
         const drain = async (sql: string) => {
           const seen: number[] = [];
@@ -143,8 +143,8 @@ describe('calls issued in the same tick on one worker', () => {
     async () => {
       const db = await createTestClient(ONE_WORKER);
       try {
-        await db.write('CREATE TABLE a (n INTEGER)');
-        await db.write('CREATE TABLE b (n INTEGER)');
+        await db.run('CREATE TABLE a (n INTEGER)');
+        await db.run('CREATE TABLE b (n INTEGER)');
 
         const one = db.bulkWrite('a', ['n']);
         const two = db.bulkWrite('b', ['n']);
@@ -155,10 +155,10 @@ describe('calls issued in the same tick on one worker', () => {
 
         expect(first).toBe(1);
         expect(second).toBe(1);
-        expect(await db.read<{ n: number }>('SELECT n FROM a')).toEqual([
+        expect(await db.all<{ n: number }>('SELECT n FROM a')).toEqual([
           { n: 1 },
         ]);
-        expect(await db.read<{ n: number }>('SELECT n FROM b')).toEqual([
+        expect(await db.all<{ n: number }>('SELECT n FROM b')).toEqual([
           { n: 2 },
         ]);
       } finally {
@@ -173,19 +173,22 @@ describe('calls issued in the same tick on one worker', () => {
     async () => {
       const db = await createTestClient(ONE_WORKER);
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
-        await db.write('INSERT INTO t (n) VALUES (1)');
+        await db.run('CREATE TABLE t (n INTEGER)');
+        await db.run('INSERT INTO t (n) VALUES (1)');
 
-        const [rows] = await Promise.all([
-          db.read<{ n: number }>('SELECT n FROM t'),
+        // first(): all() asks a verdict before it queues, so the transaction
+        // would take the worker ahead of it; this pins the order of two calls
+        // made in one tick.
+        const [row] = await Promise.all([
+          db.first<{ n: number }>('SELECT n FROM t'),
           db.transaction(async (tx) => {
-            await tx.write('INSERT INTO t (n) VALUES (2)');
+            await tx.run('INSERT INTO t (n) VALUES (2)');
           }),
         ]);
 
-        expect(rows).toEqual([{ n: 1 }]);
+        expect(row).toEqual({ n: 1 });
         expect(
-          await db.read<{ n: number }>('SELECT n FROM t ORDER BY n'),
+          await db.all<{ n: number }>('SELECT n FROM t ORDER BY n'),
         ).toEqual([{ n: 1 }, { n: 2 }]);
       } finally {
         await db.close();
@@ -211,10 +214,10 @@ describe('calls issued in the same tick on one worker', () => {
 
         expect(first).toBe(1);
         expect(second).toBe(1);
-        expect(await db.read<{ n: number }>('SELECT n FROM out_a')).toEqual([
+        expect(await db.all<{ n: number }>('SELECT n FROM out_a')).toEqual([
           { n: 1 },
         ]);
-        expect(await db.read<{ n: number }>('SELECT n FROM out_b')).toEqual([
+        expect(await db.all<{ n: number }>('SELECT n FROM out_b')).toEqual([
           { n: 2 },
         ]);
       } finally {
@@ -229,25 +232,25 @@ describe('calls issued in the same tick on one worker', () => {
     async () => {
       const db = await createTestClient(ONE_WORKER);
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
+        await db.run('CREATE TABLE t (n INTEGER)');
 
         // A queue behind a queue: each transaction serialises its own
         // statements, and the two transactions serialise against each other on
         // the origin's write lock.
         await Promise.all([
           db.transaction(async (tx) => {
-            await tx.write('INSERT INTO t (n) VALUES (1)');
-            await tx.write('INSERT INTO t (n) VALUES (2)');
+            await tx.run('INSERT INTO t (n) VALUES (1)');
+            await tx.run('INSERT INTO t (n) VALUES (2)');
           }),
           db.transaction(async (tx) => {
-            await tx.write('INSERT INTO t (n) VALUES (3)');
-            await tx.write('INSERT INTO t (n) VALUES (4)');
+            await tx.run('INSERT INTO t (n) VALUES (3)');
+            await tx.run('INSERT INTO t (n) VALUES (4)');
           }),
         ]);
 
         // Both committed, and neither interleaved into the other: whichever ran
         // first, its pair is contiguous.
-        const rows = await db.read<{ n: number }>('SELECT n FROM t');
+        const rows = await db.all<{ n: number }>('SELECT n FROM t');
         expect(rows.map((r) => r.n).sort((a, b) => a - b)).toEqual([
           1, 2, 3, 4,
         ]);
@@ -267,15 +270,15 @@ describe('calls issued in the same tick on one worker', () => {
     async () => {
       const db = await createTestClient(ONE_WORKER);
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
-        await db.write('INSERT INTO t (n) VALUES (1)');
+        await db.run('CREATE TABLE t (n INTEGER)');
+        await db.run('INSERT INTO t (n) VALUES (1)');
         const controller = new AbortController();
 
-        const first = db.read(longQuery(2_000_000));
-        const queued = db.read('SELECT 1 AS one', [], {
+        const first = db.all(longQuery(2_000_000));
+        const queued = db.all('SELECT 1 AS one', [], {
           signal: controller.signal,
         });
-        const after = db.read<{ n: number }>('SELECT n FROM t');
+        const after = db.all<{ n: number }>('SELECT n FROM t');
         // The abort lands while `queued` is still waiting for the worker.
         controller.abort(new Error('the caller changed its mind'));
 

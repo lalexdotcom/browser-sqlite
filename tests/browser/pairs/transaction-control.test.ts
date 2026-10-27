@@ -36,15 +36,15 @@ describe('transaction control through the client (spec 2026-10-04, B7)', () => {
   it('refuses every form of it, cached or not', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (0)');
+        await tx.run('INSERT INTO t VALUES (0)');
       });
       const results: [string, string][] = [];
       for (const sql of CONTROL)
-        results.push([sql, await outcome(db.write(sql))]);
+        results.push([sql, await outcome(db.run(sql))]);
       expect(results).toEqual(CONTROL.map((sql) => [sql, REFUSED]));
-      await expect(db.write('BEGIN')).rejects.toThrow(/db\.transaction\(\)/);
+      await expect(db.run('BEGIN')).rejects.toThrow(/db\.transaction\(\)/);
     } finally {
       await db.close();
     }
@@ -56,12 +56,12 @@ describe('transaction control through the client (spec 2026-10-04, B7)', () => {
   it('carries no stale extended code when a cached statement is refused', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a INTEGER PRIMARY KEY)');
+      await db.run('CREATE TABLE t (a INTEGER PRIMARY KEY)');
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
       });
-      await db.write('INSERT INTO t VALUES (1)').catch(() => {});
-      const refused = await db.write('BEGIN IMMEDIATE').catch((e) => e);
+      await db.run('INSERT INTO t VALUES (1)').catch(() => {});
+      const refused = await db.run('BEGIN IMMEDIATE').catch((e) => e);
       expect(refused).toMatchObject({
         code: 'STATEMENT_FAILED',
         sqliteCode: SQLITE_CODES.AUTH,
@@ -78,11 +78,11 @@ describe('transaction control through the client (spec 2026-10-04, B7)', () => {
   it('refuses it inside a compound string, running nothing', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a INTEGER)');
-      expect(await outcome(db.write('INSERT INTO t VALUES (5); BEGIN'))).toBe(
+      await db.run('CREATE TABLE t (a INTEGER)');
+      expect(await outcome(db.run('INSERT INTO t VALUES (5); BEGIN'))).toBe(
         'MULTIPLE_STATEMENTS:',
       );
-      expect(await db.read('SELECT a FROM t')).toEqual([]);
+      expect(await db.all('SELECT a FROM t')).toEqual([]);
     } finally {
       await db.close();
     }
@@ -91,18 +91,18 @@ describe('transaction control through the client (spec 2026-10-04, B7)', () => {
   it('lets through what only looks like control', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       expect(
         await outcome(
-          db.write("SELECT CASE WHEN 1 THEN 'BEGIN' ELSE 0 END AS c"),
+          db.run("SELECT CASE WHEN 1 THEN 'BEGIN' ELSE 0 END AS c"),
         ),
       ).toBe('ran');
       expect(
-        await outcome(db.write('INSERT OR ROLLBACK INTO t VALUES (6)')),
+        await outcome(db.run('INSERT OR ROLLBACK INTO t VALUES (6)')),
       ).toBe('ran');
       expect(
         await outcome(
-          db.write('CREATE TRIGGER tr AFTER INSERT ON t BEGIN SELECT 1; END'),
+          db.run('CREATE TRIGGER tr AFTER INSERT ON t BEGIN SELECT 1; END'),
         ),
       ).toBe('ran');
     } finally {
@@ -115,7 +115,7 @@ describe('transaction control inside a transaction (spec 2026-10-04, B7)', () =>
   it('refuses it, and the transaction goes on', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       const inside = [
         'SAVEPOINT u',
         'RELEASE u',
@@ -128,21 +128,21 @@ describe('transaction control inside a transaction (spec 2026-10-04, B7)', () =>
       let commitMessage = '';
       await db.transaction(async (tx) => {
         for (const sql of inside)
-          results.push([sql, await outcome(tx.write(sql))]);
-        message = await tx.write('SAVEPOINT u').then(
+          results.push([sql, await outcome(tx.run(sql))]);
+        message = await tx.run('SAVEPOINT u').then(
           () => '',
           (e: Error) => e.message,
         );
-        commitMessage = await tx.write('COMMIT').then(
+        commitMessage = await tx.run('COMMIT').then(
           () => '',
           (e: Error) => e.message,
         );
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
       });
       expect(results).toEqual(inside.map((sql) => [sql, REFUSED]));
       expect(message).toMatch(/tx\.savepoint\(\)/);
       expect(commitMessage).toMatch(/tx\.commit\(\)/);
-      expect(await db.read('SELECT a FROM t')).toEqual([{ a: 1 }]);
+      expect(await db.all('SELECT a FROM t')).toEqual([{ a: 1 }]);
     } finally {
       await db.close();
     }
@@ -183,7 +183,7 @@ describe('a failed __bsq_sp conclusion (spec 2026-09-11 amendment, kept by spec 
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       const worker = records[0]?.worker;
       if (!worker) throw new Error('no worker was intercepted');
       const post = worker.postMessage.bind(worker);
@@ -210,14 +210,14 @@ describe('a failed __bsq_sp conclusion (spec 2026-09-11 amendment, kept by spec 
       let caught: unknown;
       const result = await db
         .transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
           armed = true;
-          caught = await tx.write('INSERT INTO t VALUES (2)').catch((e) => e);
+          caught = await tx.run('INSERT INTO t VALUES (2)').catch((e) => e);
         })
         .catch((e) => e);
       expect((caught as Error).message).toMatch(/no such savepoint/);
       expect(result).toBeInstanceOf(Error);
-      expect(await db.read('SELECT a FROM t')).toEqual([]);
+      expect(await db.all('SELECT a FROM t')).toEqual([]);
     } finally {
       await db.close();
     }

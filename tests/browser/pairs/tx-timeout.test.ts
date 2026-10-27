@@ -26,16 +26,16 @@ describe('a statement timeout inside a transaction', () => {
     async () => {
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (a INTEGER)');
+        await db.run('CREATE TABLE t (a INTEGER)');
 
         await expect(
           db.transaction(async (tx) => {
-            await tx.write('INSERT INTO t VALUES (1)');
-            await tx.read(longQuery(2_000_000), [], { timeout: 200 });
+            await tx.run('INSERT INTO t VALUES (1)');
+            await tx.all(longQuery(2_000_000), [], { timeout: 200 });
           }),
         ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 200 });
 
-        expect(await db.read('SELECT a FROM t')).toEqual([]);
+        expect(await db.all('SELECT a FROM t')).toEqual([]);
       } finally {
         await db.close();
       }
@@ -48,20 +48,20 @@ describe('a statement timeout inside a transaction', () => {
     async () => {
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (a INTEGER)');
+        await db.run('CREATE TABLE t (a INTEGER)');
 
         let caughtCode: string | undefined;
         await db.transaction(async (tx) => {
           try {
-            await tx.read(longQuery(2_000_000), [], { timeout: 200 });
+            await tx.all(longQuery(2_000_000), [], { timeout: 200 });
           } catch (error) {
             caughtCode = (error as { code?: string }).code;
           }
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
         });
 
         expect(caughtCode).toBe('OPERATION_TIMEOUT');
-        expect(await db.read('SELECT a FROM t')).toEqual([{ a: 1 }]);
+        expect(await db.all('SELECT a FROM t')).toEqual([{ a: 1 }]);
       } finally {
         await db.close();
       }
@@ -74,8 +74,8 @@ describe('a statement timeout inside a transaction', () => {
     async () => {
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (x INTEGER)');
-        await db.write(
+        await db.run('CREATE TABLE t (x INTEGER)');
+        await db.run(
           'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1001) ' +
             'INSERT INTO t SELECT x FROM c',
         );

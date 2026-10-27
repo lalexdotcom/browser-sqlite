@@ -281,7 +281,7 @@ describe('opening a database whose file is momentarily held', () => {
 
     // Create the database, so the open under test is an ordinary reopen.
     creator = createSQLiteClient(dbName, { ...TEST_PAIR(), debug: 'creator' });
-    await step('creator.write', creator.write('CREATE TABLE t (a)'));
+    await step('creator.write', creator.run('CREATE TABLE t (a)'));
     await step('creator.close', creator.close());
 
     holder = exclusiveHolder();
@@ -298,7 +298,7 @@ describe('opening a database whose file is momentarily held', () => {
     try {
       const rows = await step(
         'db.read',
-        db.read<{ n: number }>('SELECT 1 AS n'),
+        db.all<{ n: number }>('SELECT 1 AS n'),
       );
       expect(rows[0]?.n).toBe(1);
     } finally {
@@ -359,7 +359,7 @@ describe('opening a database whose file is refused for another reason', () => {
     const started = performance.now();
     const db = createSQLiteClient(dbName, TEST_PAIR());
     onTestFinished(() => db.close().catch(() => {}));
-    const error = await db.read('SELECT 1').then(
+    const error = await db.all('SELECT 1').then(
       () => undefined,
       (e: unknown) => e,
     );
@@ -424,7 +424,7 @@ describe('reopening a database after its worker died', () => {
         `holder: ${holder.steps.join(' > ') || 'no step'}; db: ${poolState(db)}`,
     );
 
-    await step('db.write', db.write('CREATE TABLE t (a)'));
+    await step('db.write', db.run('CREATE TABLE t (a)'));
     expect(records.length).toBe(1);
     const [first] = records;
     // The pool learns of this death only from the ErrorEvent below, once the
@@ -441,7 +441,7 @@ describe('reopening a database after its worker died', () => {
     ).toBe('taken');
     first?.worker.dispatchEvent(new ErrorEvent('error'));
 
-    const rows = await step('db.read', db.read<{ n: number }>('SELECT 1 AS n'));
+    const rows = await step('db.read', db.all<{ n: number }>('SELECT 1 AS n'));
     expect(rows[0]?.n).toBe(1);
     expect(records.length).toBe(2);
   });
@@ -478,9 +478,9 @@ describe('reopening a database after its worker died', () => {
         `holder: ${holder.steps.join(' > ') || 'no step'}; db: ${poolState(db)}`,
     );
 
-    await step('db.write', db.write('CREATE TABLE t (a)'));
+    await step('db.write', db.run('CREATE TABLE t (a)'));
     const [first] = records;
-    const running = db.read(longQuery(20_000_000));
+    const running = db.all(longQuery(20_000_000));
     // Rejected later than it is awaited; keep it from being unhandled.
     running.catch(() => {});
     await sleep(100);
@@ -502,7 +502,7 @@ describe('reopening a database after its worker died', () => {
     const { db, records, running, step } = await killMidStatement(4_000);
 
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
-    const rows = await step('db.read', db.read<{ n: number }>('SELECT 1 AS n'));
+    const rows = await step('db.read', db.all<{ n: number }>('SELECT 1 AS n'));
     expect(rows).toEqual([{ n: 1 }]);
     expect(records.length).toBe(2);
   });
@@ -514,7 +514,7 @@ describe('reopening a database after its worker died', () => {
     const { db, running, step } = await killMidStatement(60_000, 6_000);
 
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
-    const failure = await step('db.read', db.read('SELECT 1')).catch(
+    const failure = await step('db.read', db.all('SELECT 1')).catch(
       (error: unknown) => error,
     );
     expect(failure).toMatchObject({
@@ -536,7 +536,7 @@ describe('reopening a database after its worker died', () => {
     const { db, running, step } = await killMidStatement(60_000, 6_000, 2);
 
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
-    const failure = await step('db.read', db.read('SELECT 1')).catch(
+    const failure = await step('db.read', db.all('SELECT 1')).catch(
       (error: unknown) => error,
     );
     expect(failure).toMatchObject({

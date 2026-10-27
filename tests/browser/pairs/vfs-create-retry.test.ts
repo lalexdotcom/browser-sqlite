@@ -107,7 +107,7 @@ describe('creating a VFS whose files are partly held', () => {
   }, async () => {
     // A first client, so the pool exists before anything holds one of its files.
     const creator = await createTestClient();
-    await creator.write('CREATE TABLE t (a)');
+    await creator.run('CREATE TABLE t (a)');
     await creator.close();
 
     const [heldFile, witness] = (await poolFiles(creator.vfs)) as [
@@ -120,7 +120,7 @@ describe('creating a VFS whose files are partly held', () => {
     expect(await holder.probe(witness, SETTLE_BUDGET_MS)).toBe('free');
 
     const db = await createTestClient();
-    const read = db.read<{ n: number }>('SELECT 1 AS n');
+    const read = db.all<{ n: number }>('SELECT 1 AS n');
     // Awaited only after the release; a failure before then is still reported.
     read.catch(() => {});
 

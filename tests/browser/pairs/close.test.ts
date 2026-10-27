@@ -44,7 +44,7 @@ describe('close()', () => {
   it('waits for the worker to close the database before terminating it', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     await db.close();
 
@@ -61,8 +61,8 @@ describe('close()', () => {
   // Falsifiable: reject in-flight work instead of draining it.
   it('lets an in-flight write finish', async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
-    await db.write('CREATE TABLE t (a)');
-    const inFlight = db.write(SLOW_INSERT);
+    await db.run('CREATE TABLE t (a)');
+    const inFlight = db.run(SLOW_INSERT);
     // Wait until inFlight has crossed the web-lock threshold and holds the
     // scheduler lease. Before this point close()'s abort signal would cancel
     // inFlight's pending lock request; after it the lock is granted and the
@@ -81,15 +81,15 @@ describe('close()', () => {
   // the order is asserted, not only the code.
   it('rejects a queued request and every later call', async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
-    await db.write('CREATE TABLE t (a)');
-    const inFlight = db.write(SLOW_INSERT);
+    await db.run('CREATE TABLE t (a)');
+    const inFlight = db.run(SLOW_INSERT);
     // Wait until inFlight holds the web lock and the scheduler lease. Starting
     // queued before this point would race: inFlight's lock might not be granted
     // yet and close() could abort both. After this point inFlight's lock is
     // irrevocable and queued is parked behind it — exactly where close() needs
     // to find it.
     await waitUntil(aRequestIsInFlight(db), 'the write to be in flight');
-    const queued = db.write('INSERT INTO t (a) VALUES (2)');
+    const queued = db.run('INSERT INTO t (a) VALUES (2)');
     let inFlightSettled = false;
     const markSettled = () => {
       inFlightSettled = true;
@@ -101,7 +101,7 @@ describe('close()', () => {
     expect(inFlightSettled).toBe(false);
     await inFlight;
     await closing;
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'CLIENT_CLOSED',
     });
   });
@@ -109,7 +109,7 @@ describe('close()', () => {
   // Falsifiable: rebuild the promise on each call instead of memoizing it.
   it('is idempotent', async () => {
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     const first = db.close();
     const second = db.close();
     expect(first).toBe(second);
@@ -120,7 +120,7 @@ describe('close()', () => {
   // then hangs on the never-returning callback instead of settling.
   it('is bounded when a transaction never finishes', async () => {
     const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     // Caught, and it did not have to be until close() started settling this
     // transaction rather than leaving it pending for ever: an abandoned
     // rejection escapes the test file and fails the RUN while every test in it
@@ -142,14 +142,14 @@ describe('close()', () => {
    */
   it('settles a transaction whose callback is still running', async () => {
     const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     let entered!: () => void;
     const inside = new Promise<void>((resolve) => {
       entered = resolve;
     });
     const transaction = db.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
       entered();
       await new Promise(() => {}); // user code that never comes back
     });
@@ -167,7 +167,7 @@ describe('close()', () => {
 
   it('rejects — never hangs — a statement the callback issues after close()', async () => {
     const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     let entered!: () => void;
     const inside = new Promise<void>((resolve) => {
@@ -185,11 +185,11 @@ describe('close()', () => {
     });
 
     const transaction = db.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
       entered();
       await gate;
       report(
-        await tx.write('INSERT INTO t VALUES (2)').then(
+        await tx.run('INSERT INTO t VALUES (2)').then(
           () => 'resolved',
           (error: { code?: string }) => error.code ?? 'unknown',
         ),
@@ -215,7 +215,7 @@ describe('close()', () => {
   }, async () => {
     const database = sharedDatabase();
     const setup = database.open({ poolSize: 1 });
-    await setup.write('CREATE TABLE t (a)');
+    await setup.run('CREATE TABLE t (a)');
     await setup.close();
 
     const ROUNDS = 10;
@@ -224,13 +224,13 @@ describe('close()', () => {
         poolSize: 1,
         pragmas: { synchronous: 'NORMAL' },
       });
-      await db.write('INSERT INTO t (a) VALUES (?)', [i]);
+      await db.run('INSERT INTO t (a) VALUES (?)', [i]);
       await db.close();
     }
 
     const reader = database.open({ poolSize: 1 });
     expect(
-      await reader.read<{ n: number }>('SELECT count(*) AS n FROM t'),
+      await reader.all<{ n: number }>('SELECT count(*) AS n FROM t'),
     ).toEqual([{ n: ROUNDS }]);
   });
 });

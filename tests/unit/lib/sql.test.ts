@@ -261,13 +261,13 @@ describe('queryArgs', () => {
 });
 
 // Compile-time only, never called. Falsifiable: drop the SQLQuery overload
-// from SQLiteQueryAPI.read or .write.
+// from SQLiteQueryAPI.all or .run.
 const _overloads = async (db: SQLiteDB) => {
-  await db.read(sql`SELECT 1`, { chunkSize: 1 });
-  await db.write(sql`SELECT 1`);
-  await db.read('SELECT ?', [1], { chunkSize: 1 });
+  await db.all(sql`SELECT 1`, { chunkSize: 1 });
+  await db.run(sql`SELECT 1`);
+  await db.all('SELECT ?', [1], { chunkSize: 1 });
   // @ts-expect-error a query built by sql takes no params array
-  await db.read(sql`SELECT 1`, [1]);
+  await db.all(sql`SELECT 1`, [1]);
 };
 
 describe('review fixes', () => {
@@ -295,15 +295,11 @@ describe('review fixes', () => {
 // again, or declare the string overload first.
 const _nominal = async (db: SQLiteDB) => {
   // @ts-expect-error a plain object is not a query built by sql
-  await db.read({ sql: 'SELECT 1', params: [] });
+  await db.all({ sql: 'SELECT 1', params: [] });
   // A wrapper typed from the method keeps the string form: TypeScript reads
   // the last overload.
-  const args: Parameters<SQLiteDB['read']> = [
-    'SELECT ?',
-    [1],
-    { chunkSize: 1 },
-  ];
-  await db.read(...args);
+  const args: Parameters<SQLiteDB['all']> = ['SELECT ?', [1], { chunkSize: 1 }];
+  await db.all(...args);
 };
 
 describe('numbering', () => {

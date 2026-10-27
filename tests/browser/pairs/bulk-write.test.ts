@@ -31,7 +31,7 @@ describe('bulkWrite() basics', () => {
   it('inserts every enqueued row and reports the affected count', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE bulk_basic (id INTEGER, name TEXT)');
+    await db.run('CREATE TABLE bulk_basic (id INTEGER, name TEXT)');
 
     const bulk = db.bulkWrite('bulk_basic', ['id', 'name']);
     for (let i = 1; i <= 5; i++) {
@@ -41,7 +41,7 @@ describe('bulkWrite() basics', () => {
 
     expect(affected).toBe(5);
 
-    const rows = await db.read<{ id: number; name: string }>(
+    const rows = await db.all<{ id: number; name: string }>(
       'SELECT * FROM bulk_basic ORDER BY id',
     );
     expect(rows).toHaveLength(5);
@@ -54,14 +54,14 @@ describe('bulkWrite() basics', () => {
   it('resolves with 0 when nothing was enqueued', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE bulk_empty (id INTEGER)');
+    await db.run('CREATE TABLE bulk_empty (id INTEGER)');
 
     const bulk = db.bulkWrite('bulk_empty', ['id']);
     const affected = await bulk.close();
 
     expect(affected).toBe(0);
 
-    const rows = await db.read('SELECT id FROM bulk_empty');
+    const rows = await db.all('SELECT id FROM bulk_empty');
     expect(rows).toHaveLength(0);
 
     db.close();
@@ -70,7 +70,7 @@ describe('bulkWrite() basics', () => {
   it('rejects when the insert violates a constraint', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE bulk_conflict (id INTEGER PRIMARY KEY)');
+    await db.run('CREATE TABLE bulk_conflict (id INTEGER PRIMARY KEY)');
 
     const bulk = db.bulkWrite('bulk_conflict', ['id']);
     bulk.enqueue({ id: 1 });
@@ -86,7 +86,7 @@ describe('bulkWrite() batching', () => {
   it('auto-flushes past the variable limit and keeps every row', async () => {
     const db = await createTestClient();
 
-    await db.write(wideTableDDL('bulk_wide'));
+    await db.run(wideTableDDL('bulk_wide'));
 
     const total = WIDE_FLUSH_AT + 37;
     const bulk = db.bulkWrite('bulk_wide', WIDE_COLUMNS);
@@ -98,7 +98,7 @@ describe('bulkWrite() batching', () => {
     // Two batches: one auto-flush at WIDE_FLUSH_AT, one on close().
     expect(affected).toBe(total);
 
-    const [{ n }] = await db.read<{ n: number }>(
+    const [{ n }] = await db.all<{ n: number }>(
       'SELECT COUNT(*) AS n FROM bulk_wide',
     );
     expect(n).toBe(total);
@@ -109,7 +109,7 @@ describe('bulkWrite() batching', () => {
   it('stops at the first failed batch and reports it', async () => {
     const db = await createTestClient();
 
-    await db.write(wideTableDDL('bulk_drop'));
+    await db.run(wideTableDDL('bulk_drop'));
 
     const bulk = db.bulkWrite('bulk_drop', WIDE_COLUMNS);
 
@@ -135,7 +135,7 @@ describe('bulkWrite() batching', () => {
 describe('bulkWrite() and output() abort (ABORT-1)', () => {
   it('writes nothing when the abort beats the first batch', async () => {
     const db = await createTestClient();
-    await db.write(wideTableDDL('bulk_abort_early'));
+    await db.run(wideTableDDL('bulk_abort_early'));
 
     const controller = new AbortController();
     const bulk = db.bulkWrite('bulk_abort_early', WIDE_COLUMNS, {
@@ -150,7 +150,7 @@ describe('bulkWrite() and output() abort (ABORT-1)', () => {
 
     await expect(bulk.close()).rejects.toMatchObject({ name: 'AbortError' });
 
-    const [{ n }] = await db.read<{ n: number }>(
+    const [{ n }] = await db.all<{ n: number }>(
       'SELECT COUNT(*) AS n FROM bulk_abort_early',
     );
     expect(n).toBe(0);
@@ -160,10 +160,10 @@ describe('bulkWrite() and output() abort (ABORT-1)', () => {
 
   it('stops between batches and keeps the ones already written', async () => {
     const db = await createTestClient();
-    await db.write(wideTableDDL('bulk_abort'));
+    await db.run(wideTableDDL('bulk_abort'));
 
     const countRows = async () =>
-      (await db.read<{ n: number }>('SELECT COUNT(*) AS n FROM bulk_abort'))[0]
+      (await db.all<{ n: number }>('SELECT COUNT(*) AS n FROM bulk_abort'))[0]
         .n;
 
     const controller = new AbortController();
@@ -194,8 +194,8 @@ describe('bulkWrite() and output() abort (ABORT-1)', () => {
   it('leaves the previous table whole when output() is aborted', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE report (id INTEGER, label TEXT)');
-    await db.write("INSERT INTO report VALUES (1, 'before')");
+    await db.run('CREATE TABLE report (id INTEGER, label TEXT)');
+    await db.run("INSERT INTO report VALUES (1, 'before')");
 
     const controller = new AbortController();
     const out = db.output(
@@ -209,13 +209,13 @@ describe('bulkWrite() and output() abort (ABORT-1)', () => {
     await expect(out.close()).rejects.toMatchObject({ name: 'AbortError' });
 
     // Observationally a no-op: no rename, no partial publication.
-    const rows = await db.read<{ id: number; label: string }>(
+    const rows = await db.all<{ id: number; label: string }>(
       'SELECT id, label FROM report',
     );
     expect(rows).toEqual([{ id: 1, label: 'before' }]);
 
     // And no staging table survives the abort.
-    const staging = await db.read<{ name: string }>(
+    const staging = await db.all<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'",
     );
     expect(staging).toEqual([]);
@@ -229,7 +229,7 @@ describe('bulkWrite() values', () => {
 
   it('stores objects and arrays as JSON text and a Uint8Array as a BLOB', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE bulk_json (doc TEXT, list TEXT, bytes BLOB)');
+    await db.run('CREATE TABLE bulk_json (doc TEXT, list TEXT, bytes BLOB)');
     const bulk = db.bulkWrite('bulk_json', ['doc', 'list', 'bytes']);
     bulk.enqueue({
       doc: { a: 1, b: [true, null] },
@@ -237,7 +237,7 @@ describe('bulkWrite() values', () => {
       bytes: Uint8Array.of(1, 2, 44),
     });
     await bulk.close();
-    const [row] = await db.read<Record<string, unknown>>(
+    const [row] = await db.all<Record<string, unknown>>(
       'SELECT doc, list, typeof(list) AS lt, typeof(bytes) AS bt, hex(bytes) AS bh FROM bulk_json',
     );
     expect(row).toEqual({
@@ -252,11 +252,11 @@ describe('bulkWrite() values', () => {
 
   it('stores a Date in the format SQLite produces', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE bulk_date (at TEXT)');
+    await db.run('CREATE TABLE bulk_date (at TEXT)');
     const bulk = db.bulkWrite('bulk_date', ['at']);
     bulk.enqueue({ at });
     await bulk.close();
-    const [row] = await db.read<{ at: string; same: number }>(
+    const [row] = await db.all<{ at: string; same: number }>(
       "SELECT at, at = strftime('%Y-%m-%d %H:%M:%f', '2026-10-06T12:34:56.789Z') AS same FROM bulk_date",
     );
     expect(row).toEqual({ at: '2026-10-06 12:34:56.789', same: 1 });
@@ -265,7 +265,7 @@ describe('bulkWrite() values', () => {
 
   it('stores a JSONB column through jsonb()', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE bulk_jsonb (id INTEGER, doc BLOB)');
+    await db.run('CREATE TABLE bulk_jsonb (id INTEGER, doc BLOB)');
     const bulk = db.bulkWrite('bulk_jsonb', ['id', 'doc'], {
       types: { doc: 'JSONB' },
     });
@@ -277,7 +277,7 @@ describe('bulkWrite() values', () => {
     bulk.enqueue({ id: 6, doc: at });
     bulk.enqueue({ id: 7, doc: 5 });
     await bulk.close();
-    const rows = await db.read<{ t: string; j: string | null }>(
+    const rows = await db.all<{ t: string; j: string | null }>(
       'SELECT typeof(doc) AS t, json(doc) AS j FROM bulk_jsonb ORDER BY id',
     );
     expect(rows).toEqual([
@@ -294,7 +294,7 @@ describe('bulkWrite() values', () => {
 
   it('fails the batch on a BLOB that is not valid JSONB in a JSONB column', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE bulk_jsonb_bad (doc BLOB)');
+    await db.run('CREATE TABLE bulk_jsonb_bad (doc BLOB)');
     const bulk = db.bulkWrite('bulk_jsonb_bad', ['doc'], {
       types: { doc: 'JSONB' },
     });
@@ -310,7 +310,7 @@ describe('bulkWrite() values', () => {
 describe('bulkWrite() refusals', () => {
   it('refuses one row at enqueue() and writes the others', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE r (id INTEGER, v)');
+    await db.run('CREATE TABLE r (id INTEGER, v)');
     const bulk = db.bulkWrite('r', ['id', 'v']);
     let refused = 0;
     for (let id = 0; id < 5000; id++) {
@@ -324,7 +324,7 @@ describe('bulkWrite() refusals', () => {
     }
     expect(await bulk.close()).toBe(4995);
     expect(refused).toBe(5);
-    const [row] = await db.read<{ n: number; bad: number }>(
+    const [row] = await db.all<{ n: number; bad: number }>(
       "SELECT count(*) AS n, sum(v <> 'v' || id) AS bad FROM r",
     );
     expect(row).toEqual({ n: 4995, bad: 0 });
@@ -333,7 +333,7 @@ describe('bulkWrite() refusals', () => {
 
   it('rebinds a cached batch statement with the next batch', async () => {
     const db = await createTestClient({ poolSize: 1 } as never);
-    await db.write('CREATE TABLE r (a, b)');
+    await db.run('CREATE TABLE r (a, b)');
     const per = Math.floor(32766 / 2);
     const bulk = db.bulkWrite('r', ['a', 'b']);
     // Two full batches and a partial one: the partial batch has another row
@@ -341,7 +341,7 @@ describe('bulkWrite() refusals', () => {
     const total = per * 2 + 7;
     for (let i = 0; i < total; i++) bulk.enqueue({ a: i, b: `x${i}` });
     await bulk.close();
-    const [row] = await db.read<{ n: number; bad: number }>(
+    const [row] = await db.all<{ n: number; bad: number }>(
       "SELECT count(*) AS n, sum(b <> 'x' || a) AS bad FROM r",
     );
     expect(row).toEqual({ n: total, bad: 0 });

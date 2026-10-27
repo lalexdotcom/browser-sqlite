@@ -13,12 +13,12 @@ async function run(): Promise<string> {
     vfs: 'OPFSAdaptiveVFS',
   });
 
-  await db.write('CREATE TABLE smoke (id INTEGER PRIMARY KEY, label TEXT)');
-  await db.write(
+  await db.run('CREATE TABLE smoke (id INTEGER PRIMARY KEY, label TEXT)');
+  await db.run(
     "INSERT INTO smoke (id, label) VALUES (1, 'alpha'), (2, 'beta')",
   );
 
-  const rows = await db.read<{ id: number; label: string }>(
+  const rows = await db.all<{ id: number; label: string }>(
     'SELECT id, label FROM smoke ORDER BY id',
   );
 

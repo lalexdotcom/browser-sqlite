@@ -29,7 +29,7 @@ const entriesBeside = async (path: string): Promise<string[]> => {
 const tableCount = async (file: string, vfs: SQLiteVFS) => {
   const db = createReopened(file, vfs);
   try {
-    const rows = await db.read<{ n: number }>(
+    const rows = await db.all<{ n: number }>(
       "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table'",
     );
     return rows[0].n;
@@ -49,7 +49,7 @@ describe('a database belongs to the VFS that wrote it', () => {
     }
     it(`${writer} → ${reader}`, async () => {
       const { file, db } = conformanceClient(writer);
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       await db.close();
 
       // Nothing exists yet at this name through the reader's VFS.
@@ -76,10 +76,10 @@ describe('db.files covers what the VFS writes', () => {
     }
     it(`${vfs}`, async () => {
       const { db } = conformanceClient(vfs);
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       await db.transaction(async (tx) => {
         for (let i = 0; i < 50; i++)
-          await tx.write('INSERT INTO t VALUES (?)', [i]);
+          await tx.run('INSERT INTO t VALUES (?)', [i]);
       });
       const files = db.files;
       expect(files[0]).toBe(databasePath(vfs, db.file));
@@ -102,7 +102,7 @@ describe('deleteDatabase leaves the VFS folder', () => {
     }
     it(`${vfs}`, async () => {
       const { file, db } = conformanceClient(vfs);
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       const files = db.files;
       await db.close();
       await deleteDatabase(file, { vfs });

@@ -69,7 +69,7 @@ describe('the client liveness marker', () => {
       await deleteDatabase(file, { vfs: pair.vfs }).catch(() => {});
     });
 
-    await db.read('SELECT 1');
+    await db.all('SELECT 1');
     const during = await markersFor(file, pair.vfs);
     expect(during).toHaveLength(1);
     expect(during[0]?.name).toBe('ledger 1');
@@ -86,7 +86,7 @@ describe('the client liveness marker', () => {
     const a = shared.open();
     const b = shared.open();
 
-    await Promise.all([a.read('SELECT 1'), b.read('SELECT 1')]);
+    await Promise.all([a.all('SELECT 1'), b.all('SELECT 1')]);
     const markers = await markersFor(shared.name, TEST_TARGET.vfs);
     expect(markers).toHaveLength(2);
     expect(new Set(markers.map((m) => m?.id)).size).toBe(2);
@@ -96,7 +96,7 @@ describe('the client liveness marker', () => {
     tags: ['excludes:shared-storage'],
   }, async () => {
     const db = await createTestClient({ poolSize: 1 });
-    await db.read('SELECT 1');
+    await db.all('SELECT 1');
     const { held } = await locks.entries();
     expect(held.some((e) => e.name.startsWith('bsq:client:'))).toBe(false);
   });
@@ -250,7 +250,7 @@ describe('the client liveness marker', () => {
       vfs: pair.vfs,
       build: pair.build,
     });
-    await db.read('SELECT 1');
+    await db.all('SELECT 1');
 
     await expect(deleteDatabase(file, { vfs: pair.vfs })).rejects.toMatchObject(
       {

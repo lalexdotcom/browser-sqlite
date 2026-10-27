@@ -46,8 +46,8 @@ describe('writer spread', {
     const db = await createTestClient({ debug: true });
     await poolReady(db, 2);
 
-    await db.write('CREATE TABLE spread (id INTEGER PRIMARY KEY, v TEXT)');
-    await db.write("INSERT INTO spread (v) VALUES ('a')");
+    await db.run('CREATE TABLE spread (id INTEGER PRIMARY KEY, v TEXT)');
+    await db.run("INSERT INTO spread (v) VALUES ('a')");
 
     // Hold a read open on the worker every acquisition prefers (lowest index).
     const held = db.stream('SELECT * FROM spread');
@@ -55,12 +55,12 @@ describe('writer spread', {
 
     // DDL first: a stale page map used to make this fail at `prepare` with
     // `no such table`, which is why stickiness existed at all.
-    await db.write('ALTER TABLE spread ADD COLUMN extra TEXT');
-    await db.write("INSERT INTO spread (v, extra) VALUES ('b', 'x')");
+    await db.run('ALTER TABLE spread ADD COLUMN extra TEXT');
+    await db.run("INSERT INTO spread (v, extra) VALUES ('b', 'x')");
 
     await held.return(undefined);
 
-    const rows = await db.read<{ v: string; extra: string | null }>(
+    const rows = await db.all<{ v: string; extra: string | null }>(
       'SELECT v, extra FROM spread ORDER BY id',
     );
     expect(rows.map((row) => row.v)).toEqual(['a', 'b']);
@@ -80,21 +80,21 @@ describe('writer spread', {
     const db = await createTestClient({ debug: true });
     await poolReady(db, 2);
 
-    await db.write('CREATE TABLE mixed (id INTEGER PRIMARY KEY, v INTEGER)');
+    await db.run('CREATE TABLE mixed (id INTEGER PRIMARY KEY, v INTEGER)');
 
     const pending: Promise<unknown>[] = [];
     for (let round = 0; round < 12; round += 1) {
-      pending.push(db.write('INSERT INTO mixed (v) VALUES (?)', [round]));
-      pending.push(db.read('SELECT count(*) AS n FROM mixed'));
+      pending.push(db.run('INSERT INTO mixed (v) VALUES (?)', [round]));
+      pending.push(db.all('SELECT count(*) AS n FROM mixed'));
     }
     await Promise.all(pending);
 
     // DDL against the same table the reads above touched, then a read that can
     // only succeed on a connection that absorbed it.
-    await db.write('ALTER TABLE mixed ADD COLUMN tag TEXT');
-    await db.write("UPDATE mixed SET tag = 'done'");
+    await db.run('ALTER TABLE mixed ADD COLUMN tag TEXT');
+    await db.run("UPDATE mixed SET tag = 'done'");
 
-    const rows = await db.read<{ n: number; tagged: number }>(
+    const rows = await db.all<{ n: number; tagged: number }>(
       "SELECT count(*) AS n, sum(tag = 'done') AS tagged FROM mixed",
     );
     expect(rows[0]?.n).toBe(12);
