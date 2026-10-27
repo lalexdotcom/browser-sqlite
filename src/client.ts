@@ -15,7 +15,6 @@ import {
 import type { StatementKind } from './classify';
 import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
-import { SQLITE_CODES } from './const/sqlite';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug, type RequestDebugHandle } from './debug';
 import { advanceSeen, BARRIER_SQL, barrierSqlFor, epochsFor } from './epochs';
@@ -47,7 +46,6 @@ import {
 import {
   createScheduler,
   type InternalSQLiteClientOptions,
-  type Lease,
   type WriterPolicy,
 } from './scheduler';
 import { queryArgs, type SQLQuery } from './sql';
@@ -69,7 +67,7 @@ import {
   splitPragmas,
   withDeadline,
 } from './utils';
-import { createVerdictMemo } from './verdicts';
+import { askVerdict, createVerdictMemo } from './verdicts';
 
 /**
  * SQLite client for browser environments using a pool of Web Workers.
@@ -1294,105 +1292,18 @@ export const createSQLiteClient = (
   });
 
   /**
-   * The callers still waiting on each verdict in flight. The last one to give
-   * up cancels the request, so an abandoned verdict leaves nothing queued.
+   * A verdict in flight, with the callers still waiting on it. The last one to
+   * give up cancels the request, so an abandoned verdict leaves nothing queued.
    */
-  const asking = new WeakMap<
-    Promise<Verdict>,
-    { waiters: number; settled: boolean; cancel: AbortController }
-  >();
-
-  /**
-   * A failed prepare SQLite can give a statement it would prepare fine: a
-   * neighbour's progress handler (INTERRUPT) or a lock (BUSY, LOCKED). Never
-   * the statement's own error.
-   */
-  const isPassingFailure = (error: unknown) =>
-    error instanceof SQLiteError &&
-    (error.sqliteCode === SQLITE_CODES.INTERRUPT ||
-      error.sqliteCode === SQLITE_CODES.BUSY ||
-      error.sqliteCode === SQLITE_CODES.LOCKED);
-
-  const isFailedPrepare = (error: unknown) =>
-    error instanceof SQLiteError &&
-    error.code === 'STATEMENT_FAILED' &&
-    !isPassingFailure(error);
-
-  /**
-   * One verdict on a leased worker. On a free worker nothing else runs, so a
-   * worker silent for `drainTimeout` is presumed dead, as after a stop. Not on
-   * a transaction's worker: there the verdict may wait for its next statement.
-   */
-  const verdictOn = (
-    lease: Lease<PoolWorker>,
-    sql: string,
-  ): Promise<Verdict> => {
-    const { worker } = lease;
-    const asked = worker.verdict(sql);
-    if (lease.borrowed) return asked;
-    const timer = setTimeout(() => {
-      if (pool[worker.index] !== worker) return;
-      handleDeath(
-        worker.index,
-        new SQLiteError(
-          'WORKER_CRASHED',
-          `Worker ${worker.index + 1} did not answer a verdict within ${drainTimeout} ms; presumed dead.`,
-        ),
-      );
-    }, drainTimeout);
-    return asked.finally(() => clearTimeout(timer));
+  type Asking = Promise<Verdict> & {
+    waiters: number;
+    settled: boolean;
+    cancel: AbortController;
   };
 
-  /**
-   * Asks until a worker gives `sql` a verdict (spec 2026-10-26, § Routing by
-   * verdict). Through `scheduler.acquire`, not `acquireInstrumented`: no write
-   * lock, no barrier up front, no debug request.
-   *
-   * A failed prepare is not a verdict. On a free worker it is asked once more
-   * past the barrier, and only that second failure is the statement's; on a
-   * transaction's worker, where no barrier applies, a free worker is asked.
-   * A passing failure is asked again elsewhere; a death, once.
-   */
-  const askVerdict = async (
-    sql: string,
-    cancel: AbortSignal,
-  ): Promise<Verdict> => {
-    let deaths = 0;
-    while (true) {
-      const lease = await scheduler.acquire('verdict', cancel);
-      const { worker } = lease;
-      let barrier = false;
-      try {
-        try {
-          return await verdictOn(lease, sql);
-        } catch (error) {
-          if (lease.borrowed || !isFailedPrepare(error)) throw error;
-          barrier = true;
-          await applyBarrier(worker);
-          return await verdictOn(lease, sql);
-        }
-      } catch (error) {
-        if (worker.status === 'DEAD') {
-          deaths += 1;
-          if (deaths > 1) throw error;
-        } else if (
-          !isPassingFailure(error) &&
-          !(lease.borrowed && isFailedPrepare(error))
-        ) {
-          throw error;
-        }
-      } finally {
-        // The barrier is a query: the worker goes back once it is idle.
-        if (barrier) {
-          void worker.quiesce().then(
-            () => lease.release(),
-            () => lease.release(),
-          );
-        } else {
-          lease.release();
-        }
-      }
-    }
+  const verdictDeps = {
+    acquire: (signal: AbortSignal) => scheduler.acquire('verdict', signal),
+    applyBarrier,
   };
 
   const kindOf = (verdict: Verdict): StatementKind => {
@@ -1416,35 +1327,36 @@ export const createSQLiteClient = (
     let known = verdicts.get(sql);
     if (known === undefined) {
       const cancel = new AbortController();
-      const pending = askVerdict(sql, cancel.signal);
-      const state = { waiters: 0, settled: false, cancel };
-      asking.set(pending, state);
-      verdicts.set(sql, pending);
+      const asked: Asking = Object.assign(
+        askVerdict(sql, cancel.signal, verdictDeps),
+        { waiters: 0, settled: false, cancel },
+      );
+      verdicts.set(sql, asked);
       // Registered before any caller's wait, so `settled` is set first. An
       // error is not memoised.
-      pending.then(
+      asked.then(
         (verdict) => {
-          state.settled = true;
-          if (verdicts.get(sql) === pending) verdicts.set(sql, verdict);
+          asked.settled = true;
+          if (verdicts.get(sql) === asked) verdicts.set(sql, verdict);
         },
         () => {
-          state.settled = true;
-          if (verdicts.get(sql) === pending) verdicts.delete(sql);
+          asked.settled = true;
+          if (verdicts.get(sql) === asked) verdicts.delete(sql);
         },
       );
-      known = pending;
+      known = asked;
     }
     if (typeof known === 'string') return kindOf(known);
-    const state = asking.get(known);
-    if (!state) return kindOf(await known);
-    state.waiters += 1;
+    // Every promise in the memo is one this function stored, with its state.
+    const asked = known as Asking;
+    asked.waiters += 1;
     try {
-      return kindOf(await (signal ? raceAbort(signal, known) : known));
+      return kindOf(await (signal ? raceAbort(signal, asked) : asked));
     } finally {
-      state.waiters -= 1;
-      if (state.waiters === 0 && !state.settled) {
-        state.cancel.abort(signal?.reason);
-        if (verdicts.get(sql) === known) verdicts.delete(sql);
+      asked.waiters -= 1;
+      if (asked.waiters === 0 && !asked.settled) {
+        asked.cancel.abort(signal?.reason);
+        if (verdicts.get(sql) === asked) verdicts.delete(sql);
       }
     }
   };

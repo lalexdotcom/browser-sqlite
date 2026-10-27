@@ -5,6 +5,7 @@ import {
   createTestClient,
   interceptWorkers,
   killSilently,
+  scaled,
   sleep,
   type WorkerRecord,
 } from '../helpers';
@@ -38,6 +39,33 @@ const holdWorker = async (db: TestClient) => {
   });
   expect((await held.next()).done).toBe(false);
   return held;
+};
+
+/**
+ * Runs `act` on the worker the first verdict is posted to, before or after the
+ * post. Returns a getter for that worker.
+ */
+const onFirstVerdict = (
+  records: WorkerRecord[],
+  when: 'before' | 'after',
+  act: (worker: Worker) => void,
+) => {
+  let hit: Worker | undefined;
+  for (const record of records) {
+    const target = record.worker;
+    const post = target.postMessage.bind(target) as (
+      message: unknown,
+      ...rest: unknown[]
+    ) => void;
+    target.postMessage = (message: unknown, ...rest: unknown[]) => {
+      const first = (message as { type?: string }).type === 'verdict' && !hit;
+      if (first) hit = target;
+      if (first && when === 'before') act(target);
+      post(message, ...rest);
+      if (first && when === 'after') act(target);
+    };
+  }
+  return () => hit;
 };
 
 /** Every worker READY: the tests below reason about which one is free. */
@@ -220,35 +248,41 @@ describe('run() and all() on two workers', {
     }
   });
 
-  // Falsifiable: drop the liveness bound on a verdict in kindFor — the call
-  // waits for a reply that never comes.
-  it('resolves when its verdict worker is killed mid-verdict', async () => {
+  // Falsifiable: keep the memo entry when its last caller leaves (kindFor's
+  // finally) — the second call joins the verdict that never answers.
+  it('times out on a verdict worker killed silently, and the next call goes elsewhere', async () => {
     const { db, records } = await setUp({
       poolSize: 2,
       drainTimeout: 500,
       debug: true,
     });
     await poolReady(db, 2);
-    let killed: Worker | undefined;
-    for (const record of records) {
-      const target = record.worker;
-      const post = target.postMessage.bind(target);
-      target.postMessage = (message: unknown, ...rest: unknown[]) => {
-        if ((message as { type?: string }).type === 'verdict' && !killed) {
-          killed = target;
-          killSilently(target);
-        }
-        return (post as (m: unknown, ...r: unknown[]) => void)(
-          message,
-          ...rest,
-        );
-      };
-    }
-    expect(await db.run('SELECT 4 AS x')).toEqual({
-      rows: [{ x: 4 }],
+    // Killed before the verdict is posted: it can never answer, and nothing
+    // detects a silent death (B2) — the caller's timeout bounds the call.
+    const killed = onFirstVerdict(records, 'before', killSilently);
+    await expect(
+      db.run('SELECT 4 AS x', [], { timeout: scaled(300) }),
+    ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+    expect(killed()).toBeDefined();
+    expect(
+      await db.run('SELECT 4 AS x', [], { timeout: scaled(5_000) }),
+    ).toEqual({ rows: [{ x: 4 }], affected: 0 });
+  });
+
+  // Falsifiable: surface the first death in askVerdict (`deaths > 0`).
+  it('asks once more on another worker when its verdict worker dies', async () => {
+    const { db, records } = await setUp({ poolSize: 2, debug: true });
+    await poolReady(db, 2);
+    // Posted, then the worker reports an error: the pool's death path.
+    const crashed = onFirstVerdict(records, 'after', (worker) =>
+      worker.dispatchEvent(new ErrorEvent('error', { message: 'simulated' })),
+    );
+    expect(await db.run('SELECT 5 AS x')).toEqual({
+      rows: [{ x: 5 }],
       affected: 0,
     });
-    expect(killed).toBeDefined();
+    expect(crashed()).toBeDefined();
+    expect(verdictsPosted(records)).toBe(2);
   });
 
   // Falsifiable: drop the offer() call from transaction.ts — the verdict

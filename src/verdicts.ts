@@ -1,3 +1,6 @@
+import { SQLITE_CODES } from './const/sqlite';
+import type { Lease } from './scheduler';
+import { SQLiteError } from './types/errors';
 import type { Verdict } from './types/protocol';
 
 /**
@@ -46,4 +49,86 @@ export const createVerdictMemo = (bounds: {
       return entries.size;
     },
   };
+};
+
+/**
+ * A failed prepare SQLite can give a statement it would prepare fine: a
+ * neighbour's progress handler (INTERRUPT) or a lock (BUSY, LOCKED).
+ */
+const isPassingFailure = (error: unknown) =>
+  error instanceof SQLiteError &&
+  (error.sqliteCode === SQLITE_CODES.INTERRUPT ||
+    error.sqliteCode === SQLITE_CODES.BUSY ||
+    error.sqliteCode === SQLITE_CODES.LOCKED);
+
+const isFailedPrepare = (error: unknown) =>
+  error instanceof SQLiteError &&
+  error.code === 'STATEMENT_FAILED' &&
+  !isPassingFailure(error);
+
+/** What `askVerdict` needs of a worker. */
+export type VerdictWorker = {
+  verdict: (sql: string) => Promise<Verdict>;
+  readonly status: string;
+  quiesce: () => Promise<unknown>;
+};
+
+/**
+ * Asks until a worker gives `sql` a verdict (spec 2026-10-26, § Routing by
+ * verdict). `acquire` is the scheduler's verdict lease: no write lock, no
+ * barrier up front, no debug request. Nothing bounds a verdict but `cancel`:
+ * a worker that dies silently is not detected (B2).
+ *
+ * A failed prepare is not a verdict. On a free worker it is asked once more
+ * past the barrier, and only that second failure is the statement's; on a
+ * transaction's worker, where no barrier applies, a free worker is asked. A
+ * passing failure is asked once more, as `readWithRetry` does, then surfaces
+ * as it is; a detected death, likewise once.
+ */
+export const askVerdict = async <W extends VerdictWorker>(
+  sql: string,
+  cancel: AbortSignal,
+  deps: {
+    acquire: (signal: AbortSignal) => Promise<Lease<W>>;
+    applyBarrier: (worker: W) => Promise<void>;
+  },
+): Promise<Verdict> => {
+  let deaths = 0;
+  let passes = 0;
+  while (true) {
+    const lease = await deps.acquire(cancel);
+    const { worker } = lease;
+    let barrier = false;
+    try {
+      try {
+        return await worker.verdict(sql);
+      } catch (error) {
+        if (lease.borrowed || !isFailedPrepare(error)) throw error;
+        barrier = true;
+        // A failing barrier is the call's error, unless its worker died.
+        await deps.applyBarrier(worker);
+        return await worker.verdict(sql);
+      }
+    } catch (error) {
+      if (worker.status === 'DEAD') {
+        deaths += 1;
+        if (deaths > 1) throw error;
+      } else if (isPassingFailure(error)) {
+        passes += 1;
+        if (passes > 1) throw error;
+      } else if (!(lease.borrowed && isFailedPrepare(error))) {
+        throw error;
+      }
+    } finally {
+      // The barrier is a query: the worker goes back once it is idle.
+      if (barrier) {
+        void worker.quiesce().then(
+          () => lease.release(),
+          () => lease.release(),
+        );
+      } else {
+        lease.release();
+      }
+    }
+  }
 };
