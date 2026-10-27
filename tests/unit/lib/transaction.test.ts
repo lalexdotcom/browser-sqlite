@@ -103,6 +103,7 @@ const harness = (
   };
   const transaction = createTransaction({
     scheduler: scheduler as never,
+    offer: () => {},
     afterWrite: overrides.afterWrite ?? (() => Promise.resolve()),
     onPoisoned: (index: number) => poisoned.push(index),
     closeSignal: overrides.closeSignal ?? new AbortController().signal,

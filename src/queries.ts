@@ -5,7 +5,11 @@ import {
   abandonRegistry,
   reclaim,
 } from './abandon';
-import type { SQLiteChunkOptions, SQLiteQueryOptions } from './api';
+import type {
+  SQLiteChunkOptions,
+  SQLiteQueryOptions,
+  SQLiteRunResult,
+} from './api';
 import type { QueryParams } from './binary';
 import type { PoolWorker } from './pool';
 import type { RefuseWrite } from './types/protocol';
@@ -264,21 +268,22 @@ export const firstWorker = async <
   return undefined;
 };
 
-export const writeWorker = async <
+/** Every row and the count of rows changed: the write path of `run()`. */
+export const runWorker = async <
   T extends Record<string, unknown> = Record<string, unknown>,
 >(
   worker: PoolWorker,
   sql: string,
   params?: QueryParams,
   options?: SQLiteQueryOptions,
-): Promise<{ result: T[]; affected: number }> => {
+): Promise<SQLiteRunResult<T>> => {
   const { signal } = options ?? {};
 
   // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
   const iterator = worker.query<T>(sql, params);
-  const result: T[] = [];
+  const rows: T[] = [];
   let affected = 0;
   try {
     while (true) {
@@ -289,10 +294,10 @@ export const writeWorker = async <
         ? await raceAbort(signal, iterator.next())
         : await iterator.next();
       if (next.done) break;
-      // write() is the only caller that needs the affected count, which is why
-      // the T[] | number union stays private to this module.
+      // The write path is the only one that needs the affected count, which is
+      // why the T[] | number union stays private to this module.
       if (typeof next.value === 'number') affected = next.value;
-      else result.push(...next.value);
+      else rows.push(...next.value);
     }
   } finally {
     // Start the stop-and-drain, never await it. Same pattern as chunk(),
@@ -300,5 +305,11 @@ export const writeWorker = async <
     worker.interrupt(iterator);
     void iterator.return(undefined).catch(() => {});
   }
-  return { result, affected };
+  return { rows, affected };
 };
+
+/** `write()`'s result shape, `result` for `rows`, for as long as `write()` stays. */
+export const asWriteResult = <T>({ rows, affected }: SQLiteRunResult<T>) => ({
+  result: rows,
+  affected,
+});

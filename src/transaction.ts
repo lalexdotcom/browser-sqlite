@@ -12,16 +12,17 @@ import { flatten } from './flatten';
 import type { Logger } from './logger';
 import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
 import {
+  asWriteResult,
   chunk as chunkWorker,
   firstWorker,
   type InternalChunkOptions,
   makeAbortRace,
   raceAbort,
   readWorker,
-  writeWorker,
+  runWorker,
 } from './queries';
 import { createSavepointStack, type SavepointEntry } from './savepoints';
-import type { Scheduler } from './scheduler';
+import type { Lease } from './scheduler';
 import { queryArgs, type SQLQuery } from './sql';
 import { SQLiteError } from './types/errors';
 import {
@@ -99,7 +100,17 @@ type OpenStatement = {
  */
 export const createTransaction =
   (deps: {
-    scheduler: Scheduler<PoolWorker>;
+    scheduler: {
+      acquire: (
+        kind: 'read' | 'write',
+        signal?: AbortSignal,
+      ) => Promise<Lease<PoolWorker>>;
+    };
+    /**
+     * Lends the transaction's worker to a waiting verdict. Called only while
+     * that worker is idle and inside the transaction: between two statements.
+     */
+    offer: (worker: PoolWorker) => void;
     afterWrite: (worker: PoolWorker) => Promise<unknown>;
     /**
      * Called when a connection may still hold an open transaction. The worker
@@ -278,6 +289,16 @@ export const createTransaction =
        */
       let tail: Promise<void> | undefined;
 
+      /**
+       * Lends the worker to a waiting verdict once nothing of this transaction
+       * is on it: the queue empty, no generator open, no abandoned write still
+       * running. BEGIN has run, and no COMMIT or ROLLBACK yet.
+       */
+      const offerIfIdle = () => {
+        if (tail || open.size > 0 || abandoned || ending || !begun) return;
+        deps.offer(worker);
+      };
+
       /** The library's copy of this transaction's savepoint stack (spec 2026-10-04, § 5). */
       const savepoints = createSavepointStack();
 
@@ -292,9 +313,12 @@ export const createTransaction =
         const prior = tail;
         const mine = Promise.withResolvers<void>();
         tail = mine.promise;
+        // Set once `prior` has ended: from then on the worker is this call's.
+        let reached = false;
         try {
           if (prior) await queueWait(prior, signal);
           if (abandoned) await entryWait(signal);
+          reached = true;
           try {
             // One statement per call; several share this place in the queue.
             // A death between them rolled the whole transaction back, which
@@ -311,6 +335,7 @@ export const createTransaction =
         } finally {
           if (tail === mine.promise) tail = undefined;
           mine.resolve(prior);
+          if (reached || !prior) offerIfIdle();
         }
       };
 
@@ -663,6 +688,8 @@ export const createTransaction =
               // waits its turn"). A place left early is passed on, not cancelled.
               if (tail === mine.promise) tail = undefined;
               mine.resolve(prior);
+              // A statement that left early may leave `prior` still running.
+              if (mark.posted || !prior) offerIfIdle();
             }
           }
         };
@@ -823,6 +850,7 @@ export const createTransaction =
             } finally {
               if (tail === mine.promise) tail = undefined;
               mine.resolve(prior);
+              if (st.mark.posted || !prior) offerIfIdle();
             }
           }
         })();
@@ -952,7 +980,7 @@ export const createTransaction =
               // wait for the first.
               const { settled } = withSignal(given, 'write', query, false);
               return settled((target, options) =>
-                writeWorker(target, query, bound, options),
+                runWorker(target, query, bound, options).then(asWriteResult),
               );
             },
             /**
@@ -973,6 +1001,7 @@ export const createTransaction =
                 done: () => {
                   if (tail === mine.promise) tail = undefined;
                   mine.resolve(prior);
+                  offerIfIdle();
                 },
               };
             },
@@ -1018,7 +1047,7 @@ export const createTransaction =
           const bound = prepareParams(params);
           const { settled } = withSignal(given, 'write', query);
           return settled((target, options) =>
-            writeWorker<T>(target, query, bound, options),
+            runWorker<T>(target, query, bound, options).then(asWriteResult),
           );
         },
 
