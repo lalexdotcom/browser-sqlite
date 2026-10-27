@@ -384,7 +384,7 @@ export const createPoolWorker = (deps: {
    * just fewer rows. Measured 2026-09-04, deterministic on both engines: 501 of
    * 1001 rows for a consumer that awaited a `setTimeout(0)` between chunks, 500
    * of 1001 at `credits: 4`. It reached `stream()` and `chunk()` and no other
-   * surface, because `read()`, `first()` and `write()` never hand control back
+   * surface, because `run()`, `all()` and `first()` never hand control back
    * between chunks — which is why four releases shipped with it.
    *
    * So the promise is now only a wake-up signal, and the VALUES live here. A
@@ -748,7 +748,7 @@ export const createPoolWorker = (deps: {
         // is already in flight on this worker" — nothing narrower. It was
         // called GENERATOR_ABANDONED until 2026-09-22 and told the consumer to
         // close a generator, which was wrong twice over: two overlapping
-        // `tx.read()`s reach here with no generator anywhere, and so does a
+        // `tx.all()`s reach here with no generator anywhere, and so does a
         // `tx.bulkWrite` batch still in flight
         // (tests/browser/multi-client.test.ts).
         //

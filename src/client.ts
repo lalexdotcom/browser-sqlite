@@ -39,7 +39,6 @@ import { createPoolWorker, type PoolWorker } from './pool';
 import {
   type AffectedSlot,
   affectedSlot,
-  asWriteResult,
   chunk as chunkWorker,
   firstWorker,
   makeAbortRace,
@@ -55,12 +54,11 @@ import {
 } from './scheduler';
 import { queryArgs, type SQLQuery } from './sql';
 import { createSupervisor } from './supervisor';
-import { createTransaction } from './transaction';
+import { createTransaction, exposeTransaction } from './transaction';
 import { SQLiteError } from './types/errors';
 import type { Verdict } from './types/protocol';
 import {
   assertPragmasAllowed,
-  assertReadable,
   assertStatementAllowed,
   databaseFiles,
   isDeadlineError,
@@ -367,7 +365,7 @@ const exclusivityProbes = new Map<
  * @param clientOptions - Pool and VFS configuration. Required: `vfs` has no
  *   default, because a VFS decides where the database is written.
  *   See {@link CreateSQLiteClientOptions} for field defaults.
- * @returns A {@link SQLiteDB} object providing `read`, `write`, `chunk`,
+ * @returns A {@link SQLiteDB} object providing `run`, `all`, `chunk`,
  *   `stream`, `first`, `transaction`, `bulkWrite`, `output`, and `close` methods.
  *
  * @throws {SQLiteError} With code `INVALID_OPTION` when `build` is not one of
@@ -388,7 +386,7 @@ const exclusivityProbes = new Map<
  *   pragmas: { journal_mode: 'WAL', synchronous: 'NORMAL' },
  * });
  *
- * const users = await db.read<{ id: number; name: string }>(
+ * const users = await db.all<{ id: number; name: string }>(
  *   'SELECT id, name FROM users WHERE active = ?',
  *   [1],
  * );
@@ -887,7 +885,7 @@ export const createSQLiteClient = (
   const applyBarrier = async (worker: PoolWorker) => {
     // The origin can only ever RAISE the target. That is what lets the local
     // cell stay synchronous — `epochs.bump()` is posted in the write path's
-    // finally, and a read chained after write() must see it without awaiting
+    // finally, and a read chained after a write must see it without awaiting
     // anything. `query()` is async and could never live there.
     const origin = await epochs.originMax();
     epochs.raiseTo(origin);
@@ -1214,7 +1212,7 @@ export const createSQLiteClient = (
    * `mergeSignals` put on the caller's own signal — is owned one level up, by
    * the `try/finally` each public read method wraps around its call to this.
    * So an acquisition that throws still clears the timer; it is just not this
-   * function that does it. `write()` had the same shape and got it wrong once,
+   * function that does it. The write path had the same shape and got it wrong once,
    * releasing the deadline only on paths that reached its inner `finally`.
    */
   const onReadLease = async <R>(
@@ -1266,8 +1264,8 @@ export const createSQLiteClient = (
    * The same retry for the streaming reads, with the one restriction that
    * makes it safe: **only before a single row has been delivered.** Once the
    * consumer has seen a chunk, re-running the query would repeat rows, so a
-   * `BUSY` after that point is raised like any other error. `read()` and
-   * `first()` buffer, so they never meet this case. **A write is never
+   * `BUSY` after that point is raised like any other error. `run()`, `all()`
+   * and `first()` buffer, so they never meet this case. **A write is never
    * retried.**
    *
    * A write runs under the write lock, and the worker completes it before its
@@ -1476,29 +1474,15 @@ export const createSQLiteClient = (
   };
 
   /**
-   * Executes a read query and returns all results.
-   * Automatically acquires and releases a worker from the pool.
-   *
-   * @remarks
-   * **Read-your-own-writes is guaranteed within the tab.** Any read issued after a
-   * write resolves — from that client or from any other client in the same tab on
-   * the same database — observes it, regardless of pool size. It is not guaranteed
-   * across tabs.
+   * A read the library knows to be one, on any free worker: no verdict is
+   * asked. It is the library's own path (the staging sweep of `bulkWrite` and
+   * `output`), never a caller's.
    */
-  const read = async <
-    T extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    input: string | SQLQuery,
-    second?: unknown,
-    third?: SQLiteChunkOptions,
-  ) => {
-    const { sql, params, options } = queryArgs(input, second, third);
-    assertReadable(sql, 'read');
-    const bound = prepareParams(params);
-    const { signal, release } = withDeadline(options, 'read');
+  const readDirect = async (sql: string) => {
+    const { signal, release } = withDeadline(undefined, 'read');
     try {
       return await readWithRetry(signal, (worker) =>
-        readWorker<T>(worker, sql, bound, { ...options, signal }),
+        readWorker(worker, sql, undefined, { signal }),
       );
     } finally {
       release();
@@ -1557,7 +1541,7 @@ export const createSQLiteClient = (
    * completed in the worker before its first chunk is delivered.
    *
    * @remarks
-   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * **Worker freshness.** See the `run()` remarks — read-your-own-writes is
    * guaranteed within the tab, not across tabs.
    */
   const chunk = <T extends Record<string, unknown> = Record<string, unknown>>(
@@ -1589,7 +1573,7 @@ export const createSQLiteClient = (
    * from chunks). A write is completed in the worker before its first row.
    *
    * @remarks
-   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * **Worker freshness.** See the `run()` remarks — read-your-own-writes is
    * guaranteed within the tab, not across tabs.
    */
   const stream = <T extends Record<string, unknown> = Record<string, unknown>>(
@@ -1652,10 +1636,10 @@ export const createSQLiteClient = (
   };
 
   /**
-   * Executes a write query and returns results with affected row count.
-   * Automatically acquires and releases a worker from the pool. No verdict is
-   * asked: this is the library's own write path, and `write()` for as long as
-   * it stays.
+   * Executes a write and returns its rows and the rows it changed. Acquires
+   * and releases the writer. No verdict is asked: this is the library's own
+   * write path (the staging and swap statements of `bulkWrite` and `output`),
+   * never a caller's.
    */
   const writeDirect = async <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -1669,7 +1653,7 @@ export const createSQLiteClient = (
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'write');
     try {
-      return asWriteResult(await runOnWriter<T>(sql, bound, options, signal));
+      return await runOnWriter<T>(sql, bound, options, signal);
     } finally {
       release();
     }
@@ -1692,7 +1676,7 @@ export const createSQLiteClient = (
     const { signal, release } = withDeadline(options, method);
     try {
       // Not awaited when the verdict is known: the statement then joins its
-      // queue in this tick, as read() and write() did.
+      // queue in this tick.
       const known = kindFor(sql, signal);
       const kind = typeof known === 'string' ? known : await known;
       if (kind === 'write')
@@ -1710,7 +1694,10 @@ export const createSQLiteClient = (
    * Runs any single statement and returns its rows and the rows it changed.
    *
    * @remarks
-   * **Read-your-own-writes is guaranteed within the tab**, as for `read()`.
+   * **Read-your-own-writes is guaranteed within the tab.** Any read issued
+   * after a write resolves — from that client or from any other client in the
+   * same tab on the same database — observes it, regardless of pool size. It
+   * is not guaranteed across tabs.
    */
   const run = <T extends Record<string, unknown> = Record<string, unknown>>(
     input: string | SQLQuery,
@@ -1732,7 +1719,7 @@ export const createSQLiteClient = (
    * Breaks after the first chunk — no internal AbortController needed.
    *
    * @remarks
-   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * **Worker freshness.** See the `run()` remarks — read-your-own-writes is
    * guaranteed within the tab, not across tabs.
    */
   const first = async <
@@ -1767,7 +1754,7 @@ export const createSQLiteClient = (
     logger,
   });
 
-  const transaction = createTransaction({
+  const runTransaction = createTransaction({
     scheduler: { acquire: acquireInstrumented },
     offer: (worker) => {
       scheduler.offer(worker);
@@ -1783,7 +1770,14 @@ export const createSQLiteClient = (
     logger,
   });
 
-  const { bulkWrite, output } = bulkFor({ read, writeDirect, transaction });
+  const transaction = exposeTransaction(runTransaction);
+
+  const { bulkWrite, output } = bulkFor({
+    read: readDirect,
+    writeDirect,
+    transaction: (fn, options) =>
+      runTransaction((_db, internals) => fn(internals), options),
+  });
 
   /** Bounds any settlement that depends on a worker answering. */
   const bounded = async (promise: Promise<unknown>, ms: number) => {
@@ -2229,8 +2223,6 @@ export const createSQLiteClient = (
     run,
     all,
     chunk,
-    read,
-    write: writeDirect,
     stream,
     first,
     transaction,

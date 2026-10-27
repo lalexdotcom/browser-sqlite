@@ -7,7 +7,6 @@ import {
   assertStatementAllowed,
   databaseFiles,
   databasePath,
-  isWriteQuery,
   MAX_DATABASE_NAME,
   mergeSignals,
   normalizeDatabaseFile,
@@ -19,93 +18,6 @@ import {
   sqlParams,
   withDeadline,
 } from '../../../src/utils';
-
-describe('isWriteQuery', () => {
-  describe('DML write operations', () => {
-    it('returns true for INSERT', () => {
-      expect(isWriteQuery('INSERT INTO t VALUES (?)')).toBe(true);
-    });
-    it('returns true for REPLACE', () => {
-      expect(isWriteQuery('REPLACE INTO t VALUES (?)')).toBe(true);
-    });
-    it('returns true for UPDATE', () => {
-      expect(isWriteQuery('UPDATE t SET x = 1')).toBe(true);
-    });
-    it('returns true for DELETE', () => {
-      expect(isWriteQuery('DELETE FROM t WHERE id = 1')).toBe(true);
-    });
-  });
-
-  describe('DDL write operations', () => {
-    it('returns true for CREATE TABLE', () => {
-      expect(isWriteQuery('CREATE TABLE t (id INTEGER)')).toBe(true);
-    });
-    it('returns true for DROP TABLE', () => {
-      expect(isWriteQuery('DROP TABLE t')).toBe(true);
-    });
-  });
-
-  describe('PRAGMA, ATTACH, DETACH (D3 extension)', () => {
-    it('returns true for PRAGMA with assignment', () => {
-      expect(isWriteQuery('PRAGMA journal_mode = WAL')).toBe(true);
-    });
-    it('returns true for PRAGMA with an argument outside the introspection list', () => {
-      expect(isWriteQuery('PRAGMA cache_size(10)')).toBe(true);
-    });
-    it('returns true for ATTACH', () => {
-      expect(isWriteQuery('ATTACH "other.db" AS other')).toBe(true);
-    });
-    it('returns true for DETACH', () => {
-      expect(isWriteQuery('DETACH other')).toBe(true);
-    });
-    // These take no value and no argument, so they look like a lookup; each
-    // writes the file (a write lock measured on 2026-10-01 for the first, and
-    // `sqlite3BeginWriteOperation` in SQLite's pragma.c for all three).
-    // Falsifiability: drop them from WRITING_PRAGMAS and read() accepts them.
-    it('returns true for a bare PRAGMA that writes the database', () => {
-      expect(isWriteQuery('PRAGMA incremental_vacuum')).toBe(true);
-      expect(isWriteQuery('PRAGMA optimize')).toBe(true);
-      expect(isWriteQuery('PRAGMA wal_checkpoint;')).toBe(true);
-      expect(isWriteQuery('PRAGMA main.incremental_vacuum')).toBe(true);
-      expect(isWriteQuery('pragma OPTIMIZE')).toBe(true);
-    });
-    it('returns false for a bare PRAGMA that only reads', () => {
-      expect(isWriteQuery('PRAGMA user_version')).toBe(false);
-      expect(isWriteQuery('PRAGMA main.journal_mode')).toBe(false);
-    });
-  });
-
-  describe('read-only queries', () => {
-    it('returns false for SELECT', () => {
-      expect(isWriteQuery('SELECT * FROM t')).toBe(false);
-    });
-    it('returns false for WITH...SELECT CTE', () => {
-      expect(isWriteQuery('WITH cte AS (SELECT 1) SELECT * FROM cte')).toBe(
-        false,
-      );
-    });
-  });
-
-  describe('CTE write operations', () => {
-    it('returns true for WITH...INSERT CTE', () => {
-      expect(
-        isWriteQuery('WITH cte AS (SELECT 1) INSERT INTO t SELECT * FROM cte'),
-      ).toBe(true);
-    });
-  });
-
-  describe('case insensitivity (regex flag i)', () => {
-    it('returns true for lowercase insert', () => {
-      expect(isWriteQuery('insert into t values (1)')).toBe(true);
-    });
-    it('returns true for lowercase pragma', () => {
-      expect(isWriteQuery('pragma user_version(5)')).toBe(true);
-    });
-    it('returns true for lowercase create', () => {
-      expect(isWriteQuery('create table t (id integer)')).toBe(true);
-    });
-  });
-});
 
 describe('sqlParams', () => {
   it('returns ?001 for first param', () => {

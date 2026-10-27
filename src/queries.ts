@@ -377,9 +377,3 @@ export const runWorker = async <
   }
   return { rows, affected };
 };
-
-/** `write()`'s result shape, `result` for `rows`, for as long as `write()` stays. */
-export const asWriteResult = <T>({ rows, affected }: SQLiteRunResult<T>) => ({
-  result: rows,
-  affected,
-});

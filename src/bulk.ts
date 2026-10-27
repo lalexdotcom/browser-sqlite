@@ -39,7 +39,7 @@ export type WriteFn = (
   sql: string,
   params?: unknown[] | EncodedParams,
   options?: BulkCallOptions,
-) => Promise<{ result: unknown[]; affected: number }>;
+) => Promise<{ affected: number }>;
 
 export type ReadFn = (
   sql: string,
@@ -48,13 +48,7 @@ export type ReadFn = (
 ) => Promise<unknown[]>;
 
 export type TransactionFn = <T>(
-  callback: (db: {
-    writeDirect: (
-      sql: string,
-      params?: unknown[] | EncodedParams,
-      options?: BulkCallOptions,
-    ) => Promise<{ result: unknown[]; affected: number }>;
-  }) => Promise<T>,
+  callback: (db: { writeDirect: WriteFn }) => Promise<T>,
   options?: SQLiteTransactionOptions,
 ) => Promise<T>;
 

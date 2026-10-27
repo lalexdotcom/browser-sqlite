@@ -1,8 +1,4 @@
-import {
-  BARE_WRITING_PRAGMAS,
-  INTROSPECTION_PRAGMAS,
-  WRITING_PRAGMAS,
-} from './classify';
+import { WRITING_PRAGMAS } from './classify';
 import type { SQLiteBuild } from './const/builds';
 import { folderOf, type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { SQLiteError } from './types/errors';
@@ -55,73 +51,8 @@ export const sqlParams = () => {
   };
 };
 
-/**
- * Every statement SQLite treats as a write, or that must be serialized through
- * the single writer worker. Matched anywhere in the string, not just at the
- * start: the worker executes `;`-separated statements, so a write hiding after
- * a semicolon must still route to the writer.
- */
-const WRITE_KEYWORDS =
-  /\b(INSERT|REPLACE|UPDATE|DELETE|CREATE|DROP|ALTER|VACUUM|ANALYZE|REINDEX|SAVEPOINT|RELEASE|BEGIN|COMMIT|ROLLBACK|ATTACH|DETACH|PRAGMA)\b/i;
-
-/**
- * Routing predicate: is this statement provably a read?
- *
- * Two conditions, both required. The statement must OPEN with a read keyword,
- * and it must contain no write keyword anywhere. The first condition alone is
- * not enough — the worker executes `;`-separated statements, so `SELECT 1;
- * DROP TABLE t` opens as a read and is not one. The second alone is not enough
- * either — it would admit any unrecognised statement as a read.
- *
- * The previous blocklist missed VACUUM, ALTER, ANALYZE, REINDEX, SAVEPOINT and
- * a manual BEGIN, so those ran on the read pool: a VACUUM could execute on an
- * arbitrary worker while the writer held an open transaction, bypassing
- * exclusivity one layer above the pool.
- *
- * Misclassification now fails toward the writer — correct, merely slower. A
- * read whose text merely mentions a write keyword (`SELECT 'INSERT'`, or
- * `EXPLAIN INSERT ...`, which never executes) is serialized needlessly. That
- * is the accepted price of never routing a write to the read pool.
- */
-/**
- * A statement that is nothing but a single PRAGMA lookup: no assignment, no
- * argument, nothing after it. Anchoring at `$` is what makes this safe for
- * free — `PRAGMA journal_mode; DROP TABLE t` does not match, and neither does
- * `PRAGMA journal_mode=WAL`, whose `=` breaks the match.
- */
-const READ_PRAGMA = /^\s*PRAGMA\s+(?:\w+\.)?(\w+)\s*;?\s*$/i;
-
 const isWritingPragma = (name: string) =>
   WRITING_PRAGMAS.has(name.toLowerCase());
-
-/**
- * One such pragma with one argument — a name, quoted or bare, or an integer —
- * and nothing after it. The argument admits no `)` or `;` outside its quotes,
- * so the `$` anchor keeps a second statement out, as in `READ_PRAGMA`.
- */
-const INTROSPECTION_PRAGMA = new RegExp(
-  String.raw`^\s*PRAGMA\s+(?:\w+\.)?(\w+)\s*\(\s*(?:[\p{L}_][\p{L}\p{N}_$]*|[+-]?\d+|"(?:[^"]|"")*"|'(?:[^']|'')*'|\[[^\]]*\]|` +
-    '`(?:[^`]|``)*`' +
-    String.raw`)\s*\)\s*;?\s*$`,
-  'iu',
-);
-
-const isReadPragma = (sql: string) => {
-  const name = READ_PRAGMA.exec(sql)?.[1];
-  if (name !== undefined) return !BARE_WRITING_PRAGMAS.has(name.toLowerCase());
-  const inspected = INTROSPECTION_PRAGMA.exec(sql)?.[1];
-  return (
-    inspected !== undefined &&
-    INTROSPECTION_PRAGMAS.has(inspected.toLowerCase())
-  );
-};
-
-export const isReadQuery = (sql: string) =>
-  isReadPragma(sql) ||
-  (/^\s*(SELECT|EXPLAIN|VALUES|WITH)\b/i.test(sql) &&
-    !WRITE_KEYWORDS.test(sql));
-
-export const isWriteQuery = (sql: string) => !isReadQuery(sql);
 
 /**
  * Combines two abort signals into one that fires with the reason of whichever
@@ -215,26 +146,6 @@ export const withDeadline = (
       release();
     },
   };
-};
-
-/**
- * Routing guard for the read-shaped methods (`read`, `chunk`, `stream`, `first`).
- * Throws before a lease is taken, so a rejected statement costs no pool capacity.
- *
- * A bare read pragma (`PRAGMA journal_mode`) and an introspection pragma with
- * its argument (`PRAGMA table_info(t)`) are accepted; a pragma that assigns
- * (`PRAGMA journal_mode=WAL`, `PRAGMA user_version(5)`), is followed by
- * anything else, or writes with no value (`PRAGMA optimize`) must go through
- * `write()`.
- */
-export const assertReadable = (sql: string, method: string): void => {
-  if (isReadQuery(sql)) return;
-  const keyword = sql.trim().split(/\s+/)[0]?.toUpperCase() ?? '';
-  throw new SQLiteError(
-    'NOT_A_READ_QUERY',
-    `${method}() only accepts statements that are provably reads; "${keyword}" must go through write(). ` +
-      `Note that a PRAGMA that assigns a value is a write; so is one that takes an argument, except the introspection pragmas (table_info, index_list, integrity_check…); and so are PRAGMA optimize, incremental_vacuum and wal_checkpoint.`,
-  );
 };
 
 /**

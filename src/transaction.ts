@@ -1,6 +1,7 @@
 import type {
   Interruptible,
   SQLiteChunkOptions,
+  SQLiteDB,
   SQLiteQueryAPI,
   SQLiteSavepoint,
   SQLiteTransactionDB,
@@ -15,7 +16,6 @@ import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
 import {
   type AffectedSlot,
   affectedSlot,
-  asWriteResult,
   chunk as chunkWorker,
   firstWorker,
   type InternalChunkOptions,
@@ -29,20 +29,24 @@ import { createSavepointStack, type SavepointEntry } from './savepoints';
 import type { Lease } from './scheduler';
 import { queryArgs, type SQLQuery } from './sql';
 import { SQLiteError } from './types/errors';
-import {
-  assertReadable,
-  mergeSignals,
-  quoteIdent,
-  withDeadline,
-} from './utils';
+import { mergeSignals, quoteIdent, withDeadline } from './utils';
 
 /**
- * The transaction object as the library's own code sees it: `writeDirect` writes
- * without asking for a verdict, and takes the encoded params that `bulkWrite`
- * builds, which no consumer can construct.
- * Assignable to `SQLiteTransactionDB`.
+ * What only the library's own code is handed beside the transaction object:
+ * `writeDirect` writes without asking for a verdict, and takes the encoded
+ * params that `bulkWrite` builds, which no consumer can construct. Never a
+ * member of the object a callback of the public API receives.
  */
-type InternalTransactionDB = SQLiteTransactionDB & { writeDirect: WriteFn };
+export type TransactionInternals = { writeDirect: WriteFn };
+
+/**
+ * The public `transaction()` over `createTransaction`'s runner: the callback
+ * receives the transaction object alone, with no write path of the library's.
+ */
+export const exposeTransaction =
+  (run: ReturnType<typeof createTransaction>): SQLiteDB['transaction'] =>
+  (callback, options) =>
+    run((db) => callback(db), options);
 
 // Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK, a
 // savepoint operation) without the chunkSize-1 + break overhead of
@@ -172,7 +176,10 @@ export const createTransaction =
     logger: Pick<Logger, 'always'>;
   }) =>
   async <T = void>(
-    callback: (db: InternalTransactionDB) => Promise<T>,
+    callback: (
+      db: SQLiteTransactionDB,
+      internals: TransactionInternals,
+    ) => Promise<T>,
     options?: SQLiteTransactionOptions,
   ): Promise<T> => {
     const { readOnly = false, autoCommit = true } = options ?? {};
@@ -243,14 +250,9 @@ export const createTransaction =
       );
       const worker = lease.worker;
 
-      /**
-       * `method` names a read method: it refuses a write, as the client's do.
-       * A read-only transaction's writes are refused by the worker, which
-       * `via` tells.
-       */
-      const checksql = (sql: string, method?: string): string => {
+      /** A read-only transaction's writes are refused by the worker, which `via` tells. */
+      const checksql = (sql: string): string => {
         deps.checkStatement(sql);
-        if (method) assertReadable(sql, method);
         return sql;
       };
 
@@ -598,7 +600,7 @@ export const createTransaction =
        * idle again.** Inside a transaction the statements share one worker with
        * no scheduler lease between them, so a statement that leaves its
        * transport without reaching `done` — `first()` on any query with a row
-       * left to produce, a `read()`/`write()` cut short by an abort — leaves
+       * left to produce, a `run()`/`all()` cut short by an abort — leaves
        * `pool.ts`'s `deferredChunk` set: `queries.ts` posts the stop and fires
        * `iterator.return()` WITHOUT awaiting it, deliberately, because the
        * client path has a lease to do the waiting and no reason to block. Here
@@ -1070,7 +1072,14 @@ export const createTransaction =
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
               const bound = prepareParams(params);
-              const { settled } = withSignal(given, 'read', query);
+              // The library's own read: a read without asking.
+              const { settled } = withSignal(
+                given,
+                'read',
+                query,
+                true,
+                'read',
+              );
               return settled((target, options) =>
                 readWorker(target, query, bound, options),
               );
@@ -1091,7 +1100,7 @@ export const createTransaction =
                 'write',
               );
               return settled((target, options) =>
-                runWorker(target, query, bound, options).then(asWriteResult),
+                runWorker(target, query, bound, options),
               );
             },
             /**
@@ -1117,13 +1126,14 @@ export const createTransaction =
               };
             },
             // The caller's transaction is already open. No BEGIN, no COMMIT.
-            // db is referenced before its const declaration, deliberately: this arrow
-            // only runs when output().close() fires, by which point db is assigned.
-            // Moving `bulk` below `const db` breaks the literal that consumes it.
-            transaction: (fn) => fn(db),
+            // writeDirect is referenced before its const declaration, deliberately:
+            // this arrow only runs when output().close() fires, by which point it
+            // is assigned. Moving `bulk` below `const db` breaks the literal that
+            // consumes it.
+            transaction: (fn) => fn({ writeDirect }),
           });
 
-      /** A write, asked of no verdict: the library's own, and `write()` for as long as it stays. */
+      /** A write, asked of no verdict: the library's own, never the callback's. */
       const writeDirect = async <T extends Record<string, unknown>>(
         input: string | SQLQuery,
         second?: unknown,
@@ -1135,34 +1145,11 @@ export const createTransaction =
         const bound = prepareParams(params);
         const { settled } = withSignal(given, 'write', query);
         return settled((target, options) =>
-          runWorker<T>(target, query, bound, options).then(asWriteResult),
+          runWorker<T>(target, query, bound, options),
         );
       };
 
-      const db: InternalTransactionDB = {
-        read: async <T extends Record<string, unknown>>(
-          input: string | SQLQuery,
-          second?: unknown,
-          third?: SQLiteChunkOptions,
-        ) => {
-          if (ending) return Promise.reject(closedError(ending));
-          const {
-            sql,
-            params,
-            options: given,
-          } = queryArgs(input, second, third);
-          const query = checksql(sql, 'read');
-          const bound = prepareParams(params);
-          // Refused above unless a read: it asks nothing, and posts at once.
-          const { settled } = withSignal(given, 'read', query, true, 'read');
-          return settled((target, options) =>
-            readWorker<T>(target, query, bound, options),
-          );
-        },
-
-        write: writeDirect,
-        writeDirect,
-
+      const db: SQLiteTransactionDB = {
         run: async <T extends Record<string, unknown>>(
           input: string | SQLQuery,
           second?: unknown,
@@ -1435,7 +1422,7 @@ export const createTransaction =
         // flight, and the transaction is open now. The callback never runs.
         signal?.throwIfAborted();
 
-        const running = callback(db);
+        const running = callback(db, { writeDirect });
         // Racing the callback, not only its statements: an abort landing while
         // the callback sits in user code — an await on anything that is not a
         // statement — would otherwise be invisible until it returns, which may be
@@ -1522,7 +1509,7 @@ export const createTransaction =
         releaseDeath();
         signal?.removeEventListener('abort', onAbort);
         teardown();
-        // Same reasoning as write(): before the void, because release is
+        // Same reasoning as a write's: before the void, because release is
         // asynchronous. A read-only transaction commits nothing and must not
         // bump.
         if (!readOnly) await deps.afterWrite(worker);

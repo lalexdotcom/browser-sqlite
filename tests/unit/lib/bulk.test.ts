@@ -505,7 +505,7 @@ describe('bulkWrite abort with a stalled batch (ABORT-1 regression)', () => {
    * without `readwrite-unsafe`, where one exclusive access handle rotates
    * between workers and a hand-over may never arrive.
    *
-   * Falsifiable: drop the signal from the inner write() and this hangs until
+   * Falsifiable: drop the signal from the inner writeDirect() and this hangs until
    * the test timeout instead of rejecting, which is exactly what the benchmark
    * page did on macOS Safari 27.0.
    */
@@ -535,10 +535,10 @@ describe('bulkWrite abort with a stalled batch (ABORT-1 regression)', () => {
     const controller = new AbortController();
     const bulk = bulkWrite('t', ['a'], { signal: controller.signal });
     bulk.enqueue({ a: 1 });
-    bulk.enqueue({ a: 2 }); // flushes; the batch stalls inside write()
+    bulk.enqueue({ a: 2 }); // flushes; the batch stalls inside writeDirect()
 
     const closing = bulk.close();
-    await new Promise((r) => setTimeout(r, 0)); // let the batch reach write()
+    await new Promise((r) => setTimeout(r, 0)); // let the batch reach writeDirect()
     controller.abort();
 
     await expect(

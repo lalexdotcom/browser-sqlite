@@ -55,7 +55,7 @@ const readRest = async (iterator: AsyncIterator<unknown>) => {
 };
 
 describe('stream() and chunk() take a write', () => {
-  // Falsifiable: put assertReadable back in stream() in src/client.ts.
+  // Falsifiable: make stream() in src/client.ts refuse a write.
   it('stream() delivers every row of a DELETE … RETURNING, and the rows are gone', async () => {
     const db = await setUp();
     const seen: number[] = [];
@@ -130,7 +130,7 @@ describe('stream() and chunk() take a write', () => {
     expect(await count(db)).toBe(1);
   });
 
-  // Falsifiable: put assertReadable back in chunk() in src/client.ts.
+  // Falsifiable: make chunk() in src/client.ts refuse a write.
   it('chunk() delivers an UPDATE … RETURNING in chunks of chunkSize', async () => {
     const db = await setUp();
     const rows = db.chunk<{ a: number }>('UPDATE t SET b = 1 RETURNING a', [], {

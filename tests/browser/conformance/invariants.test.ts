@@ -144,7 +144,7 @@ describe('invariant 5 — close settles', () => {
 // handle (HANDLE-1: OPFSAdaptiveVFS, OPFSWriteAheadVFS, OPFSCoopSyncVFS on
 // Firefox), no other worker can be admitted until the transaction releases the
 // handle — the pool-acquire call blocks at the scheduler level, before the
-// AbortSignal passed to read() is ever checked. That is a structural property
+// AbortSignal passed to all() is ever checked. That is a structural property
 // of the VFS model, not an isolation failure.
 //
 // The read is raced against a 2 s AbortController to detect the blocked case:

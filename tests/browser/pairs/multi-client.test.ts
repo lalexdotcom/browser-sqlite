@@ -134,7 +134,7 @@ describe('two clients writing at once', {
   });
 
   // `bulkWrite` still commits PER BATCH and still takes one lock per batch —
-  // `bulk.ts` calls the public `write`. So another client's write can still
+  // `bulk.ts` writes through `writeDirect`. So another client's write can still
   // land between two batches; what changed is that neither side is refused.
   //
   // Falsifiable by its own middle assertion: if `bulkWrite` did not commit per
@@ -230,7 +230,7 @@ describe('one client', () => {
   // The other half of the sentence the README puts in front of a consumer:
   // `tx.bulkWrite` is the all-or-nothing shape. Its batches run on the caller's
   // already-open transaction — `bulkFor` there is handed the transaction's own
-  // `write` and a `transaction: (fn) => fn(db)` that opens nothing — so a flush
+  // `writeDirect` and a `transaction: (fn) => fn({ writeDirect })` that opens nothing — so a flush
   // that has already happened is still uncommitted and goes back with the
   // rollback. Engine-independent: no second client, no contention, nothing that
   // depends on how handles are held.

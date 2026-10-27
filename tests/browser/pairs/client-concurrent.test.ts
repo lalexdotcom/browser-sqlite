@@ -12,7 +12,7 @@ import {
  * not depend on each other.
  *
  * Until 2026-09-21 `concurrency.test.ts` was the only file doing this, and only
- * for `read()`: the other six surfaces had never been issued concurrently, and
+ * for reads: the other six surfaces had never been issued concurrently, and
  * neither had any of them inside a transaction (see `tx-concurrent.test.ts`,
  * which is where that gap turned out to be a defect).
  *
@@ -211,7 +211,7 @@ describe('calls issued in the same tick on one worker', () => {
         await db.run('INSERT INTO t (n) VALUES (1)');
         const query = 'SELECT n FROM t ORDER BY n';
         // The verdict is memoised: the next all() waits for nothing, and joins
-        // its queue as read() would. Falsifiable: await in kindFor, or in
+        // its queue as a known verdict always did. Falsifiable: await in kindFor, or in
         // runStatement, on a verdict already known.
         await db.all(query);
 

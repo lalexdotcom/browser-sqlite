@@ -96,7 +96,7 @@ describe('SQLiteError — timeout', () => {
   it('carries the timeout that was exceeded', () => {
     const err = new SQLiteError(
       'OPERATION_TIMEOUT',
-      'read() exceeded its timeout of 200 ms.',
+      'run() exceeded its timeout of 200 ms.',
       {
         timeout: 200,
       },

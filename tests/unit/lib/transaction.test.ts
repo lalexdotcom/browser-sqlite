@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SQLiteSavepoint, SQLiteTransactionDB } from '../../../src/api';
 import { raceAbort } from '../../../src/queries';
-import { createTransaction } from '../../../src/transaction';
+import { createTransaction, exposeTransaction } from '../../../src/transaction';
 import { SQLiteError } from '../../../src/types/errors';
 
 /**
@@ -113,7 +113,7 @@ const harness = (
       return { worker, release: () => {} };
     },
   };
-  const transaction = createTransaction({
+  const run = createTransaction({
     scheduler: scheduler as never,
     offer: () => {},
     // As the client's: the signal ends the caller's wait, not the verdict.
@@ -134,8 +134,23 @@ const harness = (
     }),
     logger: { always: { warn: (message: string) => warnings.push(message) } },
   });
-  return { transaction, poisoned, warnings, asked };
+  return { transaction: exposeTransaction(run), poisoned, warnings, asked };
 };
+
+// The library's own bulk is handed `writeDirect` as a second argument of the
+// runner; the public transaction() passes the callback the object alone.
+// Falsifiable: have exposeTransaction in src/transaction.ts pass `run` the
+// callback itself, so that it receives the second argument.
+describe('transaction — the callback receives the transaction object alone', () => {
+  it('is called with one argument', async () => {
+    const { transaction } = harness(fakeWorker([]));
+    let received: unknown[] = [];
+    await transaction(async (...args: unknown[]) => {
+      received = args;
+    });
+    expect(received).toHaveLength(1);
+  });
+});
 
 describe('transaction — a poisoned connection is never re-lent', () => {
   // Falsifiable: delete the onPoisoned call in the catch of the fallback
@@ -433,7 +448,7 @@ describe('transaction — the caller may abandon it', () => {
 
 describe('transaction — a closed handle never reaches the worker (spec R3, R4)', () => {
   // Falsifiable, all three: remove the `if (ending)` guard from commit(),
-  // rollback() or write() in src/transaction.ts and `executed` grows.
+  // rollback() or run() in src/transaction.ts and `executed` grows.
   it('after a commit: commit() resolves, rollback() resolves and warns, a statement is refused', async () => {
     const worker = fakeWorker([]);
     const { transaction, warnings } = harness(worker);
@@ -847,12 +862,6 @@ describe('transaction — a savepointed write, and the message after it (spec 20
     (tx: SQLiteTransactionDB) => Promise<unknown>,
     string,
   ][] = [
-    ['read', (tx) => tx.read('SELECT 2'), 'SELECT 2'],
-    [
-      'write',
-      (tx) => tx.write('INSERT INTO t VALUES (2)'),
-      'INSERT INTO t VALUES (2)',
-    ],
     ['first', (tx) => tx.first('SELECT 2'), 'SELECT 2'],
     [
       'run',
@@ -946,8 +955,10 @@ describe('transaction — a savepointed write, and the message after it (spec 20
   // function-valued member of `tx` except `rollback` (its own test, just
   // below — a full ROLLBACK concludes nothing, so it has no T7 case to
   // share) and `bulkWrite`/`output` (they issue no query of their own; each
-  // batch is a `tx.writeDirect()` under the hood, with no verdict, so they run
-  // through the very `settled`/`via` this file already exercises via `write`).
+  // batch is a `writeDirect()` under the hood, with no verdict, so they run
+  // through the very `settled`/`via` this file already exercises via `run`).
+  // `writeDirect` itself is not a member of `tx`: the library's own bulk is
+  // handed it apart, so no untyped write path is reachable from user code.
   // A new entry point that skips `entries` — and so skips its own T7 case —
   // fails this instead of going unnoticed.
   it('the parameterised list above names every method T7 must cover', async () => {
@@ -959,9 +970,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
         .filter(([, value]) => typeof value === 'function')
         .map(([key]) => key);
     });
-    // `writeDirect` is the very function `write` is, held under the name the
-    // library's own bulk calls: the `write` entry covers it.
-    const excluded = ['rollback', 'bulkWrite', 'output', 'writeDirect'];
+    const excluded = ['rollback', 'bulkWrite', 'output'];
     expect(methodNames.sort()).toEqual(
       [...entries.map(([entryName]) => entryName), ...excluded].sort(),
     );
@@ -1438,12 +1447,12 @@ describe('tx.savepoint() — failures and endings (spec 2026-10-04, E12, D5, U4,
   });
 });
 
-// Spec: the client's read()/write()/first() are async, so a refused argument
+// Spec: the client's run()/all()/first() are async, so a refused argument
 // arrives as the rejection of the returned promise; the transaction's must do
-// the same. Falsifiable: drop `async` from tx.read/write/first in
+// the same. Falsifiable: drop `async` from tx.run/all/first in
 // src/transaction.ts and the call throws instead of returning.
 describe('transaction — a refused argument rejects, never throws', () => {
-  for (const method of ['read', 'write', 'first', 'run', 'all'] as const) {
+  for (const method of ['first', 'run', 'all'] as const) {
     it(`tx.${method}() rejects a query that is neither a string nor sql`, async () => {
       const { transaction } = harness(fakeWorker([]));
       let returned: Promise<unknown> | undefined;
@@ -1463,8 +1472,8 @@ describe('transaction — a refused argument rejects, never throws', () => {
 describe('transaction — only first() refuses a write, as the client does', () => {
   const WRITE = 'INSERT INTO t VALUES (1) RETURNING a';
 
-  // Falsifiable: put an assertReadable() call back in tx.all() in
-  // src/transaction.ts; the write is then refused before it is sent.
+  // Falsifiable: make tx.all() in src/transaction.ts refuse a write; it is
+  // then refused before it is sent.
   it('tx.all() takes a write, and sends it', async () => {
     const worker = fakeWorker([]);
     const { transaction } = harness(worker);

@@ -15,7 +15,7 @@ import { createTestClient, interceptWorkers, sleep } from '../helpers';
  * `setTimeout(0)` in the second test is not a stand-in for slow work — one turn
  * of the event loop was the whole precondition.
  *
- * `read()`, `first()` and `write()` never lost a row and still must not: they
+ * `run()`, `all()` and `first()` never lost a row and still must not: they
  * accumulate inside the library without handing control back between chunks,
  * which is exactly why the defect stayed invisible for four releases.
  */

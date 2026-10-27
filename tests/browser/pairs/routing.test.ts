@@ -4,8 +4,8 @@ import { createTestClient } from '../helpers';
 
 describe('routing — strictness', () => {
   // Spec 2026-10-26: all() takes any single statement; the refusal of a write
-  // is first()'s alone. Falsifiable: put the assertReadable call back in
-  // runStatement() in src/client.ts.
+  // is first()'s alone. Falsifiable: make runStatement() in src/client.ts
+  // refuse a write with NOT_A_READ_QUERY.
   it('all() takes a write statement', async () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.run('CREATE TABLE t (a)');
@@ -17,7 +17,7 @@ describe('routing — strictness', () => {
   });
 
   // Spec 2026-10-26: chunk() and stream() take any single statement.
-  // Falsifiable: put the assertReadable call back in chunk() in src/client.ts.
+  // Falsifiable: make chunk() in src/client.ts refuse a write.
   it('chunk() takes a write statement', async () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.run('CREATE TABLE t (a)');
@@ -30,7 +30,7 @@ describe('routing — strictness', () => {
     expect(rows.length).toBe(0);
   });
 
-  // Falsifiable: put the assertReadable call back in stream() in src/client.ts.
+  // Falsifiable: make stream() in src/client.ts refuse a write.
   it('stream() takes a write statement', async () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.run('CREATE TABLE t (a)');
@@ -43,8 +43,8 @@ describe('routing — strictness', () => {
     expect(rows.length).toBe(0);
   });
 
-  // Falsifiable: delete the assertReadable call in first() in src/client.ts
-  // and this case silently runs the DELETE.
+  // Falsifiable: drop the `refuseWrite` option first() in src/client.ts passes
+  // to firstWorker() and this case silently runs the DELETE.
   it('first() rejects a write statement', async () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.run('CREATE TABLE t (a)');
@@ -75,9 +75,8 @@ describe('routing — strictness', () => {
     expect(rows.length).toBe(0);
   });
 
-  // run() routes a read to the read path, so the old write()-on-a-read case
-  // (a read sent to the writer) is gone with write(). Falsifiable: make
-  // runStatement() in src/client.ts drop the rows of a read.
+  // run() routes a read to the read path and returns its rows. Falsifiable:
+  // make runStatement() in src/client.ts drop the rows of a read.
   it('run() takes a read statement and returns its rows', async () => {
     const db = await createTestClient();
     const { rows, affected } = await db.run<{ n: number }>('SELECT 1 AS n');
@@ -121,7 +120,7 @@ describe('routing — strictness', () => {
     await db.close();
   });
 
-  // Falsifiable: drop table_info from INTROSPECTION_PRAGMAS in src/utils.ts.
+  // Falsifiable: drop table_info from INTROSPECTION_PRAGMAS in src/classify.ts.
   it('accepts an introspection pragma with its argument, in a read-only transaction too', async () => {
     const db = await createTestClient();
     await db.run('CREATE TABLE "we""ird" (a INTEGER, b TEXT)');
@@ -141,7 +140,7 @@ describe('routing — strictness', () => {
 });
 
 describe('chunk() and stream() — arguments are validated at the call', () => {
-  // Falsifiable: move queryArgs, assertReadable or prepareParams back inside
+  // Falsifiable: move queryArgs, assertStatementAllowed or prepareParams back inside
   // the generator in src/client.ts and the call returns instead of throwing.
   // The all() on a one-worker pool shows the refused call left the pool usable.
 

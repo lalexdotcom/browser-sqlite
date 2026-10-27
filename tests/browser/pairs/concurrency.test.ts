@@ -63,8 +63,8 @@ describe('concurrent reads (INT-07)', () => {
 /**
  * INT-08: Writes are serialized through a single writer worker
  *
- * Mechanism: currentWriterIndex designates the writer on the first write().
- * Any subsequent write() while the writer is busy is placed in writerRequestQueue.
+ * Mechanism: currentWriterIndex designates the writer on the first write.
+ * Any subsequent write while the writer is busy is placed in writerRequestQueue.
  * Concurrent writes therefore execute in queue order, not in parallel.
  */
 describe('serialized writes (INT-08)', () => {

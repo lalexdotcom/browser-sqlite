@@ -103,11 +103,6 @@ export type SQLiteChunkStream<T> = AsyncGenerator<T[], void, unknown> & {
   readonly affected: Promise<number>;
 };
 
-export type SQLiteWriteResult<T extends Record<string, unknown>> = {
-  result: T[];
-  affected: number;
-};
-
 /**
  * Options for `transaction()`.
  *
@@ -227,8 +222,8 @@ export type SQLiteOutputWriter<SCHEMA extends Schema> = {
  * `chunk`. A method added to one is now added to both by construction.
  *
  * @remarks
- * **The row type parameter is a claim, not a check.** `read<T>`, `first<T>`,
- * `chunk<T>` and `stream<T>` cast SQLite's output to `T` and validate nothing:
+ * **The row type parameter is a claim, not a check.** `run<T>`, `all<T>`,
+ * `first<T>`, `chunk<T>` and `stream<T>` cast SQLite's output to `T` and validate nothing:
  * a column that is missing, renamed or of another type reaches you typed as if
  * it were not. SQLite is dynamically typed and a query's shape is only known at
  * runtime, so the alternative would be a schema the caller declares twice.
@@ -236,59 +231,6 @@ export type SQLiteOutputWriter<SCHEMA extends Schema> = {
  * parser.
  */
 export type SQLiteQueryAPI = {
-  /**
-   * Executes a SELECT query and returns all matching rows as an array.
-   *
-   * Read queries are dispatched to any available worker in the pool,
-   * enabling concurrent execution across multiple readers.
-   *
-   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
-   *
-   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`chunkSize`, `signal`).
-   * @returns Promise resolving to an array of typed rows (`T[]`). Returns `[]` for empty results.
-   */
-  read: {
-    <T extends Record<string, unknown>>(
-      query: SQLQuery,
-      options?: SQLiteChunkOptions,
-    ): Promise<T[]>;
-    <T extends Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
-      options?: SQLiteChunkOptions,
-    ): Promise<T[]>;
-  };
-
-  /**
-   * Executes a DML or DDL statement (INSERT, UPDATE, DELETE, CREATE, DROP, etc.)
-   * and returns both any result rows and the number of affected rows.
-   *
-   * Write queries are serialized through a single dedicated writer worker.
-   * Concurrent writes queue behind each other — only one write executes at a time.
-   *
-   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
-   *
-   * @param sql - SQL statement. Any statement not classified as a read by `isReadQuery`.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`signal`).
-   * @returns Promise resolving to `{ result: T[], affected: number }` where
-   *   `affected` is the SQLite `changes()` count for the statement, 0 for one
-   *   that changes nothing.
-   */
-  write: {
-    <T extends Record<string, unknown>>(
-      query: SQLQuery,
-      options?: SQLiteQueryOptions,
-    ): Promise<SQLiteWriteResult<T>>;
-    <T extends Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
-      options?: SQLiteQueryOptions,
-    ): Promise<SQLiteWriteResult<T>>;
-  };
-
   /**
    * Runs any single statement and returns its rows and the number of rows it
    * changed.
@@ -436,6 +378,9 @@ export type SQLiteQueryAPI = {
    * the break and the stop signal, so early termination is best-effort on small
    * result sets. A hard bound will arrive with back-pressure in a future wave.
    *
+   * It is the only method that refuses a write, with `NOT_A_READ_QUERY`: SQLite
+   * says the statement writes, and nothing has run.
+   *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *
    * @param sql - SQL query string.
@@ -522,7 +467,7 @@ export type SQLiteQueryAPI = {
 export type SQLiteDB = SQLiteQueryAPI & {
   /**
    * Executes a callback within a SQLite transaction, providing a scoped
-   * `SQLiteTransactionDB` with `run`, `all`, `read`, `write`, `chunk`,
+   * `SQLiteTransactionDB` with `run`, `all`, `chunk`,
    * `stream`, `first`, `bulkWrite`, `output`, `commit`, and `rollback` methods.
    *
    * The worker is held exclusively for the transaction's duration.

@@ -92,7 +92,7 @@ describe('a pragma that writes the database', {
  * write after another client's schema change hung there (2026-10-01).
  */
 describe('a pragma the VFS refuses', () => {
-  // Falsifiable: drop the check in write(), or in the transaction's checksql.
+  // Falsifiable: drop the check in runStatement(), or in the transaction's checksql.
   it('is refused in a statement that sets it, in or out of a transaction', {
     tags: ['vfs:OPFSCoopSyncVFS'],
   }, async () => {

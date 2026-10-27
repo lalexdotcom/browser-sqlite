@@ -102,6 +102,42 @@ const cases: Array<[string, PrepareFacts, StatementKind]> = [
     'read',
   ],
   [
+    'PRAGMA incremental_vacuum (bare)',
+    {
+      pragma: { name: 'incremental_vacuum', value: null },
+      explain: false,
+      readonly: false,
+    },
+    'write',
+  ],
+  [
+    'PRAGMA wal_checkpoint(PASSIVE)',
+    {
+      pragma: { name: 'wal_checkpoint', value: 'PASSIVE' },
+      explain: false,
+      readonly: false,
+    },
+    'write',
+  ],
+  [
+    'PRAGMA optimize(0x10002)',
+    {
+      pragma: { name: 'optimize', value: '0x10002' },
+      explain: false,
+      readonly: false,
+    },
+    'write',
+  ],
+  [
+    'PRAGMA main.page_count (schema-qualified, bare)',
+    {
+      pragma: { name: 'page_count', value: null },
+      explain: false,
+      readonly: true,
+    },
+    'read',
+  ],
+  [
     'ATTACH (readonly 1)',
     { attach: true, explain: false, readonly: true },
     'write',
@@ -111,5 +147,30 @@ const cases: Array<[string, PrepareFacts, StatementKind]> = [
 describe('classifyStatement', () => {
   it.each(cases)('%s', (_, facts, kind) => {
     expect(classifyStatement(facts)).toBe(kind);
+  });
+});
+
+// Each introspection pragma takes a name or number to inspect, not a value to
+// set: SQLite reports the argument as `value`, and it still reads.
+describe.each([
+  'table_info',
+  'table_xinfo',
+  'table_list',
+  'index_info',
+  'index_xinfo',
+  'index_list',
+  'foreign_key_list',
+  'foreign_key_check',
+  'integrity_check',
+  'quick_check',
+])('PRAGMA %s(arg)', (name) => {
+  it('reads', () => {
+    expect(
+      classifyStatement({
+        pragma: { name, value: 'arg' },
+        explain: false,
+        readonly: true,
+      }),
+    ).toBe('read');
   });
 });
