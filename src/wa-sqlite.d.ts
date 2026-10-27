@@ -51,6 +51,13 @@ type WASQLiteModule = {
    * stale from an earlier write (spec 2026-10-01, §6.1).
    */
   _sqlite3_total_changes: (db: number) => number;
+  /**
+   * `sqlite3_stmt_readonly` and `sqlite3_stmt_isexplain`. Exported by all three
+   * builds and unwrapped by the JS façade, like `_sqlite3_stmt_status`. Both
+   * answer from the prepared statement and run nothing.
+   */
+  _sqlite3_stmt_readonly: (stmt: number) => number;
+  _sqlite3_stmt_isexplain: (stmt: number) => number;
   /** `sqlite3_free`: releases what `bindBlock` (`src/worker/binary.ts`) allocated. */
   _sqlite3_free: (ptr: number) => void;
   /** `sqlite3_malloc`: the allocation `bindBlock` copies a params block into. */

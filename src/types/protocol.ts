@@ -34,6 +34,9 @@ export type SQLWorkerResultData<T = unknown> = {
  */
 export type SavepointOp = { conclude?: 'release' | 'undo'; open?: true };
 
+/** The code a worker refuses a write with: see `SQLOptions.refuseWrite`. */
+export type RefuseWrite = 'NOT_A_READ_QUERY' | 'READ_ONLY_TRANSACTION';
+
 type SQLOptions = {
   chunkSize?: number;
   /** Chunks the worker may send before waiting for a credit. Spec §3.2. */
@@ -48,6 +51,11 @@ type SQLOptions = {
   control?: true;
   /** Prepared afresh and never cached (spec 2026-10-04, D9). */
   uncached?: true;
+  /**
+   * A statement the worker classifies as a write is refused before its first
+   * step, with this as the error's `errorCode`.
+   */
+  refuseWrite?: RefuseWrite;
 };
 
 /**

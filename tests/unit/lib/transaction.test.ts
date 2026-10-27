@@ -22,7 +22,12 @@ const fakeWorker = (
   leaveOn: string[] = [],
 ) => {
   const executed: string[] = [];
-  const flags: { sql: string; control: boolean; uncached: boolean }[] = [];
+  const flags: {
+    sql: string;
+    control: boolean;
+    uncached: boolean;
+    refuseWrite: string | undefined;
+  }[] = [];
   const worker = {
     index: 3,
     executed,
@@ -37,6 +42,7 @@ const fakeWorker = (
           | undefined;
         control?: boolean;
         uncached?: boolean;
+        refuseWrite?: string;
       },
     ) {
       // As the real worker (spec 2026-09-11, §4): the conclusion, then the
@@ -51,6 +57,7 @@ const fakeWorker = (
         sql,
         control: options?.control === true,
         uncached: options?.uncached === true,
+        refuseWrite: options?.refuseWrite,
       });
       const fails = failOn.some((needle) => sql.startsWith(needle));
       try {
@@ -1376,19 +1383,49 @@ describe('transaction — a refused argument rejects, never throws', () => {
 describe('transaction — read methods refuse a write, as the client does', () => {
   const WRITE = 'INSERT INTO t VALUES (1) RETURNING a';
 
-  for (const method of ['read', 'first'] as const) {
-    it(`tx.${method}() rejects a write with NOT_A_READ_QUERY, and sends nothing`, async () => {
-      const worker = fakeWorker([]);
-      const { transaction } = harness(worker);
-      let outcome: unknown;
-      await transaction(async (tx) => {
-        const call = tx[method] as (sql: string) => Promise<unknown>;
-        outcome = await call(WRITE).catch((e: unknown) => e);
-      });
-      expect(outcome).toMatchObject({ code: 'NOT_A_READ_QUERY' });
-      expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+  it('tx.read() rejects a write with NOT_A_READ_QUERY, and sends nothing', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    let outcome: unknown;
+    await transaction(async (tx) => {
+      outcome = await tx.read(WRITE).catch((e: unknown) => e);
     });
-  }
+    expect(outcome).toMatchObject({ code: 'NOT_A_READ_QUERY' });
+    expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+  });
+
+  // The worker decides, from what SQLite reports: tx.first() sends the
+  // statement with the code to refuse it by.
+  // Falsifiable: drop refuseWrite from tx.first() in src/transaction.ts.
+  it('tx.first() leaves the refusal to the worker, with NOT_A_READ_QUERY', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(async (tx) => {
+      await tx.first(WRITE);
+    });
+    expect(worker.flags.find((f) => f.sql === WRITE)).toMatchObject({
+      refuseWrite: 'NOT_A_READ_QUERY',
+    });
+  });
+
+  // Falsifiable: drop the readOnly term from via() in src/transaction.ts.
+  it('a read-only transaction sends each of its statements with READ_ONLY_TRANSACTION, not its own control', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker);
+    await transaction(
+      async (tx) => {
+        await tx.read('SELECT 1');
+        await tx.write(WRITE).catch(() => {});
+      },
+      { readOnly: true },
+    );
+    expect(worker.flags.map((f) => [f.sql, f.refuseWrite])).toEqual([
+      ['BEGIN', undefined],
+      ['SELECT 1', 'READ_ONLY_TRANSACTION'],
+      [WRITE, 'READ_ONLY_TRANSACTION'],
+      ['COMMIT', undefined],
+    ]);
+  });
 
   for (const method of ['chunk', 'stream'] as const) {
     it(`tx.${method}() throws a write with NOT_A_READ_QUERY from the call, and sends nothing`, async () => {

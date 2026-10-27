@@ -10,6 +10,16 @@ const cases: Array<[string, PrepareFacts, StatementKind]> = [
   ['SELECT', { explain: false, readonly: true }, 'read'],
   ['INSERT', { explain: false, readonly: false }, 'write'],
   ['EXPLAIN INSERT', { explain: true, readonly: false }, 'read'],
+  ['EXPLAIN SELECT', { explain: true, readonly: true }, 'read'],
+  [
+    'EXPLAIN PRAGMA optimize (never runs the program)',
+    {
+      pragma: { name: 'optimize', value: null },
+      explain: true,
+      readonly: true,
+    },
+    'read',
+  ],
   [
     'PRAGMA journal_mode (bare, readonly 0)',
     {

@@ -56,10 +56,12 @@ export const INTROSPECTION_PRAGMAS = new Set([
 ]);
 
 /**
- * Read or write, from the facts SQLite reports at prepare. A pragma is decided
- * by its name and value alone; `readonly` does not apply to it.
+ * Read or write, from the facts SQLite reports at prepare. An EXPLAIN never
+ * runs its program, so it reads whatever it explains. A pragma is decided by
+ * its name and value alone; `readonly` does not apply to it.
  */
 export const classifyStatement = (facts: PrepareFacts): StatementKind => {
+  if (facts.explain) return 'read';
   if (facts.pragma) {
     const name = facts.pragma.name.toLowerCase();
     if (facts.pragma.value !== null && !INTROSPECTION_PRAGMAS.has(name))
@@ -67,6 +69,5 @@ export const classifyStatement = (facts: PrepareFacts): StatementKind => {
     return BARE_WRITING_PRAGMAS.has(name) ? 'write' : 'read';
   }
   if (facts.attach) return 'write';
-  if (facts.explain) return 'read';
   return facts.readonly ? 'read' : 'write';
 };

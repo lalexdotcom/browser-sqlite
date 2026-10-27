@@ -217,3 +217,104 @@ describe('chunk() and stream() — arguments are validated at the call', () => {
     expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 });
+
+describe('first() and a read-only transaction refuse writes in the worker', () => {
+  const seeded = async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    await db.write('CREATE TABLE t (a INTEGER PRIMARY KEY, b)');
+    await db.write('INSERT INTO t VALUES (1, 1)');
+    const count = async () =>
+      (await db.read<{ n: number }>('SELECT count(*) AS n FROM t'))[0]?.n;
+    return { db, count };
+  };
+
+  // Falsifiable: drop the pragma clause of classifyStatement in src/classify.ts.
+  it('first() rejects PRAGMA optimize', async () => {
+    const { db } = await seeded();
+    await expect(db.first('PRAGMA optimize')).rejects.toMatchObject({
+      code: 'NOT_A_READ_QUERY',
+    });
+  });
+
+  // Falsifiable: make the worker's kindOf answer 'write' for every statement.
+  it("first() accepts a SELECT whose text holds 'INSERT'", async () => {
+    const { db } = await seeded();
+    expect(await db.first("SELECT 'INSERT'")).toEqual({ "'INSERT'": 'INSERT' });
+  });
+
+  it('first() accepts an EXPLAIN of a write and runs nothing', async () => {
+    const { db, count } = await seeded();
+    const row = await db.first('EXPLAIN INSERT INTO t VALUES (9, 9)');
+    expect(row).toBeDefined();
+    expect(await count()).toBe(1);
+  });
+
+  it('first() accepts a bare lookup pragma', async () => {
+    const { db } = await seeded();
+    expect(await db.first('PRAGMA journal_mode')).toHaveProperty(
+      'journal_mode',
+    );
+  });
+
+  it('first() accepts an introspection pragma with its argument', async () => {
+    const { db } = await seeded();
+    expect(await db.first('PRAGMA table_info(t)')).toMatchObject({ name: 'a' });
+  });
+
+  it('first() rejects a pragma that assigns', async () => {
+    const { db } = await seeded();
+    await expect(db.first('PRAGMA cache_size = 5')).rejects.toMatchObject({
+      code: 'NOT_A_READ_QUERY',
+    });
+  });
+
+  // Falsifiable: drop the `(` from the pattern in kindOf in src/worker/worker.ts.
+  it("first() rejects a pragma that assigns '', which the authorizer reports as no value", async () => {
+    const { db } = await seeded();
+    await expect(db.first("PRAGMA user_version('')")).rejects.toMatchObject({
+      code: 'NOT_A_READ_QUERY',
+    });
+  });
+
+  // Falsifiable: move the refusal after the first step in src/worker/worker.ts.
+  it('first() refuses an INSERT … RETURNING before it steps, and again on a cache hit', async () => {
+    const { db, count } = await seeded();
+    for (const attempt of [1, 2]) {
+      await expect(
+        db.first('INSERT INTO t VALUES (2, 2) RETURNING a'),
+      ).rejects.toMatchObject({
+        code: 'NOT_A_READ_QUERY',
+        message: 'first() only accepts reads; this statement writes.',
+      });
+      expect(await count(), `attempt ${attempt}`).toBe(1);
+    }
+  });
+
+  // Falsifiable: stop sending refuseWrite from a read-only transaction's via()
+  // in src/transaction.ts.
+  it('a read-only transaction refuses a write, and runs a read whose text holds DELETE', async () => {
+    const { db, count } = await seeded();
+    await expect(
+      db.transaction((tx) => tx.write('INSERT INTO t VALUES (3, 3)'), {
+        readOnly: true,
+      }),
+    ).rejects.toMatchObject({
+      code: 'READ_ONLY_TRANSACTION',
+      message: 'Cannot write in a read-only transaction.',
+    });
+    expect(await count()).toBe(1);
+    // read() still takes the page-side check until the routing lands, so the
+    // reads that the text would condemn go through first() and write().
+    expect(
+      await db.transaction((tx) => tx.first("SELECT 'DELETE' AS word"), {
+        readOnly: true,
+      }),
+    ).toEqual({ word: 'DELETE' });
+    expect(
+      await db.transaction(
+        (tx) => tx.write("SELECT 'DELETE' AS word").then((r) => r.result),
+        { readOnly: true },
+      ),
+    ).toEqual([{ word: 'DELETE' }]);
+  });
+});

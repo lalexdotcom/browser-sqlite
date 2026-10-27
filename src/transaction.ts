@@ -216,15 +216,14 @@ export const createTransaction =
       );
       const worker = lease.worker;
 
-      /** `method` names a read method: it refuses a write, as the client's do. */
+      /**
+       * `method` names a read method: it refuses a write, as the client's do.
+       * A read-only transaction's writes are refused by the worker, which
+       * `via` tells.
+       */
       const checksql = (sql: string, method?: string): string => {
         deps.checkStatement(sql);
         if (method) assertReadable(sql, method);
-        if (readOnly && isWriteQuery(sql))
-          throw new SQLiteError(
-            'READ_ONLY_TRANSACTION',
-            'Cannot write in a read-only transaction.',
-          );
         return sql;
       };
 
@@ -349,6 +348,10 @@ export const createTransaction =
           options?: PoolWorkerQueryOptions,
         ) =>
           worker.query(sql, params, {
+            // The library's own control statements are not the caller's.
+            ...(readOnly && !options?.control
+              ? { refuseWrite: 'READ_ONLY_TRANSACTION' as const }
+              : {}),
             ...options,
             savepoint: () => {
               if (mark) mark.posted = true;
@@ -1079,11 +1082,14 @@ export const createTransaction =
             params,
             options: given,
           } = queryArgs(input, second, third);
-          const query = checksql(sql, 'first');
+          const query = checksql(sql);
           const bound = prepareParams(params);
           const { settled } = withSignal(given, 'first', query);
           return settled((target, options) =>
-            firstWorker<T>(target, query, bound, options),
+            firstWorker<T>(target, query, bound, {
+              ...options,
+              refuseWrite: 'NOT_A_READ_QUERY',
+            }),
           );
         },
 

@@ -8,6 +8,7 @@ import {
 import type { SQLiteChunkOptions, SQLiteQueryOptions } from './api';
 import type { QueryParams } from './binary';
 import type { PoolWorker } from './pool';
+import type { RefuseWrite } from './types/protocol';
 
 /**
  * Wires an AbortSignal into a promise that rejects the instant the signal
@@ -75,6 +76,8 @@ export const raceAbort = <T>(
  */
 export type InternalChunkOptions = SQLiteChunkOptions & {
   credits?: number;
+  /** Forwarded to the worker, which refuses a write with this code. */
+  refuseWrite?: RefuseWrite | undefined;
   /** The owning layer's teardown, run if the generator is abandoned. */
   onAbandon?: (() => void) | undefined;
   /**
@@ -115,6 +118,7 @@ export const chunk = <
     signal,
     chunkSize,
     credits,
+    refuseWrite,
     onAbandon,
     onTransport,
     registry = abandonRegistry,
@@ -122,6 +126,7 @@ export const chunk = <
   const iterator = worker.query<T>(sql, params, {
     chunkSize,
     credits,
+    ...(refuseWrite ? { refuseWrite } : {}),
   });
   onTransport?.(iterator);
   const state: AbandonState = { done: false };
@@ -244,7 +249,7 @@ export const firstWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: QueryParams,
-  options?: SQLiteQueryOptions,
+  options?: SQLiteQueryOptions & { refuseWrite?: RefuseWrite | undefined },
 ): Promise<T | undefined> => {
   for await (const rows of chunk<T>(worker, sql, params, {
     ...options,

@@ -14,6 +14,7 @@ import type { Logger } from './logger';
 import { SQLiteError, type SQLiteErrorCode } from './types/errors';
 import {
   KILLED_SLOT,
+  type RefuseWrite,
   type RowsBlock,
   type SavepointOp,
   type WasmLocation,
@@ -50,6 +51,8 @@ export type PoolWorkerQueryOptions = {
   control?: boolean;
   /** Forwarded as the protocol's `uncached`: see `SQLOptions` in `types/protocol.ts`. */
   uncached?: boolean;
+  /** Forwarded as the protocol's `refuseWrite`: see `SQLOptions` in `types/protocol.ts`. */
+  refuseWrite?: RefuseWrite | undefined;
 };
 
 /**
@@ -748,6 +751,7 @@ export const createPoolWorker = (deps: {
         savepoint,
         control = false,
         uncached = false,
+        refuseWrite,
       } = options ?? {};
       suppressServed = noServed;
 
@@ -800,6 +804,7 @@ export const createPoolWorker = (deps: {
             ...(op ? { savepoint: op } : {}),
             ...(control ? { control: true as const } : {}),
             ...(uncached ? { uncached: true as const } : {}),
+            ...(refuseWrite ? { refuseWrite } : {}),
           },
         },
         block ? block.chunks : [],

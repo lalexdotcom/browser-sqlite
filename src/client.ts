@@ -1424,12 +1424,17 @@ export const createSQLiteClient = (
     third?: SQLiteQueryOptions,
   ) => {
     const { sql, params, options } = queryArgs(input, second, third);
-    assertReadable(sql, 'first');
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'first');
     try {
+      // The worker refuses a write before it steps: SQLite, not the text,
+      // says whether this statement writes.
       return await readWithRetry(signal, (worker) =>
-        firstWorker<T>(worker, sql, bound, { ...options, signal }),
+        firstWorker<T>(worker, sql, bound, {
+          ...options,
+          signal,
+          refuseWrite: 'NOT_A_READ_QUERY',
+        }),
       );
     } finally {
       release();

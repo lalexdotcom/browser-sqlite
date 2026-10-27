@@ -14,17 +14,25 @@
  */
 import * as SQLite from 'wa-sqlite/src/sqlite-api.js';
 import {
+  SQLITE_ATTACH,
   SQLITE_AUTH,
   SQLITE_CANTOPEN,
   SQLITE_DENY,
+  SQLITE_DETACH,
   SQLITE_INTERRUPT,
   SQLITE_OK,
   SQLITE_OPEN_READWRITE,
+  SQLITE_PRAGMA,
   SQLITE_PREPARE_PERSISTENT,
   SQLITE_ROW,
   SQLITE_SAVEPOINT,
   SQLITE_TRANSACTION,
 } from 'wa-sqlite/src/sqlite-constants.js';
+import {
+  classifyStatement,
+  type PrepareFacts,
+  type StatementKind,
+} from '../classify';
 import type { SQLiteBuild } from '../const/builds';
 import type { PlatformFeature } from '../const/platform';
 import { folderOf, type SQLiteVFS, VFS_CAPABILITIES } from '../const/vfs';
@@ -40,6 +48,7 @@ import {
   type ClientMessageData,
   KILLED_SLOT,
   type ParamsBlock,
+  type RefuseWrite,
   type WasmLocation,
   type WorkerMessageData,
 } from '../types/protocol';
@@ -55,7 +64,30 @@ type SQLOptions = {
   chunkSize?: number;
   signal?: AbortSignal;
   uncached?: boolean;
+  refuseWrite?: RefuseWrite;
 };
+
+/**
+ * What the authorizer sees while a statement is prepared: the part of
+ * `PrepareFacts` that only the authorizer can tell.
+ */
+type AuthorizerFacts = Pick<PrepareFacts, 'pragma' | 'attach'>;
+
+/**
+ * A write refused before its first step. Not a failure of the statement: it
+ * never ran, so it stays cached.
+ */
+class WriteRefused extends Error {
+  errorCode: RefuseWrite;
+  constructor(errorCode: RefuseWrite) {
+    super(
+      errorCode === 'NOT_A_READ_QUERY'
+        ? 'first() only accepts reads; this statement writes.'
+        : 'Cannot write in a read-only transaction.',
+    );
+    this.errorCode = errorCode;
+  }
+}
 
 /** The message of a refused transaction-control statement (spec 2026-10-04, § 4). */
 const controlRefusedMessage = (
@@ -517,11 +549,36 @@ const open = (file: string, options: OpenOptions) => {
    * refused at its own prepare, or by the `controlSql` check, before any step.
    */
   let stepping = false;
+  /**
+   * What the authorizer saw while the statement just prepared was. Taken, and
+   * so emptied, as each statement arrives: the next prepare starts clean.
+   */
+  let seen: AuthorizerFacts = {};
+  const takeSeen = (): AuthorizerFacts => {
+    const facts = seen;
+    seen = {};
+    return facts;
+  };
+  /**
+   * The same facts, kept per statement handle for as long as the statement is
+   * cached: the authorizer does not run on a cache hit, as for `controlSql`.
+   * An entry goes with its handle (eviction, failure, `markUncacheable`,
+   * `drain`), so the map is bounded by the cache.
+   */
+  const factsOf = new Map<number, AuthorizerFacts>();
   const authorize = (
     _: unknown,
     action: number,
     operation: string | null,
+    argument: string | null,
   ): number => {
+    // What SQLite re-prepares during a step is its own, not a new statement.
+    if (!stepping) {
+      if (action === SQLITE_PRAGMA)
+        seen.pragma = { name: operation ?? '', value: argument ?? null };
+      else if (action === SQLITE_ATTACH || action === SQLITE_DETACH)
+        seen.attach = true;
+    }
     if (action !== SQLITE_TRANSACTION && action !== SQLITE_SAVEPOINT)
       return SQLITE_OK;
     const keyword =
@@ -673,7 +730,34 @@ const open = (file: string, options: OpenOptions) => {
     let cursor = 0;
 
     const { sqlite, db, module } = await openedDB;
-    const { chunkSize = 1 } = options ?? {};
+    const { chunkSize = 1, refuseWrite } = options ?? {};
+    seen = {};
+
+    /**
+     * Read or write, from what SQLite reports about the prepared statement
+     * and what the authorizer saw preparing it. Synchronous, runs nothing.
+     */
+    const kindOf = (stmt: number): StatementKind => {
+      const seenFacts = factsOf.get(stmt);
+      let pragma = seenFacts?.pragma;
+      // wa-sqlite hands the authorizer "" for a null argument, so a bare
+      // pragma and `PRAGMA x('')` look alike: only an `=` or `(` in the text,
+      // which errs toward a value, tells them apart.
+      if (pragma?.value === '' && !/[=(]/.test(sqlite.sql(stmt)))
+        pragma = { name: pragma.name, value: null };
+      return classifyStatement({
+        ...seenFacts,
+        ...(pragma ? { pragma } : {}),
+        explain: module._sqlite3_stmt_isexplain(stmt) !== 0,
+        readonly: module._sqlite3_stmt_readonly(stmt) !== 0,
+      });
+    };
+
+    /** Finalises a handle and forgets what was kept for it. */
+    const finalizeHandle = async (handle: number) => {
+      factsOf.delete(handle);
+      await sqlite.finalize(handle);
+    };
     // sqlite3_changes() keeps the last write's count across a statement that
     // changes nothing; the total does not move then.
     const totalBefore = module._sqlite3_total_changes(db);
@@ -703,6 +787,9 @@ const open = (file: string, options: OpenOptions) => {
      * reads from the first value, as a single statement does.
      */
     const run = async function* (stmt: number, multi = false) {
+      // Before the bindings and the first step, so nothing of it has run.
+      if (refuseWrite && kindOf(stmt) === 'write')
+        throw new WriteRefused(refuseWrite);
       try {
         if (params) {
           let from = 0;
@@ -776,7 +863,7 @@ const open = (file: string, options: OpenOptions) => {
     const settle = async (stmt: number, failed: boolean) => {
       if (failed) {
         cache.delete(sql);
-        await sqlite.finalize(stmt);
+        await finalizeHandle(stmt);
         return;
       }
       try {
@@ -790,13 +877,13 @@ const open = (file: string, options: OpenOptions) => {
         // genuine failure: finalize and evict.
         if ((e as { code?: number })?.code !== SQLITE_INTERRUPT) {
           cache.delete(sql);
-          await sqlite.finalize(stmt);
+          await finalizeHandle(stmt);
           return;
         }
         sqlite.clear_bindings(stmt);
       }
       for (const handle of cache.set(sql, stmt, stmtWeight(module, stmt))) {
-        await sqlite.finalize(handle);
+        await finalizeHandle(handle);
       }
     };
 
@@ -845,7 +932,7 @@ const open = (file: string, options: OpenOptions) => {
         try {
           yield* run(cached);
         } catch (e) {
-          failed = true;
+          failed = !(e instanceof WriteRefused);
           throw e;
         } finally {
           await settle(cached, failed);
@@ -857,7 +944,13 @@ const open = (file: string, options: OpenOptions) => {
           textOf ? textOf() : sql,
         )) {
           prepared++;
-          yield* run(stmt, true);
+          factsOf.set(stmt, takeSeen());
+          try {
+            yield* run(stmt, true);
+          } finally {
+            // The generator finalises the statement itself.
+            factsOf.delete(stmt);
+          }
         }
       } else {
         let keep: number | undefined;
@@ -874,6 +967,7 @@ const open = (file: string, options: OpenOptions) => {
             },
           )) {
             prepared++;
+            factsOf.set(stmt, takeSeen());
             single ??= isSingleStatement(
               textOf ? textOf() : sql,
               sqlite.sql(stmt),
@@ -886,23 +980,23 @@ const open = (file: string, options: OpenOptions) => {
             yield* run(stmt, !single);
 
             if (!single) {
-              await sqlite.finalize(stmt);
+              await finalizeHandle(stmt);
               live = undefined;
             }
           }
         } catch (e) {
-          failed = true;
+          failed = !(e instanceof WriteRefused);
           throw stamped(e);
         } finally {
           if (keep !== undefined) {
             await settle(keep, failed);
           } else if (live !== undefined) {
             // An early exit from a multi-statement string.
-            await sqlite.finalize(live);
+            await finalizeHandle(live);
           }
           if (single === false) {
             for (const handle of cache.markUncacheable(sql)) {
-              await sqlite.finalize(handle);
+              await finalizeHandle(handle);
             }
           }
         }
@@ -1106,6 +1200,7 @@ const open = (file: string, options: OpenOptions) => {
           for (const handle of cache.drain()) {
             await sqlite.finalize(handle);
           }
+          factsOf.clear();
           await sqlite.close(db);
         } catch {
           // A database that never opened has nothing to close; the client is
