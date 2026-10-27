@@ -1,8 +1,10 @@
 import type {
   SQLiteChunkOptions,
+  SQLiteChunkStream,
   SQLiteDB,
   SQLiteQueryOptions,
   SQLiteRunResult,
+  SQLiteStream,
 } from './api';
 import { prepareParams, type QueryParams } from './binary';
 import { createBulk } from './bulk';
@@ -18,7 +20,7 @@ import type { PlatformFeature } from './const/platform';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug, type RequestDebugHandle } from './debug';
 import { advanceSeen, BARRIER_SQL, barrierSqlFor, epochsFor } from './epochs';
-import { flatten } from './flatten';
+import { carryAffected, flatten } from './flatten';
 import {
   type ClientInspection,
   type DatabaseInspection,
@@ -35,6 +37,8 @@ import {
 import { createLogger } from './logger';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
+  type AffectedSlot,
+  affectedSlot,
   asWriteResult,
   chunk as chunkWorker,
   firstWorker,
@@ -1082,19 +1086,25 @@ export const createSQLiteClient = (
       throw error;
     }
 
-    if (!releaseWrite) return lease;
+    const unlock = releaseWrite;
+    if (!unlock) return { ...lease, releaseWriteLock: () => {} };
 
     // The write lock outlives the worker: it is released once the lease is
     // released AND the epoch this write published has been taken, so no other
-    // tab can acquire the lock, run its query(), and miss our marker.
+    // tab can acquire the lock, run its query(), and miss our marker. A
+    // streamed write releases it earlier, once complete (`releaseWriteLock`).
     let handedBack = false;
+    const releaseWriteLock = () => {
+      if (handedBack) return;
+      handedBack = true;
+      void publishing.then(unlock, unlock);
+    };
     return {
       ...lease,
+      releaseWriteLock,
       release: () => {
         lease.release();
-        if (handedBack) return;
-        handedBack = true;
-        void publishing.then(releaseWrite, releaseWrite);
+        releaseWriteLock();
       },
     };
   };
@@ -1243,36 +1253,65 @@ export const createSQLiteClient = (
    * makes it safe: **only before a single row has been delivered.** Once the
    * consumer has seen a chunk, re-running the query would repeat rows, so a
    * `BUSY` after that point is raised like any other error. `read()` and
-   * `first()` buffer, so they never meet this case.
+   * `first()` buffer, so they never meet this case. **A write is never
+   * retried.**
+   *
+   * A write runs under the write lock, and the worker completes it before its
+   * first chunk: at its `affected` the epoch is bumped, the write lock
+   * released and the designation given up, while the lease stays until the
+   * delivery ends or is abandoned. A write that never completes keeps the
+   * lock until the worker is idle, as `run()`'s does.
    */
   const streamWithRetry = async function* <Y>(
+    kind: StatementKind,
     signal: AbortSignal | undefined,
     body: (
       worker: PoolWorker,
       onAbandon: () => void,
+      onAffected: (affected: number, drained: boolean) => void,
     ) => AsyncGenerator<Y, void, unknown>,
+    onAffected: (affected: number) => void,
   ): AsyncGenerator<Y, void, unknown> {
     for (let attempt = 1; ; attempt++) {
       let delivered = false;
-      const lease = await acquireInstrumented('read', signal);
+      const lease = await acquireInstrumented(kind, signal);
+      // Owed once by a write, complete or not: a failed write bumps too, as
+      // `runOnWriter` does.
+      let published = kind !== 'write';
+      const publish = () => {
+        if (published) return;
+        published = true;
+        void afterWrite(lease.worker);
+      };
       // The lease returns when the worker confirms it is idle, not when the
       // caller leaves: a worker still inside step() must not be re-lent. This
       // is the same teardown the finally below runs, and it is idempotent, so
       // an abandoned generator reaching it first costs nothing.
       const giveBack = () => {
+        publish();
         void lease.worker.quiesce().then(
           () => lease.release(),
           () => lease.release(),
         );
       };
+      const affected = (count: number, drained: boolean) => {
+        if (drained && kind === 'write') {
+          // Complete: the epoch first, so the lock waits for its publication.
+          publish();
+          lease.releaseWriteLock();
+          lease.demote();
+        }
+        onAffected(count);
+      };
       try {
-        for await (const item of body(lease.worker, giveBack)) {
+        for await (const item of body(lease.worker, giveBack, affected)) {
           delivered = true;
           yield item;
         }
         return;
       } catch (error) {
         if (
+          kind === 'write' ||
           delivered ||
           attempt > 1 ||
           !isRetryableBusy(error) ||
@@ -1421,9 +1460,11 @@ export const createSQLiteClient = (
 
   /**
    * The body of `chunk()` and `stream()`, after their arguments were validated
-   * and their deadline started at the call: the worker is acquired at the first
-   * `next()`, the retry and the lease are `streamWithRetry`'s. A generator never
-   * read never gets here; its timer, once spent, releases itself.
+   * and their deadline started at the call: the verdict is asked and the worker
+   * acquired at the first `next()`, the retry and the lease are
+   * `streamWithRetry`'s. A generator never read never gets here; its timer,
+   * once spent, releases itself. `affected` is settled here, at the latest
+   * when the statement ends.
    */
   const chunkRows = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -1432,27 +1473,40 @@ export const createSQLiteClient = (
     bound: QueryParams | undefined,
     options: SQLiteChunkOptions | undefined,
     deadline: ReturnType<typeof withDeadline>,
+    affected: AffectedSlot,
   ): AsyncGenerator<T[], void, unknown> {
     const { signal, release } = deadline;
     try {
-      yield* streamWithRetry(signal, (worker, onAbandon) =>
-        chunkWorker<T>(worker, sql, bound, {
-          ...options,
-          signal,
-          onAbandon: () => {
-            onAbandon();
-            release();
-          },
-        }),
+      const kind = await kindFor(sql, signal);
+      yield* streamWithRetry(
+        kind,
+        signal,
+        (worker, onAbandon, onAffected) =>
+          chunkWorker<T>(worker, sql, bound, {
+            ...options,
+            signal,
+            drainWrites: true,
+            onAffected,
+            onAbandon: () => {
+              onAbandon();
+              release();
+            },
+          }),
+        affected.resolve,
       );
+      // Ended without a count: nothing ran.
+      affected.resolve(0);
+    } catch (error) {
+      affected.reject(error);
+      throw error;
     } finally {
       release();
     }
   };
 
   /**
-   * Executes a query and yields result rows in chunks.
-   * The single abort-aware primitive — all other read paths derive from this.
+   * Executes any single statement and yields its rows in chunks. A write is
+   * completed in the worker before its first chunk is delivered.
    *
    * @remarks
    * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
@@ -1462,15 +1516,26 @@ export const createSQLiteClient = (
     input: string | SQLQuery,
     second?: unknown,
     third?: SQLiteChunkOptions,
-  ): AsyncGenerator<T[], void, unknown> => {
+  ): SQLiteChunkStream<T> => {
     const { sql, params, options } = queryArgs(input, second, third);
-    assertReadable(sql, 'chunk');
+    assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
-    return chunkRows<T>(sql, bound, options, withDeadline(options, 'chunk'));
+    const affected = affectedSlot();
+    return carryAffected(
+      chunkRows<T>(
+        sql,
+        bound,
+        options,
+        withDeadline(options, 'chunk'),
+        affected,
+      ),
+      affected.promise,
+    );
   };
 
   /**
-   * Executes a query and streams individual rows (flattened from chunks).
+   * Executes any single statement and streams its rows one by one (flattened
+   * from chunks). A write is completed in the worker before its first row.
    *
    * @remarks
    * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
@@ -1480,12 +1545,20 @@ export const createSQLiteClient = (
     input: string | SQLQuery,
     second?: unknown,
     third?: SQLiteChunkOptions,
-  ): AsyncGenerator<T, void, unknown> => {
+  ): SQLiteStream<T> => {
     const { sql, params, options } = queryArgs(input, second, third);
-    assertReadable(sql, 'stream');
+    assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
+    const affected = affectedSlot();
     return flatten(
-      chunkRows<T>(sql, bound, options, withDeadline(options, 'stream')),
+      chunkRows<T>(
+        sql,
+        bound,
+        options,
+        withDeadline(options, 'stream'),
+        affected,
+      ),
+      { affected: affected.promise },
     );
   };
 

@@ -50,6 +50,7 @@ import {
   KILLED_SLOT,
   type ParamsBlock,
   type RefuseWrite,
+  type RowsBlock,
   type Verdict,
   type WasmLocation,
   type WorkerMessageData,
@@ -68,7 +69,16 @@ type SQLOptions = {
   uncached?: boolean;
   refuseWrite?: RefuseWrite;
   multi?: boolean;
+  drainWrites?: boolean;
 };
+
+/** What a `drainWrites` query posts as `affected`, ahead of its first chunk. */
+class Affected {
+  constructor(
+    readonly affected: number,
+    readonly drained: boolean,
+  ) {}
+}
 
 /**
  * What the authorizer sees while a statement is prepared: the part of
@@ -898,7 +908,7 @@ const open = (file: string, options: OpenOptions) => {
     // Wasm allocations the statements' bindings point into, freed last.
     const owned: number[] = [];
     const { sqlite, db, module } = await openedDB;
-    const { chunkSize = 1, refuseWrite, multi } = options ?? {};
+    const { chunkSize = 1, refuseWrite, multi, drainWrites } = options ?? {};
     seen = {};
     const { kindOf, finalizeHandle, refuseMore, stamped } = statementTools(
       sqlite,
@@ -921,6 +931,14 @@ const open = (file: string, options: OpenOptions) => {
         if (params) owned.push(bindBlock(module, sqlite, stmt, params));
       } catch (e) {
         throw stamped(e);
+      }
+      // A write streamed with `drainWrites` is stepped to SQLITE_DONE first:
+      // its chunks are kept here and sent once `affected` has gone out.
+      let kept: RowsBlock[] | undefined;
+      let finished = false;
+      if (drainWrites) {
+        if (kindOf(stmt) === 'write') kept = [];
+        else yield new Affected(0, false);
       }
       // Column names are read after the first SQLITE_ROW, not before: v2
       // re-preparation happens during step(), so names read beforehand would
@@ -961,13 +979,30 @@ const open = (file: string, options: OpenOptions) => {
             const block = writer.finish(cols);
             chunkBytes = block.used;
             writer = undefined;
-            yield block;
+            if (kept) kept.push(block);
+            else yield block;
           }
         } else {
-          if (writer && cols) yield writer.finish(cols);
+          if (writer && cols) {
+            const block = writer.finish(cols);
+            if (kept) kept.push(block);
+            else yield block;
+          }
+          finished = true;
           break;
         }
       }
+
+      // A stop during the drain: the write was interrupted, nothing is sent.
+      if (!kept || !finished) return;
+      yield new Affected(
+        module._sqlite3_total_changes(db) === totalBefore
+          ? 0
+          : sqlite.changes(db),
+        true,
+      );
+      // Under the credit gate, as any chunk; each let go once handed over.
+      while (kept.length > 0) yield kept.shift() as RowsBlock;
     };
 
     /**
@@ -1211,6 +1246,16 @@ const open = (file: string, options: OpenOptions) => {
             if (typeof chunk === 'number') {
               affected = chunk;
               break;
+            }
+            // Ahead of the first chunk, outside the credit gate.
+            if (chunk instanceof Affected) {
+              reply({
+                type: 'affected',
+                callId,
+                affected: chunk.affected,
+                drained: chunk.drained,
+              });
+              continue;
             }
             // The mutex is let go while the query waits for its credit: no
             // SQLite call is in flight, and the consumer's next pull, which

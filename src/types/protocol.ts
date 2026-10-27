@@ -67,6 +67,12 @@ type SQLOptions = {
    * barrier sets it; any other string holding more than one is refused.
    */
   multi?: true;
+  /**
+   * Sent by `stream()`/`chunk()`. A statement classified as a write is stepped
+   * to its end before any chunk is sent, and every statement posts `affected`
+   * before its first chunk.
+   */
+  drainWrites?: true;
 };
 
 /**
@@ -217,6 +223,11 @@ export type WorkerMessageData =
    */
   | { type: 'probed'; callId: number; missing: PlatformFeature | null }
   | { type: 'chunk'; callId: number; data: RowsBlock }
+  /**
+   * Ahead of a `drainWrites` query's first chunk: the rows it changed, and
+   * whether it was a write stepped to its end (`drained`) or a read (0).
+   */
+  | { type: 'affected'; callId: number; affected: number; drained: boolean }
   | {
       type: 'done';
       callId: number;

@@ -17,34 +17,31 @@ describe('routing — strictness', () => {
     expect(rows.length).toBe(1);
   });
 
-  // Falsifiable: delete the assertReadable call in chunk() in src/client.ts
-  // and this case silently runs the DELETE.
-  it('chunk() rejects a write statement', async () => {
+  // Spec 2026-10-26: chunk() and stream() take any single statement.
+  // Falsifiable: put the assertReadable call back in chunk() in src/client.ts.
+  it('chunk() takes a write statement', async () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE t (a)');
     await db.write('INSERT INTO t (a) VALUES (1)');
 
-    // The throw is at the call, not on the first next().
-    expect(() => db.chunk('DELETE FROM t')).toThrow(
-      expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
-    );
+    for await (const _ of db.chunk('DELETE FROM t')) {
+      // A DELETE without RETURNING delivers no chunk.
+    }
     const rows = await db.read('SELECT * FROM t');
-    expect(rows.length).toBe(1);
+    expect(rows.length).toBe(0);
   });
 
-  // Falsifiable: delete the assertReadable call in stream() in src/client.ts
-  // and this case silently runs the DELETE.
-  it('stream() rejects a write statement', async () => {
+  // Falsifiable: put the assertReadable call back in stream() in src/client.ts.
+  it('stream() takes a write statement', async () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE t (a)');
     await db.write('INSERT INTO t (a) VALUES (1)');
 
-    // The throw is at the call, not on the first next().
-    expect(() => db.stream('DELETE FROM t')).toThrow(
-      expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
-    );
+    for await (const _ of db.stream('DELETE FROM t')) {
+      // A DELETE without RETURNING delivers no row.
+    }
     const rows = await db.read('SELECT * FROM t');
-    expect(rows.length).toBe(1);
+    expect(rows.length).toBe(0);
   });
 
   // Falsifiable: delete the assertReadable call in first() in src/client.ts
@@ -61,9 +58,9 @@ describe('routing — strictness', () => {
     expect(rows.length).toBe(1);
   });
 
-  // Falsifiable: drop the method passed to checksql() by tx's read methods in
-  // src/transaction.ts and the DELETEs run.
-  it("a transaction's read(), first(), chunk() and stream() reject a write statement", async () => {
+  // Falsifiable: drop the method passed to checksql() by tx.read() in
+  // src/transaction.ts and the DELETE runs.
+  it("a transaction's read() and first() reject a write statement", async () => {
     const db = await createTestClient({ poolSize: 1 });
     await db.write('CREATE TABLE t (a)');
     await db.write('INSERT INTO t (a) VALUES (1)');
@@ -75,12 +72,6 @@ describe('routing — strictness', () => {
       await expect(tx.first('DELETE FROM t')).rejects.toMatchObject({
         code: 'NOT_A_READ_QUERY',
       });
-      expect(() => tx.chunk('DELETE FROM t')).toThrow(
-        expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
-      );
-      expect(() => tx.stream('DELETE FROM t')).toThrow(
-        expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
-      );
     });
     const rows = await db.read('SELECT * FROM t');
     expect(rows.length).toBe(1);
@@ -181,22 +172,24 @@ describe('chunk() and stream() — arguments are validated at the call', () => {
     expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 
-  it('chunk() throws at the call for a write statement', async () => {
+  it('chunk() runs a CREATE TABLE, with affected 0', async () => {
     const db = await createTestClient({ poolSize: 1 });
-    expect(() => db.chunk('CREATE TABLE t (a)')).toThrow(SQLiteError);
-    expect(() => db.chunk('CREATE TABLE t (a)')).toThrow(
-      expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
-    );
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    const created = db.chunk('CREATE TABLE t (a)');
+    for await (const _ of created) {
+      // No rows.
+    }
+    expect(await created.affected).toBe(0);
+    expect(await db.read('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
   });
 
-  it('stream() throws at the call for a write statement', async () => {
+  it('stream() runs a CREATE TABLE, with affected 0', async () => {
     const db = await createTestClient({ poolSize: 1 });
-    expect(() => db.stream('CREATE TABLE t (a)')).toThrow(SQLiteError);
-    expect(() => db.stream('CREATE TABLE t (a)')).toThrow(
-      expect.objectContaining({ code: 'NOT_A_READ_QUERY' }),
-    );
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    const created = db.stream('CREATE TABLE t (a)');
+    for await (const _ of created) {
+      // No rows.
+    }
+    expect(await created.affected).toBe(0);
+    expect(await db.read('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
   });
 
   it('chunk() throws at the call for an unbindable param', async () => {

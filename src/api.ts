@@ -87,6 +87,22 @@ export type SQLiteChunkOptions = Interruptible<{
  */
 export type SQLiteRunResult<T> = { rows: T[]; affected: number };
 
+/**
+ * What `stream()` returns: its rows, and `affected`, the rows the statement
+ * changed — 0 for a read. A write is stepped to its end before its first row
+ * is delivered, so `affected` resolves before that row; it rejects with the
+ * statement's error. The statement runs from the first `next()`: a stream
+ * never iterated settles nothing.
+ */
+export type SQLiteStream<T> = AsyncGenerator<T, void, unknown> & {
+  readonly affected: Promise<number>;
+};
+
+/** What `chunk()` returns: `SQLiteStream`'s `affected`, on chunks of rows. */
+export type SQLiteChunkStream<T> = AsyncGenerator<T[], void, unknown> & {
+  readonly affected: Promise<number>;
+};
+
 export type SQLiteWriteResult<T extends Record<string, unknown>> = {
   result: T[];
   affected: number;
@@ -335,8 +351,9 @@ export type SQLiteQueryAPI = {
   };
 
   /**
-   * Executes a query and yields result rows in chunks via an async generator.
-   * Memory-efficient for large result sets — rows are not buffered in full.
+   * Executes any single statement and yields its rows in chunks via an async
+   * generator. Memory-efficient for large result sets — rows are not buffered
+   * in full.
    *
    * @remarks
    * **Worker held for full generator lifetime.** A pool worker is acquired on
@@ -344,61 +361,71 @@ export type SQLiteQueryAPI = {
    * exhausted or the caller uses `break`. Failing to exhaust the generator
    * starves the pool. Always use `for await...of` to completion or `break` to exit.
    *
+   * **A write is completed before its first chunk.** The worker steps it to
+   * its end, keeping its rows, then delivers them: the write lock is free and
+   * `affected` resolved before the first chunk arrives. Abandoning the
+   * generator before that rolls the write back; after it, the write stays.
+   * A write is never retried.
+   *
    * **Arguments are validated at the call.** An invalid query, a params array
-   * given with a query built by `sql`, a write statement (`NOT_A_READ_QUERY`)
-   * and an unbindable param throw a `SQLiteError` from `chunk()` itself, before
-   * any generator exists. The `timeout` timer starts at the call too; the worker
-   * acquisition at the first `next()`.
+   * given with a query built by `sql` and an unbindable param throw a
+   * `SQLiteError` from `chunk()` itself, before any generator exists. The
+   * `timeout` timer starts at the call too; the worker acquisition at the first
+   * `next()`.
    *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *
-   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
+   * @param sql - SQL query string: a single statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional options including `chunkSize` (default `500`),
    *   `signal` (AbortSignal to cancel).
-   * @returns AsyncGenerator yielding `T[]` chunks of at most `chunkSize` rows.
+   * @returns AsyncGenerator yielding `T[]` chunks of at most `chunkSize` rows,
+   *   carrying `affected`: the rows the statement changed, 0 for a read.
    */
   chunk: {
     <T extends Record<string, unknown>>(
       query: SQLQuery,
       options?: SQLiteChunkOptions,
-    ): AsyncGenerator<T[]>;
+    ): SQLiteChunkStream<T>;
     <T extends Record<string, unknown>>(
       sql: string,
       params?: unknown[],
       options?: SQLiteChunkOptions,
-    ): AsyncGenerator<T[]>;
+    ): SQLiteChunkStream<T>;
   };
 
   /**
-   * Executes a query and yields individual result rows via an async generator.
-   * Flattens chunk boundaries — each iteration yields one `T` row, not a chunk.
-   * Use `chunk()` when you need the rows grouped by chunk.
+   * Executes any single statement and yields its rows one by one via an async
+   * generator. Flattens chunk boundaries — each iteration yields one `T` row,
+   * not a chunk. Use `chunk()` when you need the rows grouped by chunk.
    *
    * @remarks
+   * **A write is completed before its first row**, as for `chunk()`.
+   *
    * **Arguments are validated at the call.** An invalid query, a params array
-   * given with a query built by `sql`, a write statement (`NOT_A_READ_QUERY`)
-   * and an unbindable param throw a `SQLiteError` from `stream()` itself, before
-   * any generator exists. The `timeout` timer starts at the call too; the worker
-   * acquisition at the first `next()`.
+   * given with a query built by `sql` and an unbindable param throw a
+   * `SQLiteError` from `stream()` itself, before any generator exists. The
+   * `timeout` timer starts at the call too; the worker acquisition at the first
+   * `next()`.
    *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *
-   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
+   * @param sql - SQL query string: a single statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`chunkSize`, `signal`).
-   * @returns AsyncGenerator yielding individual rows of type `T`.
+   * @returns AsyncGenerator yielding individual rows of type `T`, carrying
+   *   `affected`: the rows the statement changed, 0 for a read.
    */
   stream: {
     <T extends Record<string, unknown>>(
       query: SQLQuery,
       options?: SQLiteChunkOptions,
-    ): AsyncGenerator<T>;
+    ): SQLiteStream<T>;
     <T extends Record<string, unknown>>(
       sql: string,
       params?: unknown[],
       options?: SQLiteChunkOptions,
-    ): AsyncGenerator<T>;
+    ): SQLiteStream<T>;
   };
 
   /**

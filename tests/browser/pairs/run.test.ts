@@ -291,6 +291,8 @@ describe('run() and all() on two workers', {
     const { db, records } = await setUp({ poolSize: 2, debug: true });
     await poolReady(db, 2);
     const held = await holdWorker(db);
+    // The held stream asked its own verdict; only those after it count.
+    const mark = new Map(records.map((r) => [r, r.posted.length]));
     let running: Promise<unknown> | undefined;
     let txWorker: number | undefined;
     await db.transaction(async (tx) => {
@@ -309,7 +311,11 @@ describe('run() and all() on two workers', {
     });
     expect(txWorker).toBeDefined();
     const others = records.filter((r) => slotOf(r) !== txWorker);
-    expect(verdictsPosted(others)).toBe(0);
+    expect(
+      others
+        .flatMap((r) => r.posted.slice(mark.get(r) ?? 0))
+        .filter((t) => t === 'verdict').length,
+    ).toBe(0);
     await held.return(undefined);
     expect(await running).toEqual({ rows: [{ x: 3 }], affected: 0 });
     expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([

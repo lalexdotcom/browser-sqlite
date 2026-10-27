@@ -9,10 +9,12 @@ import type {
 import { prepareParams, type QueryParams } from './binary';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
 import type { StatementKind } from './classify';
-import { flatten } from './flatten';
+import { carryAffected, flatten } from './flatten';
 import type { Logger } from './logger';
 import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
 import {
+  type AffectedSlot,
+  affectedSlot,
   asWriteResult,
   chunk as chunkWorker,
   firstWorker,
@@ -805,6 +807,7 @@ export const createTransaction =
           options: { signal?: AbortSignal | undefined };
         },
         method: string,
+        affected: AffectedSlot,
       ): AsyncGenerator<R> => {
         // The entry is the box the generator's own `finally` needs: it must
         // remove itself from `open` and cannot name a generator that does not
@@ -815,7 +818,9 @@ export const createTransaction =
           if (ending) {
             open.delete(entry);
             st.release();
-            throw closedError(ending);
+            const closed = closedError(ending);
+            affected.reject(closed);
+            throw closed;
           }
           // The queue, joined at the FIRST next() rather than at creation:
           // this body does not run until the consumer pulls, and a generator
@@ -892,11 +897,16 @@ export const createTransaction =
                 yield next.value;
               }
             } catch (e) {
+              // Before `affected`, the write is undone; after it, it is
+              // complete and stays: only its delivery stops (spec 2026-10-26,
+              // § Streaming a write).
               if (
                 st.mark.posted &&
                 st.own?.aborted === true &&
-                e === st.own.reason
+                e === st.own.reason &&
+                !affected.settled
               ) {
+                affected.reject(e);
                 left = true;
                 abandon(drainToEnd(source), method);
               }
@@ -910,8 +920,11 @@ export const createTransaction =
           } catch (e) {
             failed = true;
             error = e;
+            affected.reject(e);
             throw e;
           } finally {
+            // Ended without a count: nothing ran, or the transaction cut it.
+            affected.resolve(0);
             open.delete(entry);
             st.release();
             // The generator half of `settled`'s invariant, and the reason it
@@ -958,11 +971,16 @@ export const createTransaction =
         query: string,
         bound: ReturnType<typeof prepareParams>,
         entry: OpenStatement,
+        affected: AffectedSlot,
       ): (() => AsyncGenerator<T[]>) => {
         return () => {
           const target = via(st.savepointed, st.mark);
           const options: InternalChunkOptions = {
             ...(st.savepointed ? st.driving : st.options),
+            // A write completes before its first chunk; its count settles
+            // `affected`, unless an abandon has already judged it.
+            drainWrites: true,
+            onAffected: affected.resolve,
             onAbandon: st.release,
             onTransport: (iterator) => {
               entry.transport = iterator;
@@ -1192,14 +1210,15 @@ export const createTransaction =
             params,
             options: given,
           } = queryArgs(input, second, third);
-          const query = checksql(sql, 'chunk');
+          const query = checksql(sql);
           const bound = prepareParams(params);
           const st = withSignal(given, 'chunk', query);
           const entry: OpenStatement = {};
+          const affected = affectedSlot();
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const start = chunkSource<T>(st, query, bound, entry);
+          const start = chunkSource<T>(st, query, bound, entry, affected);
           // Built at the call when no signal of its own can open a savepoint;
           // otherwise at the first next(), once SQLite has been asked.
           const source =
@@ -1208,7 +1227,10 @@ export const createTransaction =
               : (async function* () {
                   yield* start();
                 })();
-          return releasing(source, entry, st, 'chunk');
+          return carryAffected(
+            releasing(source, entry, st, 'chunk', affected),
+            affected.promise,
+          );
         },
 
         stream: <T extends Record<string, unknown>>(
@@ -1221,14 +1243,15 @@ export const createTransaction =
             params,
             options: given,
           } = queryArgs(input, second, third);
-          const query = checksql(sql, 'stream');
+          const query = checksql(sql);
           const bound = prepareParams(params);
           const st = withSignal(given, 'stream', query);
           const entry: OpenStatement = {};
+          const affected = affectedSlot();
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const start = chunkSource<T>(st, query, bound, entry);
+          const start = chunkSource<T>(st, query, bound, entry, affected);
           // The query is built on the first next(), not here: a stream never
           // read holds no query, and its transport lands in `entry` only then.
           const source = (async function* () {
@@ -1238,9 +1261,13 @@ export const createTransaction =
           // it before each buffered row and throws its reason into `releasing`.
           // Read per buffered row: a stream decided not savepointed keeps the
           // adapter's fast path, with no signal to check.
-          const rows = flatten(releasing(source, entry, st, 'stream'), {
-            signal: () => (st.savepointed ? st.own : undefined),
-          });
+          const rows = flatten(
+            releasing(source, entry, st, 'stream', affected),
+            {
+              signal: () => (st.savepointed ? st.own : undefined),
+              affected: affected.promise,
+            },
+          );
           // The transaction closes the adapter, which drops its buffered rows
           // and closes `releasing` in turn.
           entry.gen = rows;

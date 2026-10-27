@@ -5,7 +5,25 @@
  * read each time a buffered row is served, so it may arrive late.
  */
 
+// Nothing but types imported: tests/unit/lib/flatten-unhandled.test.ts loads
+// this file alone in Node.
+import type { SQLiteStream } from './api';
+
+/** `gen`, carrying `affected` as a read-only property. */
+export const carryAffected = <G extends object>(
+  gen: G,
+  affected: Promise<number>,
+): G & { readonly affected: Promise<number> } =>
+  Object.defineProperty(gen, 'affected', {
+    value: affected,
+    enumerable: true,
+  }) as G & { readonly affected: Promise<number> };
+
 type Status = 'idle' | 'open' | 'done';
+
+type FlattenOptions = {
+  signal?: AbortSignal | (() => AbortSignal | undefined) | undefined;
+};
 
 const resolved = Promise.resolve();
 
@@ -229,9 +247,15 @@ Object.defineProperty(Flattened.prototype, Symbol.toStringTag, {
 
 export function flatten<T>(
   source: AsyncGenerator<T[], void, unknown>,
-  options?: {
-    signal?: AbortSignal | (() => AbortSignal | undefined) | undefined;
-  },
+  options: FlattenOptions & { affected: Promise<number> },
+): SQLiteStream<T>;
+export function flatten<T>(
+  source: AsyncGenerator<T[], void, unknown>,
+  options?: FlattenOptions,
+): AsyncGenerator<T, void, unknown>;
+export function flatten<T>(
+  source: AsyncGenerator<T[], void, unknown>,
+  options?: FlattenOptions & { affected?: Promise<number> },
 ): AsyncGenerator<T, void, unknown> {
   // The class is checked as an AsyncIterator; the cast adds what an
   // AsyncGenerator type requires on top, [Symbol.asyncIterator] and
@@ -240,5 +264,7 @@ export function flatten<T>(
     source,
     options?.signal,
   );
-  return iterator as AsyncGenerator<T, void, unknown>;
+  const gen = iterator as AsyncGenerator<T, void, unknown>;
+  // The source's `affected`, on the object the caller holds.
+  return options?.affected ? carryAffected(gen, options.affected) : gen;
 }

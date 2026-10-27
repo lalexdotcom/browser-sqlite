@@ -25,6 +25,8 @@ const fakeWorker = (
   rowsOf: Record<string, Record<string, unknown>[]> = {},
 ) => {
   const executed: string[] = [];
+  /** The statements sent with `drainWrites`. */
+  const drained: string[] = [];
   const flags: {
     sql: string;
     control: boolean;
@@ -34,6 +36,7 @@ const fakeWorker = (
   const worker = {
     index: 3,
     executed,
+    drained,
     flags,
     inTransaction: undefined as boolean | undefined,
     query: async function* (
@@ -46,6 +49,7 @@ const fakeWorker = (
         control?: boolean;
         uncached?: boolean;
         refuseWrite?: string;
+        drainWrites?: boolean;
       },
     ) {
       // As the real worker (spec 2026-09-11, §4): the conclusion, then the
@@ -56,6 +60,7 @@ const fakeWorker = (
       if (savepoint?.conclude) executed.push('RELEASE __bsq_sp');
       if (savepoint?.open) executed.push('SAVEPOINT __bsq_sp');
       executed.push(sql);
+      if (options?.drainWrites) drained.push(sql);
       flags.push({
         sql,
         control: options?.control === true,
@@ -1444,10 +1449,9 @@ describe('transaction — a refused argument rejects, never throws', () => {
   }
 });
 
-// As on the client: read(), first(), chunk() and stream() take only a read;
-// a write goes through tx.write(), which returns its RETURNING rows. The
-// promise methods reject, the generators throw from the call — like theirs.
-// Falsifiable: drop the assertReadable() call from tx's read methods in
+// As on the client: read() and first() take only a read; chunk() and stream()
+// take any single statement.
+// Falsifiable: drop the assertReadable() call from tx.read() in
 // src/transaction.ts; the write then reaches the worker.
 describe('transaction — read methods refuse a write, as the client does', () => {
   const WRITE = 'INSERT INTO t VALUES (1) RETURNING a';
@@ -1496,21 +1500,21 @@ describe('transaction — read methods refuse a write, as the client does', () =
     ]);
   });
 
+  // Spec 2026-10-26, § Streaming a write: the generators take a write again,
+  // and send every statement with drainWrites.
+  // Falsifiable: drop drainWrites from chunkSource in src/transaction.ts.
   for (const method of ['chunk', 'stream'] as const) {
-    it(`tx.${method}() throws a write with NOT_A_READ_QUERY from the call, and sends nothing`, async () => {
+    it(`tx.${method}() takes a write and sends it with drainWrites`, async () => {
       const worker = fakeWorker([]);
       const { transaction } = harness(worker);
-      let outcome: unknown;
       await transaction(async (tx) => {
-        const call = tx[method] as (sql: string) => unknown;
-        try {
-          call(WRITE);
-        } catch (e) {
-          outcome = e;
+        const call = tx[method] as (sql: string) => AsyncIterable<unknown>;
+        for await (const _ of call(WRITE)) {
+          // The fake yields one empty chunk.
         }
       });
-      expect(outcome).toMatchObject({ code: 'NOT_A_READ_QUERY' });
-      expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+      expect(worker.executed).toEqual(['BEGIN IMMEDIATE', WRITE, 'COMMIT']);
+      expect(worker.drained).toEqual([WRITE]);
     });
   }
 });

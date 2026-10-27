@@ -56,6 +56,10 @@ export type PoolWorkerQueryOptions = {
   refuseWrite?: RefuseWrite | undefined;
   /** Forwarded as the protocol's `multi`: see `SQLOptions` in `types/protocol.ts`. */
   multi?: boolean;
+  /** Forwarded as the protocol's `drainWrites`: see `SQLOptions` in `types/protocol.ts`. */
+  drainWrites?: boolean;
+  /** Called with the worker's `affected` message, before the first chunk. */
+  onAffected?: ((affected: number, drained: boolean) => void) | undefined;
 };
 
 /**
@@ -361,6 +365,8 @@ export const createPoolWorker = (deps: {
   // The debug record of the query in flight; replaced at every post, like
   // `deferredChunk`, so the callId check below also guards it.
   let debugQuery: QueryDebugHandle | undefined;
+  /** The query in flight's `onAffected`, replaced at every post like `debugQuery`. */
+  let onAffected: PoolWorkerQueryOptions['onAffected'];
 
   // Wakes the read loop when a message arrives. Resolved without a value: the
   // rows travel through `inbox`, and Firefox keeps a race's result alive while
@@ -637,6 +643,11 @@ export const createPoolWorker = (deps: {
         }
         break;
       }
+      case 'affected': {
+        if (deferredChunk && data.callId === currentCallId)
+          onAffected?.(data.affected, data.drained);
+        break;
+      }
       case 'done': {
         const { callId } = data;
         if (deferredChunk && callId === currentCallId) {
@@ -781,8 +792,10 @@ export const createPoolWorker = (deps: {
         uncached = false,
         refuseWrite,
         multi = false,
+        drainWrites = false,
       } = options ?? {};
       suppressServed = noServed;
+      onAffected = options?.onAffected;
 
       debugQuery = debugWorker?.query(
         sql,
@@ -836,6 +849,7 @@ export const createPoolWorker = (deps: {
             ...(uncached ? { uncached: true as const } : {}),
             ...(refuseWrite ? { refuseWrite } : {}),
             ...(multi ? { multi: true as const } : {}),
+            ...(drainWrites ? { drainWrites: true as const } : {}),
           },
         },
         block ? block.chunks : [],
@@ -949,6 +963,7 @@ export const createPoolWorker = (deps: {
         // Reset in case the query failed before 'done' arrived — prevents
         // leaking noServed=true into the next query on this worker.
         suppressServed = false;
+        onAffected = undefined;
         worker.status = dead ? 'DEAD' : 'READY';
         idle?.resolve();
         idle = undefined;

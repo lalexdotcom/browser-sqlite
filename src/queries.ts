@@ -74,6 +74,40 @@ export const raceAbort = <T>(
 };
 
 /**
+ * The `affected` of a `stream()` or `chunk()`, settled once: by the worker's
+ * count, by the statement's error, or with 0 by an end that brought no count.
+ * Handled at creation, so a caller who never awaits it raises nothing.
+ */
+export type AffectedSlot = {
+  readonly promise: Promise<number>;
+  readonly settled: boolean;
+  resolve: (affected: number) => void;
+  reject: (error: unknown) => void;
+};
+
+export const affectedSlot = (): AffectedSlot => {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  promise.catch(() => {});
+  let settled = false;
+  return {
+    promise,
+    get settled() {
+      return settled;
+    },
+    resolve: (affected) => {
+      if (settled) return;
+      settled = true;
+      resolve(affected);
+    },
+    reject: (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    },
+  };
+};
+
+/**
  * `SQLiteChunkOptions` plus what only this library passes. `registry` is
  * TEST-ONLY and unsupported; it exists so the abandonment path can be driven
  * without a garbage collection.
@@ -82,6 +116,10 @@ export type InternalChunkOptions = SQLiteChunkOptions & {
   credits?: number;
   /** Forwarded to the worker, which refuses a write with this code. */
   refuseWrite?: RefuseWrite | undefined;
+  /** Forwarded to the worker: a write is stepped to its end before delivery. */
+  drainWrites?: boolean | undefined;
+  /** The worker's `affected`, before the first chunk (`PoolWorkerQueryOptions`). */
+  onAffected?: ((affected: number, drained: boolean) => void) | undefined;
   /** The owning layer's teardown, run if the generator is abandoned. */
   onAbandon?: (() => void) | undefined;
   /**
@@ -123,6 +161,8 @@ export const chunk = <
     chunkSize,
     credits,
     refuseWrite,
+    drainWrites,
+    onAffected,
     onAbandon,
     onTransport,
     registry = abandonRegistry,
@@ -131,6 +171,8 @@ export const chunk = <
     chunkSize,
     credits,
     ...(refuseWrite ? { refuseWrite } : {}),
+    ...(drainWrites ? { drainWrites } : {}),
+    ...(onAffected ? { onAffected } : {}),
   });
   onTransport?.(iterator);
   const state: AbandonState = { done: false };
