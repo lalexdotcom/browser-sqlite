@@ -11,7 +11,7 @@ import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug, type RequestDebugHandle } from './debug';
-import { advanceSeen, barrierSqlFor, epochsFor } from './epochs';
+import { advanceSeen, BARRIER_SQL, barrierSqlFor, epochsFor } from './epochs';
 import { flatten } from './flatten';
 import {
   type ClientInspection,
@@ -468,6 +468,8 @@ export const createSQLiteClient = (
   const { connection: connectionPragmas, database: databasePragmas } =
     splitPragmas(pragmas);
   const barrierSql = barrierSqlFor(vfs, pragmas);
+  // Only the form bracketed by the catch-up pragma holds several statements.
+  const barrierIsMulti = barrierSql !== BARRIER_SQL;
 
   // Fail at construction, not inside the first unrelated query. The merged set
   // is what gets validated: a bad default would otherwise reach a worker.
@@ -875,7 +877,7 @@ export const createSQLiteClient = (
     const barrierIter = worker.query(barrierSql, undefined, {
       noServed: true,
       internal: true,
-      multi: true,
+      ...(barrierIsMulti ? { multi: true } : {}),
     });
     while (!(await barrierIter.next()).done) {
       /* discard rows */

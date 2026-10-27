@@ -297,8 +297,13 @@ export const createTransaction =
           if (abandoned) await entryWait(signal);
           try {
             // One statement per call; several share this place in the queue.
-            for (const sql of statements)
+            // A death between them rolled the whole transaction back, which
+            // discards the savepoints: the next one would hit a connection
+            // that has left its transaction.
+            for (const [i, sql] of statements.entries()) {
+              if (i > 0 && ending) throw closedError(ending);
               await exec(via(false), sql, { uncached: true });
+            }
           } catch (e) {
             die(e);
             throw e;

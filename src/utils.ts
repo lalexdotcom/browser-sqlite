@@ -234,9 +234,10 @@ export const assertReadable = (sql: string, method: string): void => {
  * Quotes an SQL identifier so it can never be read as anything but a name.
  *
  * The library interpolates table, column and index names into generated SQL —
- * `bulkWrite`, `output` and their indexes. wa-sqlite's `statements()` executes
- * `;`-separated statements, so an unquoted name is a stacked-query injection
- * (B4). Quoting is what makes `t"; DROP TABLE users; --` one identifier.
+ * `bulkWrite`, `output` and their indexes. The worker refuses a string holding
+ * more than one statement, but an unquoted name could still change the one
+ * statement (B4). Quoting is what makes `t"; DROP TABLE users; --` one
+ * identifier.
  *
  * Note that quoting preserves case in `sqlite_master`; SQLite still resolves
  * names case-insensitively.

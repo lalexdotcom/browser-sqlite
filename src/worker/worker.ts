@@ -1068,9 +1068,7 @@ const open = (file: string, options: OpenOptions) => {
               // with that error as cause. A failure of the ROLLBACK itself is
               // swallowed: the reply below reports whatever `inTransaction`
               // actually reads, and the caller's error is this one, not that
-              // one. Found by the final review: `tx.write('…; RELEASE u',
-              // …)` abandoned pops `__bsq_sp` with `u`, and the next
-              // conclusion fails.
+              // one.
               try {
                 await control('ROLLBACK');
               } catch {

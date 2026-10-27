@@ -1315,6 +1315,53 @@ describe('tx.savepoint() — failures and endings (spec 2026-10-04, E12, D5, U4,
     ]);
   });
 
+  // Falsifiable: drop die(e) from runControl().
+  it('kills the transaction when the RELEASE of a rollback() fails after its ROLLBACK TO succeeded (E12)', async () => {
+    const worker = fakeWorker(['RELEASE "u"']);
+    const { transaction } = harness(worker);
+    let caught: unknown;
+    const outcome = await transaction(async (tx) => {
+      const sp = await tx.savepoint('u');
+      caught = await sp.rollback().catch((e) => e);
+      await tx.write('INSERT INTO t VALUES (1)');
+    }).catch((e) => e);
+    expect(caught).toMatchObject({ code: 'BUSY' });
+    expect(outcome).toBe(caught);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT "u"',
+      'ROLLBACK TO "u"',
+      'RELEASE "u"',
+      'ROLLBACK',
+    ]);
+  });
+
+  // Falsifiable: delete the `ending` check between the statements in
+  // runControl() — the RELEASE is sent after the transaction has died.
+  it('never posts the RELEASE of a rollback() when the transaction died after its ROLLBACK TO', async () => {
+    const ctl = new AbortController();
+    const reason = new Error('abandoned between the two statements');
+    const worker = fakeWorker([], {
+      'ROLLBACK TO "u"': () => ctl.abort(reason),
+    });
+    const { transaction } = harness(worker);
+    let caught: unknown;
+    await transaction(
+      async (tx) => {
+        const sp = await tx.savepoint('u');
+        caught = await sp.rollback().catch((e) => e);
+      },
+      { signal: ctl.signal },
+    ).catch(() => {});
+    expect(caught).toMatchObject({ code: 'TRANSACTION_CLOSED' });
+    expect(worker.executed).not.toContain('RELEASE "u"');
+    expect(worker.executed.slice(0, 3)).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT "u"',
+      'ROLLBACK TO "u"',
+    ]);
+  });
+
   it('commits open savepoints with the transaction, without a RELEASE, and closes their handles (D5)', async () => {
     const worker = fakeWorker([]);
     const { transaction } = harness(worker);
