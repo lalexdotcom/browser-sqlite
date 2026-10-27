@@ -21,14 +21,15 @@ What streaming a write buys, and what it does not (verified in SQLite 3.53.0, th
 | `run<T>(…)` | any single statement | `Promise<{ rows: T[]; affected: number }>` |
 | `stream<T>(…)` | any single statement | the async generator of rows, carrying `affected: Promise<number>` |
 | `chunk<T>(…)` | any single statement | the async generator of chunks, carrying `affected: Promise<number>` |
-| `read<T>(…)` | reads only | `Promise<T[]>` |
+| `all<T>(…)` | any single statement | `Promise<T[]>` |
 | `first<T>(…)` | reads only | `Promise<T \| undefined>` |
-| `write()` | **removed** | — |
+| `read()`, `write()` | **removed** | — |
 
 - Every method keeps both call forms (`(sql, params?, options?)` and `(query: SQLQuery, options?)`) and its options as today.
 - `run()`'s result type replaces `SQLiteWriteResult<T>`; **the property is `rows`, not `result`** (user: closer to what users know, and more representative). `affected` is `total_changes()` after minus before, as the worker computes it today — 0 for a read.
 - **No `lastInsertRowid`** (user, earlier): `RETURNING` covers it.
-- **`read()` and `first()` refuse a write** with `NOT_A_READ_QUERY`. A method that may not deliver every row of a write does not take one: `first()` would write a thousand rows and return one — what better-sqlite3's and `node:sqlite`'s `.get()` do, and what the user rejected as misleading. `read()` follows so that the two form the family of guaranteed reads. `stream()`/`chunk()` deliver every row; a consumer who `break`s out of a `DELETE … RETURNING` has deleted everything, but that is the consumer's explicit act.
+- **`all()` replaces `read()`** (user, 2026-10-27): `run()`'s rows alone, for any single statement — an `INSERT … RETURNING` included, which is why the name says nothing of reading. The name is node-sqlite3's `db.all()`, better-sqlite3's and `node:sqlite`'s `stmt.all()` (the method through which they return a `RETURNING`'s rows), and pairs with `first()`.
+- **`first()` is the only read-only method**: it refuses a write with `NOT_A_READ_QUERY`. A method that may not deliver every row of a write does not take one: `first()` would write a thousand rows and return one — what better-sqlite3's and `node:sqlite`'s `.get()` do, and what the user rejected as misleading. `all()`, `run()`, `stream()`/`chunk()` deliver every row; a consumer who `break`s out of a `DELETE … RETURNING` has deleted everything, but that is the consumer's explicit act.
 - **`stream()`/`chunk()`'s `affected`**: a property on the returned object, so `for await` keeps working unchanged. It resolves as soon as the worker knows the count — for a write, once the write has completed in the worker, before its first row is delivered (§ Streaming a write); at once for a read (0). If the statement fails, it rejects with the same error, and it is marked handled at creation so that nobody awaiting it raises no unhandled rejection. Declared type: `AsyncGenerator<T> & { affected: Promise<number> }` (the generator's type arguments stay as today).
 - **`first()` gets no `affected`**: a property on a promise is awkward, and whoever wants the count calls `run()`.
 - The name `run()` was chosen over `exec()`: in better-sqlite3 and `node:sqlite`, `exec()` runs several statements and returns nothing — exactly what this design refuses — while their `run()` returns `{ changes, lastInsertRowid }`; ours returns more (the rows), which surprises without misleading.
@@ -51,18 +52,29 @@ So a statement that writes, reached through `stream()` or `chunk()`, **is steppe
 Any SQL string that holds more than one statement is refused, before anything runs. Reason: a verdict before running needs every statement prepared first, and `CREATE TABLE t …; INSERT INTO t …` cannot prepare its second statement before the first ran.
 
 - **Detection** (in the worker, at prepare): prepare the first statement, then prepare its tail (`pzTail`). A tail that yields no statement (whitespace, `;`, comments) is a single statement; a tail that yields a statement **or an error** is a refusal. The second statement need not be valid. This replaces `isSingleStatement` (`src/worker/worker.ts`), which compares texts and reads a statement followed by a comment as two.
-- The refusal lives **in the prepare that executes**, not only in the verdict: a statement whose verdict is memoised, a transaction's statements, `read()`/`first()` and the library's internal write path never ask for a verdict.
+- The refusal lives **in the prepare that executes**, not only in the verdict: a statement whose verdict is memoised, a transaction's statements, `first()` and the library's internal write path never ask for a verdict.
 - What becomes dead and goes: the multi-statement binding shipped in rc.10 (each statement of anonymous `?` takes the next values — the worker's `cursor`), and the worker's multi-statement branch (`live`, the per-statement finalize).
 
 ### The classification
 
 **A statement is a write when `sqlite3_stmt_readonly` returns 0, except an `EXPLAIN` or `EXPLAIN QUERY PLAN`, which is a read** (user, 2026-10-26). SQLite's documentation says `stmt_readonly` answers for an `EXPLAIN` what it would answer without the prefix, so `EXPLAIN INSERT …` reads 0 although it lists opcodes and changes nothing; `sqlite3_stmt_isexplain` (non-zero for both forms) corrects it. Both `Module._sqlite3_stmt_readonly` and `Module._sqlite3_stmt_isexplain` are exported by the three builds (checked 2026-10-26); `sqlite-api.js` wraps neither.
 
-What `stmt_readonly` computes (SQLite 3.53.0, `vdbeaux.c:878-907`): 0 when the program holds an `OP_Transaction` that opens a write transaction on any database, `temp` included, or an `OP_Checkpoint`, `OP_Vacuum` or `OP_JournalMode`; 1 otherwise. The cases where that differs from "changes something" are listed in Open, item 1; the classification above is completed there once measured.
+What `stmt_readonly` computes (SQLite 3.53.0, `vdbeaux.c:878-907`): 0 when the program holds an `OP_Transaction` that opens a write transaction on any database, `temp` included, or an `OP_Checkpoint`, `OP_Vacuum` or `OP_JournalMode`; 1 otherwise. The cases where that differs from "changes something" are listed in Open, item 1.
+
+**Measured 2026-10-27** (Node 24, wa-sqlite's `sync` build at the pin, `:memory:` with a table, an index, `temp` and an attached database; every statement of Open item 1, and the 65 names of `PRAGMA pragma_list` in three forms — bare, `= 0`, `(arg)`): the statements answer as the inventory says. Among the pragmas, only `journal_mode`, `wal_checkpoint` and `incremental_vacuum` (every form) and the assignments of `user_version`, `application_id`, `schema_version` answer 0. Everything else answers 1, including **`PRAGMA optimize`, which writes** (it runs `ANALYZE` from a nested program the outer statement does not show), `auto_vacuum = …` (measured writing on 2026-10-01, per `src/utils.ts`) and every connection setting. `readonly` + `isexplain` cost 6.8 ns a pair (n = 1 000 000). The authorizer, already installed, reports each pragma as `SQLITE_PRAGMA` with its name and value parsed by SQLite (`cache_size`/`10`, `table_info`/`t`, `journal_mode`/none, `user_version`/`3` on `aux`), and `ATTACH` (24) and `DETACH` (25); a table-valued pragma (`pragma_table_info('t')`) is a `SELECT` on a read-only virtual table and reports no `SQLITE_PRAGMA`.
+
+**So `stmt_readonly` does not classify pragmas. The rule (proposed by Claude after the measurement, confirmed by the user on 2026-10-27):**
+
+1. **A pragma** (seen by the authorizer at prepare): classified by `src/utils.ts`'s lists — moved where the worker imports them, one source — applied to the name and value SQLite reports: a value with a name outside `INTROSPECTION_PRAGMAS` is a write; a name in `BARE_WRITING_PRAGMAS` is a write without a value too; anything else is a read. That is rc.10's behaviour, without a regex on the text.
+2. **`ATTACH`, `DETACH`**: writes, as the regex makes them today.
+3. **Transaction control**: refused by the authorizer, unchanged.
+4. **Everything else**: `isexplain` non-zero is a read; otherwise `stmt_readonly`.
+
+The classification is computed at prepare and kept with the cached statement, as `controlSql` is, since the authorizer does not run on a cache hit. It lives in the worker only: the worker needs it for its own guard (`first()`), and a page-side copy would mean a second reading of the SQL, by regex, for one round trip saved per distinct pragma (Claude's recommendation, accepted with the rule). Connection settings go to the writer, as with `write()` today; that divergence is not new and not addressed.
 
 ### Routing by verdict
 
-Applies to `run()`, `stream()` and `chunk()` on the client. (`read()`/`first()` and transactions: below.)
+Applies to `run()`, `all()`, `stream()` and `chunk()` on the client. (`first()` and transactions: below.)
 
 1. **The memo.** The client keeps a `Map` from SQL text to verdict. A known verdict sends the statement straight to today's path: the read queue, or the write lock then the writer queue.
 2. **An unknown verdict asks a worker first.** The request waits on the client **at the head of every queue, writers included**, and goes out at the first event that proves a worker reachable:
@@ -96,18 +108,20 @@ Applies to `run()`, `stream()` and `chunk()` on the client. (`read()`/`first()` 
 - Estimated, not measured: a hit costs a hash and a compare, about a microsecond, against ~0.2 ms for a worker round trip (`mem:measurements/step`: a one-row `first()` costs 0.21-0.27 ms); a few dozen bytes per entry plus the text when it is not a literal the caller already holds. The pathological case is SQL with values written into its text: each call is a new key, pays its verdict and pushes others out — the bound protects memory, not speed, as for the statement cache.
 - **Measured after implementation**, to keep or remove it.
 
-### `read()` and `first()`
+### `first()`
 
-They ask for no verdict: they go straight to the read queue, and the worker checks `sqlite3_stmt_readonly` after the prepare and before any `step` — cache hits included — refusing a write with `NOT_A_READ_QUERY`. No round trip. The regex `isReadQuery` and the client-side `assertReadable` go. (This is the follow-up "read workers refuse writes themselves", opened by the user on 2026-10-04.)
+It asks for no verdict: it goes straight to the read queue, and the worker classifies the statement (§ The classification) after the prepare and before any `step` — cache hits included — refusing a write with `NOT_A_READ_QUERY`. No round trip. The regex `isReadQuery` and the client-side `assertReadable` go. (This is the follow-up "read workers refuse writes themselves", opened by the user on 2026-10-04.)
 
 ### Transactions
 
-One connection, so no routing: `tx.run()`, `tx.stream()`, `tx.chunk()` run on the transaction's worker; `tx.read()`/`tx.first()` refuse a write through the same worker-side check.
+One connection, so no routing: `tx.run()`, `tx.all()`, `tx.stream()`, `tx.chunk()` run on the transaction's worker; `tx.first()` refuses a write through the same worker-side check.
 
-`src/transaction.ts` uses `isWriteQuery` twice today, on the page, before posting; both decisions move to the worker, after the prepare (Claude's call — keeping the regex there contradicts the user's "SQLite decides", and savepointing every statement that carries its own signal would make reads pay what D4 of spec 2026-09-11 spared them):
+`src/transaction.ts` uses `isWriteQuery` twice today, on the page, before posting; neither keeps the regex (Claude's calls — keeping it contradicts the user's "SQLite decides", and savepointing every statement that carries its own signal would make reads pay what D4 of spec 2026-09-11 spared them):
 
-- **A `readOnly` transaction** refuses a write with `READ_ONLY_TRANSACTION`, as today: the message says the transaction is read-only, the worker checks `stmt_readonly`. Nothing else guards it — connections open `SQLITE_OPEN_READWRITE` and no `query_only` is set.
-- **The library's savepoint** (`opensSavepoint`, spec 2026-09-11 R1): the page sends "savepoint if it writes" for a statement carrying its own signal or timeout; the worker opens `__bsq_sp` only when `stmt_readonly` is 0. The pending-conclusion protocol of `via` must then learn whether a savepoint was actually opened, from the worker's reply. **`tx.stream()`/`tx.chunk()` take writes again**: the path that runs a generator's write inside the library's savepoint (`drainToEnd`, the `st.savepointed` branches of `chunkSource`/`releasing` in `src/transaction.ts`) was kept for this workstream and comes back into use, with tests (they were removed by `fix/tx-api-consistency`).
+- **A `readOnly` transaction** refuses a write with `READ_ONLY_TRANSACTION`, as today: the message says the transaction is read-only, and the worker refuses a statement its classification calls a write, before any `step`. Nothing else guards it — connections open `SQLITE_OPEN_READWRITE` and no `query_only` is set.
+- **The library's savepoint** (`opensSavepoint`, spec 2026-09-11 R1) needs the kind **on the page, before posting**: the whole abandon structure (`driving`, the abort race, `via(true)`) is built around it. So, for a statement carrying its own signal or timeout only, the transaction asks for the kind at the statement's turn in its queue: from the client's memo, or else as a verdict from **its own worker** (idle at that turn, since the queue serialises the statements). Revised on 2026-10-27, while planning, from a first version where the worker decided after the prepare: that one would have made the page learn after the fact whether a savepoint was opened, and rebuilt the abandon structure around it.
+
+**`tx.stream()`/`tx.chunk()` take writes again**: the path that runs a generator's write inside the library's savepoint (`drainToEnd`, the `st.savepointed` branches of `chunkSource`/`releasing` in `src/transaction.ts`) was kept for this workstream and comes back into use, with tests (they were removed by `fix/tx-api-consistency`). **`tx.stream()`/`tx.chunk()` take writes again**: the path that runs a generator's write inside the library's savepoint (`drainToEnd`, the `st.savepointed` branches of `chunkSource`/`releasing` in `src/transaction.ts`) was kept for this workstream and comes back into use, with tests (they were removed by `fix/tx-api-consistency`).
 
 ## Cost of a verdict
 
@@ -115,7 +129,7 @@ One worker round trip (~0.2 ms) plus a prepare when the asked worker does not ho
 
 ## Open — to measure, then decide with the user, before the implementation that depends on it
 
-1. **Where `stmt_readonly` and "changes something" disagree.** Inventory from SQLite's documentation and source (2026-10-26); the measurement covers every line, and the cost per prepare.
+1. **Where `stmt_readonly` and "changes something" disagree.** Inventory from SQLite's documentation and source (2026-10-26). **Measured on 2026-10-27; the result and the rule it leads to, confirmed by the user, are in § The classification.** Closed; the inventory below stays as the list of cases the tests pin.
 
    Answered 1 although they change something:
    - **Transaction control**: `BEGIN` (deferred), `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE` answer 1 (documentation); `BEGIN IMMEDIATE`/`EXCLUSIVE` answer 0. Covered: the authorizer refuses them at prepare, so at the verdict too, with `AUTH` — to pin by a test.
@@ -136,9 +150,9 @@ One worker round trip (~0.2 ms) plus a prepare when the asked worker does not ho
 
 ## Goals
 
-- `run()` takes any single statement and returns `{ rows, affected }`; `stream()`/`chunk()` take writes and expose `affected`.
+- `run()` takes any single statement and returns `{ rows, affected }`; `all()` returns its rows; `stream()`/`chunk()` take writes and expose `affected`; `first()` alone refuses writes.
 - SQLite decides read or write; the regex is gone from routing.
-- A write never runs on a read worker, whatever path it takes (verdict, memo, `read()`/`first()`, transaction).
+- A write never runs on a read worker, whatever path it takes (verdict, memo, `first()`, transaction).
 - Multi-statement strings are refused before anything runs.
 
 ## Non-goals
@@ -164,6 +178,7 @@ One worker round trip (~0.2 ms) plus a prepare when the asked worker does not ho
 ## Breaking changes (CHANGELOG `### Breaking`, commits marked `!` with a `BREAKING CHANGE:` footer)
 
 - `write()` is removed; `run()` replaces it.
+- `read()` is removed; `all()` replaces it and also takes writes.
 - The write result's `result` is renamed `rows`.
 - Multi-statement strings are refused, and their parameter binding (rc.10) is removed.
 
