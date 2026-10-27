@@ -1014,7 +1014,7 @@ export const createSQLiteClient = (
       request.acquired(lease.worker.index);
       const lent = lease;
       lease = {
-        worker: lent.worker,
+        ...lent,
         release: () => {
           request.released();
           lent.release();
@@ -1452,7 +1452,14 @@ export const createSQLiteClient = (
   });
 
   const transaction = createTransaction({
-    scheduler: { ...scheduler, acquire: acquireInstrumented },
+    scheduler: {
+      ...scheduler,
+      // Verdicts bypass the instrumented path until they are wired in.
+      acquire: (kind, signal) =>
+        kind === 'verdict'
+          ? scheduler.acquire(kind, signal)
+          : acquireInstrumented(kind, signal),
+    },
     afterWrite,
     // Wrapped, not passed by reference: handleDeath is declared further down
     // and would be in its temporal dead zone here.
