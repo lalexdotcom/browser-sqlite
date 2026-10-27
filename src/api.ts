@@ -274,6 +274,66 @@ export type SQLiteQueryAPI = {
   };
 
   /**
+   * Runs any single statement and returns its rows and the number of rows it
+   * changed.
+   *
+   * SQLite, not the text, says whether the statement reads or writes: the
+   * first call of a SQL text asks a worker to prepare it, and the answer is
+   * kept for the client's life. A read then runs on any free worker, a write
+   * through the single writer.
+   *
+   * In a transaction both run on its connection, and SQLite is asked only
+   * for a statement carrying its own `signal` or `timeout`: a write among
+   * those runs inside a savepoint, so that abandoning it alone undoes it.
+   *
+   * A string holding more than one statement is refused with
+   * `MULTIPLE_STATEMENTS`, before anything runs. `timeout` counts from the
+   * call, so it covers the wait for that answer.
+   *
+   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
+   *
+   * @param sql - One SQL statement, read or write.
+   * @param params - Positional parameters bound to `?` placeholders.
+   * @param options - Optional query options (`signal`, `timeout`).
+   * @returns Promise resolving to `{ rows, affected }`: every row produced,
+   *   a `RETURNING`'s included, and the rows changed — 0 for a read.
+   */
+  run: {
+    <T extends Record<string, unknown>>(
+      query: SQLQuery,
+      options?: SQLiteQueryOptions,
+    ): Promise<SQLiteRunResult<T>>;
+    <T extends Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+      options?: SQLiteQueryOptions,
+    ): Promise<SQLiteRunResult<T>>;
+  };
+
+  /**
+   * Runs any single statement and returns its rows: `run()`'s `rows`. A write
+   * is run too — `all('DELETE … RETURNING id')` deletes and returns the ids.
+   *
+   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
+   *
+   * @param sql - One SQL statement, read or write.
+   * @param params - Positional parameters bound to `?` placeholders.
+   * @param options - Optional query options (`chunkSize`, `signal`, `timeout`).
+   * @returns Promise resolving to every row the statement produced.
+   */
+  all: {
+    <T extends Record<string, unknown>>(
+      query: SQLQuery,
+      options?: SQLiteChunkOptions,
+    ): Promise<T[]>;
+    <T extends Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+      options?: SQLiteChunkOptions,
+    ): Promise<T[]>;
+  };
+
+  /**
    * Executes a query and yields result rows in chunks via an async generator.
    * Memory-efficient for large result sets — rows are not buffered in full.
    *
@@ -433,65 +493,9 @@ export type SQLiteQueryAPI = {
 
 export type SQLiteDB = SQLiteQueryAPI & {
   /**
-   * Runs any single statement and returns its rows and the number of rows it
-   * changed.
-   *
-   * SQLite, not the text, says whether the statement reads or writes: the
-   * first call of a SQL text asks a worker to prepare it, and the answer is
-   * kept for the client's life. A read then runs on any free worker, a write
-   * through the single writer.
-   *
-   * A string holding more than one statement is refused with
-   * `MULTIPLE_STATEMENTS`, before anything runs. `timeout` counts from the
-   * call, so it covers the wait for that answer.
-   *
-   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
-   *
-   * @param sql - One SQL statement, read or write.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`signal`, `timeout`).
-   * @returns Promise resolving to `{ rows, affected }`: every row produced,
-   *   a `RETURNING`'s included, and the rows changed — 0 for a read.
-   */
-  run: {
-    <T extends Record<string, unknown>>(
-      query: SQLQuery,
-      options?: SQLiteQueryOptions,
-    ): Promise<SQLiteRunResult<T>>;
-    <T extends Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
-      options?: SQLiteQueryOptions,
-    ): Promise<SQLiteRunResult<T>>;
-  };
-
-  /**
-   * Runs any single statement and returns its rows: `run()`'s `rows`. A write
-   * is run too — `all('DELETE … RETURNING id')` deletes and returns the ids.
-   *
-   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
-   *
-   * @param sql - One SQL statement, read or write.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`chunkSize`, `signal`, `timeout`).
-   * @returns Promise resolving to every row the statement produced.
-   */
-  all: {
-    <T extends Record<string, unknown>>(
-      query: SQLQuery,
-      options?: SQLiteChunkOptions,
-    ): Promise<T[]>;
-    <T extends Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
-      options?: SQLiteChunkOptions,
-    ): Promise<T[]>;
-  };
-
-  /**
    * Executes a callback within a SQLite transaction, providing a scoped
-   * `SQLiteTransactionDB` with `read`, `write`, `chunk`, `stream`, `first`,
-   * `bulkWrite`, `output`, `commit`, and `rollback` methods.
+   * `SQLiteTransactionDB` with `run`, `all`, `read`, `write`, `chunk`,
+   * `stream`, `first`, `bulkWrite`, `output`, `commit`, and `rollback` methods.
    *
    * The worker is held exclusively for the transaction's duration.
    * On callback success: auto-commits if `autoCommit` is `true` (default).

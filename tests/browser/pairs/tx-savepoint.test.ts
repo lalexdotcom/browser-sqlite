@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, scaled } from '../helpers';
+import { createTestClient, interceptWorkers, scaled } from '../helpers';
 
 /**
  * docs/superpowers/specs/2026-09-11-tx-savepoint-design.md: a statement the
@@ -132,9 +132,9 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
         let nextWaited = 0;
         await db.transaction(async (tx) => {
           const t0 = performance.now();
-          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
           const t1 = performance.now();
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
           rejectedAfter = t1 - t0;
           nextWaited = performance.now() - t1;
         });
@@ -164,15 +164,15 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
         let rejectedAfter = 0;
         let nextWaited = 0;
         await db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          await tx.run('INSERT INTO t VALUES (1)');
+          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
           const t0 = performance.now();
           second = await tx
-            .write('INSERT INTO t VALUES (9)', [], { timeout: 20 })
+            .run('INSERT INTO t VALUES (9)', [], { timeout: 20 })
             .catch((e) => e);
           const t1 = performance.now();
           rejectedAfter = t1 - t0;
-          await tx.write('INSERT INTO t VALUES (2)');
+          await tx.run('INSERT INTO t VALUES (2)');
           nextWaited = performance.now() - t1;
         });
         expect(second).toMatchObject({
@@ -198,8 +198,8 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
       const db = await setUp();
       try {
         await db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
-          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          await tx.run('INSERT INTO t VALUES (1)');
+          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
         });
         expect(await rowsOf(db)).toEqual([0, 1]);
         expect(await bigCount(db)).toBe(0);
@@ -230,8 +230,8 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
         expect(
           db.transaction(async (tx) => {
             seen = tx.signal;
-            await tx.write('INSERT INTO t VALUES (1)');
-            await tx.write(HUGE_INSERT, [], {
+            await tx.run('INSERT INTO t VALUES (1)');
+            await tx.run(HUGE_INSERT, [], {
               signal: abortAfter(30, reason),
             });
           }),
@@ -271,9 +271,9 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
         outcome = await db
           .transaction(
             async (tx) => {
-              await tx.write('INSERT INTO t VALUES (1)');
-              await tx.write(HUGE_INSERT, [], { timeout: 30 }).catch(() => {});
-              await tx.write('INSERT INTO t VALUES (2)');
+              await tx.run('INSERT INTO t VALUES (1)');
+              await tx.run(HUGE_INSERT, [], { timeout: 30 }).catch(() => {});
+              await tx.run('INSERT INTO t VALUES (2)');
             },
             { timeout: 150 },
           )
@@ -290,6 +290,91 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
       expect(took).toBeLessThan(natural * 0.6);
       expect(await rowsOf(db)).toEqual([0]);
       expect(await bigCount(db)).toBe(0);
+    } finally {
+      await db.close();
+    }
+  });
+});
+
+describe('the savepoint asks SQLite (spec 2026-10-26, § Transactions)', () => {
+  // Falsifiable: in src/transaction.ts's `abandon`, drop `pending = 'undo'` —
+  // the next message then releases the abandoned write instead of undoing it.
+  it(
+    'undoes a tx.run() write aborted by its own signal while it runs, and goes on',
+    async () => {
+      const db = await setUp();
+      try {
+        const before = workerIdentity(db);
+        const reason = new Error('this write only');
+        let caught: unknown;
+        await db.transaction(async (tx) => {
+          await tx.run('INSERT INTO t VALUES (1)');
+          caught = await tx
+            .run(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+            .catch((e) => e);
+          await tx.run('INSERT INTO t VALUES (2)');
+        });
+        expect(caught).toBe(reason);
+        expect(await rowsOf(db)).toEqual([0, 1, 2]);
+        expect(await bigCount(db)).toBe(0);
+        expect(workerIdentity(db)).toBe(before);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
+
+  /** The `savepoint` option of every query posted, keyed by its SQL. */
+  const savepointsPosted = (worker: Worker) => {
+    const seen: { sql: string; savepoint: unknown }[] = [];
+    const post = worker.postMessage.bind(worker) as (
+      message: unknown,
+      ...rest: unknown[]
+    ) => void;
+    worker.postMessage = (message: unknown, ...rest: unknown[]) => {
+      const data = message as {
+        type?: string;
+        sql?: string;
+        options?: { savepoint?: unknown };
+      };
+      if (data?.type === 'query')
+        seen.push({
+          sql: String(data.sql),
+          savepoint: data.options?.savepoint,
+        });
+      post(message, ...rest);
+    };
+    return seen;
+  };
+
+  // The regex called `SELECT 'INSERT'` a write; SQLite calls it a read, and a
+  // read pays no savepoint (spec 2026-09-11, D4). The INSERT is the control:
+  // the same signal on a write opens one. Falsifiable: have opensSavepoint
+  // ignore the verdict — the SELECT then opens a savepoint too.
+  it("opens no savepoint for SELECT 'INSERT' carrying its own signal", async () => {
+    const records = interceptWorkers();
+    const db = await setUp();
+    try {
+      const [record] = records;
+      if (!record) throw new Error('the pool has a worker');
+      const seen = savepointsPosted(record.worker);
+      let result: unknown;
+      await db.transaction(async (tx) => {
+        result = await tx.run("SELECT 'INSERT'", [], {
+          signal: new AbortController().signal,
+        });
+        await tx.run('INSERT INTO t VALUES (1)', [], {
+          signal: new AbortController().signal,
+        });
+      });
+      expect(result).toEqual({ rows: [{ "'INSERT'": 'INSERT' }], affected: 0 });
+      const opened = (sql: string) =>
+        seen
+          .filter((q) => q.sql === sql)
+          .map((q) => (q.savepoint as { open?: true } | undefined)?.open);
+      expect(opened("SELECT 'INSERT'")).toEqual([undefined]);
+      expect(opened('INSERT INTO t VALUES (1)')).toEqual([true]);
     } finally {
       await db.close();
     }

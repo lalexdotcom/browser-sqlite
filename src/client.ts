@@ -1363,6 +1363,33 @@ export const createSQLiteClient = (
   };
 
   /**
+   * `kindFor` for a transaction: a settled memo entry, or else a verdict from
+   * `worker` itself — the transaction's, idle at its statement's turn — kept
+   * in the memo. A verdict in flight elsewhere is not joined: it may be
+   * waiting for this very worker, which is not offered until the statement
+   * settles. `signal` ends the caller's wait, not the verdict.
+   */
+  const kindOnWorker = async (
+    worker: PoolWorker,
+    sql: string,
+    signal?: AbortSignal,
+  ): Promise<StatementKind> => {
+    signal?.throwIfAborted();
+    const known = verdicts.get(sql);
+    if (typeof known === 'string') return kindOf(known);
+    const asked = worker.verdict(sql);
+    asked.then(
+      (verdict) => {
+        if (typeof verdicts.get(sql) !== 'string') verdicts.set(sql, verdict);
+      },
+      () => {
+        // Not memoised; the caller has the rejection, or has left.
+      },
+    );
+    return kindOf(await (signal ? raceAbort(signal, asked) : asked));
+  };
+
+  /**
    * Executes a read query and returns all results.
    * Automatically acquires and releases a worker from the pool.
    *
@@ -1612,6 +1639,7 @@ export const createSQLiteClient = (
     offer: (worker) => {
       scheduler.offer(worker);
     },
+    kindOf: kindOnWorker,
     afterWrite,
     // Wrapped, not passed by reference: handleDeath is declared further down
     // and would be in its temporal dead zone here.

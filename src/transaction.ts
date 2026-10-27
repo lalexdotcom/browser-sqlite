@@ -8,6 +8,7 @@ import type {
 } from './api';
 import { prepareParams, type QueryParams } from './binary';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
+import type { StatementKind } from './classify';
 import { flatten } from './flatten';
 import type { Logger } from './logger';
 import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
@@ -27,7 +28,6 @@ import { queryArgs, type SQLQuery } from './sql';
 import { SQLiteError } from './types/errors';
 import {
   assertReadable,
-  isWriteQuery,
   mergeSignals,
   quoteIdent,
   withDeadline,
@@ -111,6 +111,16 @@ export const createTransaction =
      * that worker is idle and inside the transaction: between two statements.
      */
     offer: (worker: PoolWorker) => void;
+    /**
+     * Whether `sql` reads or writes, as SQLite says: the client's memo, or a
+     * verdict from `worker` itself, which the caller holds idle. `signal` ends
+     * the wait. Rejects `MULTIPLE_STATEMENTS` for a string of several.
+     */
+    kindOf: (
+      worker: PoolWorker,
+      sql: string,
+      signal?: AbortSignal,
+    ) => Promise<StatementKind>;
     afterWrite: (worker: PoolWorker) => Promise<unknown>;
     /**
      * Called when a connection may still hold an open transaction. The worker
@@ -286,6 +296,8 @@ export const createTransaction =
        * own signal aborts in that window never reaches the worker: it broke
        * spec R7 (`tests/unit/transaction.test.ts`, "does not die when a read is
        * abandoned by its own signal"), where the read must run on and be judged.
+       * The one statement that cannot is one that asks SQLite first
+       * (`opensSavepoint`): an abort during the ask rejects it alone, unposted.
        */
       let tail: Promise<void> | undefined;
 
@@ -502,17 +514,49 @@ export const createTransaction =
       };
 
       /**
+       * What SQLite says of `sql`, asked of this transaction's worker. A
+       * failed verdict is no answer: the statement then runs savepointed and
+       * reports its own error, as it would without a signal. `waiting` cut
+       * short is the statement's own rejection.
+       */
+      const kindAt = async (
+        sql: string,
+        waiting: AbortSignal | undefined,
+      ): Promise<StatementKind> => {
+        try {
+          return await deps.kindOf(worker, sql, waiting);
+        } catch (e) {
+          waiting?.throwIfAborted();
+          if (e instanceof SQLiteError && e.code === 'MULTIPLE_STATEMENTS')
+            throw e;
+          return 'write';
+        }
+      };
+
+      /**
        * Whether a statement runs inside the library's savepoint (spec
        * 2026-09-11, R1): a write the caller may abandon alone — it carries its
        * own signal or timeout, not already aborted at the call. Only those pay
-       * (D4). A consumer's transaction control is refused by the worker's
-       * authorizer (spec 2026-10-04, § 4).
+       * (D4), and only those ask SQLite, at the statement's turn on the idle
+       * connection (spec 2026-10-26, § Transactions). `known` is a kind the
+       * library has without asking. A read-only transaction opens none: its
+       * worker refuses a write before any step. A consumer's transaction
+       * control is refused by the worker's authorizer (spec 2026-10-04, § 4).
+       *
+       * Synchronous when nothing is asked, so that such a statement still
+       * posts in the tick it was issued (see `tail`).
        */
       const opensSavepoint = (
         sql: string,
         own: AbortSignal | undefined,
         abortedAtCall: boolean,
-      ) => own !== undefined && !abortedAtCall && isWriteQuery(sql);
+        waiting: AbortSignal | undefined,
+        known?: StatementKind,
+      ): boolean | Promise<boolean> => {
+        if (own === undefined || abortedAtCall || readOnly) return false;
+        if (known !== undefined) return known === 'write';
+        return kindAt(sql, waiting).then((kind) => kind === 'write');
+      };
 
       /**
        * Kills the transaction when the connection reports it is no longer in
@@ -576,6 +620,10 @@ export const createTransaction =
        * `abandoned`, which the next entry point awaits. The wait is owed only
        * by a statement that was posted (`mark.posted`) — a statement the reuse
        * guard refused never was.
+       *
+       * `savepointed` is false until `decide()` has run, at the statement's
+       * turn: `settled` calls it after the queue, `releasing` at the first
+       * `next()`, and everything that reads it reads it after.
        */
       const withSignal = <
         O extends {
@@ -593,6 +641,8 @@ export const createTransaction =
          * they are themselves holding.
          */
         queued = true,
+        /** A kind the library has without asking SQLite (`opensSavepoint`). */
+        known?: StatementKind,
       ): {
         options: O;
         driving: O;
@@ -603,6 +653,8 @@ export const createTransaction =
         own: AbortSignal | undefined;
         abortedAtCall: boolean;
         savepointed: boolean;
+        decide: () => boolean | Promise<boolean>;
+        ownIfSavepointed: AbortSignal | undefined;
         mark: { posted: boolean };
       } => {
         const own = withDeadline(given, method);
@@ -611,17 +663,49 @@ export const createTransaction =
         // statement has already rejected.
         const abortedAtCall = own.signal?.aborted === true;
         const merged = mergeSignals(signal, own.signal);
+        // The statement's own abort, relayed once it runs savepointed: what
+        // the stream adapter checks before each buffered row.
+        const gate =
+          own.signal && !abortedAtCall && !readOnly
+            ? new AbortController()
+            : undefined;
+        let unlink: (() => void) | undefined;
         const release = () => {
+          unlink?.();
           merged.release();
           own.release();
         };
-        const savepointed = opensSavepoint(sql, own.signal, abortedAtCall);
         const mark = { posted: false };
         const options = { ...given, signal: merged.signal } as O;
         // A savepointed write's QUERY runs with the transaction's signal alone,
         // so that only a death cuts it: SQLite closes every savepoint when it
         // interrupts a write (spec 2026-09-11, §1).
-        const driving = savepointed ? ({ ...given, signal } as O) : options;
+        const driving = { ...given, signal } as O;
+        const decided = (opens: boolean) => {
+          st.savepointed = opens;
+          const source = own.signal;
+          if (opens && gate && source) {
+            const relay = () => gate.abort(source.reason);
+            if (source.aborted) relay();
+            else {
+              source.addEventListener('abort', relay, { once: true });
+              unlink = () => source.removeEventListener('abort', relay);
+            }
+          }
+          return opens;
+        };
+        const decide = () => {
+          const opens = opensSavepoint(
+            sql,
+            own.signal,
+            abortedAtCall,
+            options.signal,
+            known,
+          );
+          return typeof opens === 'boolean'
+            ? decided(opens)
+            : opens.then(decided);
+        };
         const settled = async <R>(
           start: (target: PoolWorker, options: O) => Promise<R>,
         ): Promise<R> => {
@@ -638,7 +722,13 @@ export const createTransaction =
           try {
             if (prior) await queueWait(prior, options.signal);
             if (abandoned) await entryWait(options.signal);
-            if (!savepointed) return await start(via(false, mark), options);
+            // At its turn: nothing of this transaction is on the worker, so a
+            // verdict asked of it waits behind no statement. Awaited only when
+            // asked, so the common path still posts synchronously.
+            const deciding = decide();
+            const opens =
+              typeof deciding === 'boolean' ? deciding : await deciding;
+            if (!opens) return await start(via(false, mark), options);
             // Its own signal may have fired during the wait: then it never
             // reached the worker, and rejects alone.
             own.signal?.throwIfAborted();
@@ -693,16 +783,19 @@ export const createTransaction =
             }
           }
         };
-        return {
+        const st = {
           options,
           driving,
           release,
           settled,
           own: own.signal,
           abortedAtCall,
-          savepointed,
+          savepointed: false,
+          decide,
+          ownIfSavepointed: gate?.signal,
           mark,
         };
+        return st;
       };
 
       /**
@@ -724,7 +817,7 @@ export const createTransaction =
           release: () => void;
           own: AbortSignal | undefined;
           abortedAtCall: boolean;
-          savepointed: boolean;
+          decide: () => boolean | Promise<boolean>;
           mark: { posted: boolean };
           options: { signal?: AbortSignal | undefined };
         },
@@ -758,6 +851,11 @@ export const createTransaction =
           try {
             if (prior) await queueWait(prior, st.options.signal);
             if (abandoned) await entryWait(st.options.signal);
+            // At its turn, as in `settled`, and before `source` is first
+            // pulled: that pull builds the query from the decision.
+            const deciding = st.decide();
+            const savepointed =
+              typeof deciding === 'boolean' ? deciding : await deciding;
 
             // **The queue waits on the WORKER, not on this object.** A consumer
             // that stops pulling a query which has already reached `done`
@@ -786,7 +884,7 @@ export const createTransaction =
               void worker.free().then(releaseQueue, releaseQueue);
             };
 
-            if (!st.savepointed) {
+            if (!savepointed) {
               try {
                 for await (const value of source) {
                   watchIdle();
@@ -860,10 +958,11 @@ export const createTransaction =
       };
 
       /**
-       * The chunk source of `chunk()` and `stream()`. The worker and the options
-       * are settled when this is called, at the statement's call; the function
-       * it returns starts the query, so each method decides when: `chunk()` at
-       * the call, `stream()` at its first next().
+       * The chunk source of `chunk()` and `stream()`. The function it returns
+       * starts the query, and reads `savepointed` then, to choose the worker
+       * facade and the options: each method calls it once that is decided —
+       * `stream()` at its first next(), `chunk()` at the call when there is
+       * nothing to decide and at its first next() otherwise.
        */
       const chunkSource = <T extends Record<string, unknown>>(
         st: {
@@ -877,15 +976,17 @@ export const createTransaction =
         bound: ReturnType<typeof prepareParams>,
         entry: OpenStatement,
       ): (() => AsyncGenerator<T[]>) => {
-        const target = via(st.savepointed, st.mark);
-        const options: InternalChunkOptions = {
-          ...(st.savepointed ? st.driving : st.options),
-          onAbandon: st.release,
-          onTransport: (iterator) => {
-            entry.transport = iterator;
-          },
+        return () => {
+          const target = via(st.savepointed, st.mark);
+          const options: InternalChunkOptions = {
+            ...(st.savepointed ? st.driving : st.options),
+            onAbandon: st.release,
+            onTransport: (iterator) => {
+              entry.transport = iterator;
+            },
+          };
+          return chunkWorker<T>(target, query, bound, options);
         };
-        return () => chunkWorker<T>(target, query, bound, options);
       };
 
       /**
@@ -977,8 +1078,15 @@ export const createTransaction =
               const bound = prepareParams(params);
               // Not queued: `flush()` took the slot synchronously, the moment
               // the batch was committed to. Asking for a second one here would
-              // wait for the first.
-              const { settled } = withSignal(given, 'write', query, false);
+              // wait for the first. A batch is the library's own INSERT: a
+              // write, without asking.
+              const { settled } = withSignal(
+                given,
+                'write',
+                query,
+                false,
+                'write',
+              );
               return settled((target, options) =>
                 runWorker(target, query, bound, options).then(asWriteResult),
               );
@@ -1026,7 +1134,8 @@ export const createTransaction =
           } = queryArgs(input, second, third);
           const query = checksql(sql, 'read');
           const bound = prepareParams(params);
-          const { settled } = withSignal(given, 'read', query);
+          // Refused above unless a read: it asks nothing, and posts at once.
+          const { settled } = withSignal(given, 'read', query, true, 'read');
           return settled((target, options) =>
             readWorker<T>(target, query, bound, options),
           );
@@ -1051,6 +1160,45 @@ export const createTransaction =
           );
         },
 
+        run: async <T extends Record<string, unknown>>(
+          input: string | SQLQuery,
+          second?: unknown,
+          third?: Interruptible,
+        ) => {
+          if (ending) return Promise.reject(closedError(ending));
+          const {
+            sql,
+            params,
+            options: given,
+          } = queryArgs(input, second, third);
+          const query = checksql(sql);
+          const bound = prepareParams(params);
+          const { settled } = withSignal(given, 'run', query);
+          return settled((target, options) =>
+            runWorker<T>(target, query, bound, options),
+          );
+        },
+
+        all: async <T extends Record<string, unknown>>(
+          input: string | SQLQuery,
+          second?: unknown,
+          third?: SQLiteChunkOptions,
+        ) => {
+          if (ending) return Promise.reject(closedError(ending));
+          const {
+            sql,
+            params,
+            options: given,
+          } = queryArgs(input, second, third);
+          const query = checksql(sql);
+          const bound = prepareParams(params);
+          const { settled } = withSignal(given, 'all', query);
+          return settled(async (target, options) => {
+            const { rows } = await runWorker<T>(target, query, bound, options);
+            return rows;
+          });
+        },
+
         chunk: <T extends Record<string, unknown>>(
           input: string | SQLQuery,
           second?: unknown,
@@ -1068,7 +1216,15 @@ export const createTransaction =
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const source = chunkSource<T>(st, query, bound, entry)();
+          const start = chunkSource<T>(st, query, bound, entry);
+          // Built at the call when no signal of its own can open a savepoint;
+          // otherwise at the first next(), once SQLite has been asked.
+          const source =
+            st.own === undefined || st.abortedAtCall
+              ? start()
+              : (async function* () {
+                  yield* start();
+                })();
           return releasing(source, entry, st, 'chunk');
         },
 
@@ -1099,7 +1255,7 @@ export const createTransaction =
           // it before each buffered row and throws its reason into `releasing`.
           const rows = flatten(
             releasing(source, entry, st, 'stream'),
-            st.savepointed ? { signal: st.own } : undefined,
+            st.ownIfSavepointed ? { signal: st.ownIfSavepointed } : undefined,
           );
           // The transaction closes the adapter, which drops its buffered rows
           // and closes `releasing` in turn.
@@ -1120,7 +1276,8 @@ export const createTransaction =
           } = queryArgs(input, second, third);
           const query = checksql(sql);
           const bound = prepareParams(params);
-          const { settled } = withSignal(given, 'first', query);
+          // The worker refuses a write before any step: nothing to undo.
+          const { settled } = withSignal(given, 'first', query, true, 'read');
           return settled((target, options) =>
             firstWorker<T>(target, query, bound, {
               ...options,

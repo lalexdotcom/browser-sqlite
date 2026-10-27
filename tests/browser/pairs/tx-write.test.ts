@@ -190,3 +190,46 @@ describe('the staging sweep under a transaction', () => {
     }
   });
 });
+
+describe('tx.run() and tx.all() (spec 2026-10-26, § Transactions)', () => {
+  // Falsifiable: have tx.run() drop the rows runWorker returned.
+  it("returns an INSERT's RETURNING rows and its count, kept by the commit", async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE t (a INTEGER)');
+
+    let result: unknown;
+    await db.transaction(async (tx) => {
+      result = await tx.run('INSERT INTO t VALUES (7) RETURNING a');
+    });
+
+    expect(result).toEqual({ rows: [{ a: 7 }], affected: 1 });
+    expect(await db.read('SELECT a FROM t')).toEqual([{ a: 7 }]);
+  });
+
+  // Falsifiable: have tx.all() return run()'s whole result.
+  it('returns the rows of a SELECT', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE t (a INTEGER)');
+    await db.write('INSERT INTO t VALUES (1), (2)');
+
+    let rows: unknown;
+    await db.transaction(async (tx) => {
+      rows = await tx.all('SELECT a FROM t ORDER BY a');
+    });
+
+    expect(rows).toEqual([{ a: 1 }, { a: 2 }]);
+  });
+
+  // Falsifiable: drop the readOnly term from via() in src/transaction.ts.
+  it('refuses a write in a read-only transaction with READ_ONLY_TRANSACTION', async () => {
+    const db = await createTestClient();
+    await db.write('CREATE TABLE t (a INTEGER)');
+
+    await expect(
+      db.transaction((tx) => tx.run('INSERT INTO t VALUES (1)'), {
+        readOnly: true,
+      }),
+    ).rejects.toMatchObject({ code: 'READ_ONLY_TRANSACTION' });
+    expect(await db.read('SELECT a FROM t')).toEqual([]);
+  });
+});

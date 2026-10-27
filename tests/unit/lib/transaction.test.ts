@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SQLiteSavepoint, SQLiteTransactionDB } from '../../../src/api';
+import { raceAbort } from '../../../src/queries';
 import { createTransaction } from '../../../src/transaction';
 import { SQLiteError } from '../../../src/types/errors';
 
@@ -89,10 +90,14 @@ const harness = (
     afterWrite?: () => Promise<unknown>;
     /** Default never aborts: these tests are about the caller's own signal. */
     closeSignal?: AbortSignal;
+    /** What SQLite says of a statement. Default: a write unless it is a SELECT. */
+    kindOf?: (sql: string) => Promise<'read' | 'write'>;
   } = {},
 ) => {
   const poisoned: number[] = [];
   const warnings: string[] = [];
+  /** Every statement the transaction asked SQLite about, in order. */
+  const asked: string[] = [];
   const scheduler = {
     // Mirrors the real scheduler: the signal aborts the WAIT, rejecting with
     // `signal.reason` while the request is still queued.
@@ -104,6 +109,14 @@ const harness = (
   const transaction = createTransaction({
     scheduler: scheduler as never,
     offer: () => {},
+    // As the client's: the signal ends the caller's wait, not the verdict.
+    kindOf: (_worker: unknown, sql: string, signal?: AbortSignal) => {
+      asked.push(sql);
+      const answer =
+        overrides.kindOf?.(sql) ??
+        Promise.resolve(/^\s*SELECT\b/i.test(sql) ? 'read' : 'write');
+      return signal ? raceAbort(signal, answer) : answer;
+    },
     afterWrite: overrides.afterWrite ?? (() => Promise.resolve()),
     onPoisoned: (index: number) => poisoned.push(index),
     closeSignal: overrides.closeSignal ?? new AbortController().signal,
@@ -114,7 +127,7 @@ const harness = (
     }),
     logger: { always: { warn: (message: string) => warnings.push(message) } },
   });
-  return { transaction, poisoned, warnings };
+  return { transaction, poisoned, warnings, asked };
 };
 
 describe('transaction — a poisoned connection is never re-lent', () => {
@@ -828,6 +841,12 @@ describe('transaction — a savepointed write, and the message after it (spec 20
     ],
     ['first', (tx) => tx.first('SELECT 2'), 'SELECT 2'],
     [
+      'run',
+      (tx) => tx.run('INSERT INTO t VALUES (2)'),
+      'INSERT INTO t VALUES (2)',
+    ],
+    ['all', (tx) => tx.all('SELECT 2'), 'SELECT 2'],
+    [
       'chunk',
       async (tx) => {
         for await (const _rows of tx.chunk('SELECT 2')) {
@@ -1408,7 +1427,7 @@ describe('tx.savepoint() — failures and endings (spec 2026-10-04, E12, D5, U4,
 // the same. Falsifiable: drop `async` from tx.read/write/first in
 // src/transaction.ts and the call throws instead of returning.
 describe('transaction — a refused argument rejects, never throws', () => {
-  for (const method of ['read', 'write', 'first'] as const) {
+  for (const method of ['read', 'write', 'first', 'run', 'all'] as const) {
     it(`tx.${method}() rejects a query that is neither a string nor sql`, async () => {
       const { transaction } = harness(fakeWorker([]));
       let returned: Promise<unknown> | undefined;
@@ -1490,6 +1509,229 @@ describe('transaction — read methods refuse a write, as the client does', () =
       });
       expect(outcome).toMatchObject({ code: 'NOT_A_READ_QUERY' });
       expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+    });
+  }
+});
+
+describe('transaction — the savepoint asks SQLite (spec 2026-10-26, § Transactions)', () => {
+  const ownSignal = () => new AbortController().signal;
+
+  // Falsifiable: drop the `own !== undefined` term from opensSavepoint in
+  // src/transaction.ts — every statement then asks.
+  it('asks nothing for a statement without its own signal or timeout, or aborted at the call', async () => {
+    const worker = fakeWorker([]);
+    const { transaction, asked } = harness(worker);
+    const gone = new AbortController();
+    gone.abort(new Error('gone'));
+    await transaction(async (tx) => {
+      await tx.run('INSERT INTO t VALUES (1)');
+      await tx.all('SELECT 1');
+      await tx
+        .run('INSERT INTO t VALUES (2)', [], { signal: gone.signal })
+        .catch(() => {});
+    });
+    expect(asked).toEqual([]);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'INSERT INTO t VALUES (1)',
+      'SELECT 1',
+      'COMMIT',
+    ]);
+  });
+
+  // Falsifiable: in `settled`, decide the savepoint before `queueWait` — the
+  // verdict is then asked while the statement before it still runs.
+  it("asks at the statement's turn, once the statement before it has ended", async () => {
+    const reached = deferred();
+    const gate = deferred();
+    const worker = fakeWorker([], {
+      'INSERT INTO t VALUES (1)': async () => {
+        reached.resolve();
+        await gate.promise;
+      },
+    });
+    const { transaction, asked } = harness(worker);
+    let askedMeanwhile: string[] = [];
+    await transaction(async (tx) => {
+      const first = tx.run('INSERT INTO t VALUES (1)');
+      const second = tx.run('INSERT INTO t VALUES (2)', [], {
+        signal: ownSignal(),
+      });
+      await reached.promise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      askedMeanwhile = [...asked];
+      gate.resolve();
+      await Promise.all([first, second]);
+    });
+    expect(askedMeanwhile).toEqual([]);
+    expect(asked).toEqual(['INSERT INTO t VALUES (2)']);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'INSERT INTO t VALUES (1)',
+      'SAVEPOINT __bsq_sp',
+      'INSERT INTO t VALUES (2)',
+      'RELEASE __bsq_sp',
+      'COMMIT',
+    ]);
+  });
+
+  // Falsifiable: have opensSavepoint ignore the verdict (`=== 'write'`
+  // dropped) — the SELECT then opens a savepoint too.
+  it('opens a savepoint for what SQLite calls a write, and none for a read, whatever the text', async () => {
+    const worker = fakeWorker([]);
+    const { transaction, asked } = harness(worker);
+    await transaction(async (tx) => {
+      await tx.run("SELECT 'INSERT'", [], { signal: ownSignal() });
+      await tx.run('INSERT INTO t VALUES (1)', [], { signal: ownSignal() });
+    });
+    expect(asked).toEqual(["SELECT 'INSERT'", 'INSERT INTO t VALUES (1)']);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      "SELECT 'INSERT'",
+      'SAVEPOINT __bsq_sp',
+      'INSERT INTO t VALUES (1)',
+      'RELEASE __bsq_sp',
+      'COMMIT',
+    ]);
+  });
+
+  // The worker refuses a write before it runs, in a read-only transaction and
+  // in first(): there is nothing to undo. Falsifiable, each: drop the readOnly
+  // term from opensSavepoint; have first() pass no kind to withSignal.
+  it('asks nothing in a read-only transaction', async () => {
+    const worker = fakeWorker([]);
+    const { transaction, asked } = harness(worker);
+    await transaction(
+      async (tx) => {
+        await tx.run('INSERT INTO t VALUES (1)', [], { signal: ownSignal() });
+      },
+      { readOnly: true },
+    );
+    expect(asked).toEqual([]);
+    expect(worker.executed).toEqual([
+      'BEGIN',
+      'INSERT INTO t VALUES (1)',
+      'COMMIT',
+    ]);
+  });
+
+  it('asks nothing for first()', async () => {
+    const worker = fakeWorker([]);
+    const { transaction, asked } = harness(worker);
+    await transaction(async (tx) => {
+      await tx.first('INSERT INTO t VALUES (1)', [], { signal: ownSignal() });
+    });
+    expect(asked).toEqual([]);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'INSERT INTO t VALUES (1)',
+      'COMMIT',
+    ]);
+  });
+
+  // Falsifiable: ask without the statement's signal (`undefined` to
+  // deps.kindOf) — the statement then waits for the answer, which comes only
+  // after it has settled, and this test times out.
+  it('rejects a statement whose own signal fires while SQLite is asked, alone, posting nothing', async () => {
+    const answer = deferred();
+    const worker = fakeWorker([]);
+    const { transaction, asked } = harness(worker, {
+      kindOf: async (sql) => {
+        if (sql === 'INSERT INTO t VALUES (1)') await answer.promise;
+        return 'write';
+      },
+    });
+    const own = new AbortController();
+    const reason = new Error('this write only');
+    let refused: unknown;
+    await transaction(async (tx) => {
+      const pending = tx.run('INSERT INTO t VALUES (1)', [], {
+        signal: own.signal,
+      });
+      while (asked.length === 0) await Promise.resolve();
+      own.abort(reason);
+      refused = await pending.catch((e) => e);
+      await tx.run('INSERT INTO t VALUES (2)');
+      answer.resolve();
+    });
+    expect(refused).toBe(reason);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'INSERT INTO t VALUES (2)',
+      'COMMIT',
+    ]);
+  }, 5000);
+
+  // Falsifiable: rethrow every failed verdict — the statement then rejects
+  // with the verdict's error instead of running and reporting its own.
+  it('runs a statement inside the savepoint when its verdict fails', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker, {
+      kindOf: async () => {
+        throw new SQLiteError('STATEMENT_FAILED', 'database is locked');
+      },
+    });
+    await transaction(async (tx) => {
+      await tx.run('INSERT INTO t VALUES (1)', [], { signal: ownSignal() });
+    });
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT __bsq_sp',
+      'INSERT INTO t VALUES (1)',
+      'RELEASE __bsq_sp',
+      'COMMIT',
+    ]);
+  });
+
+  // Falsifiable: treat MULTIPLE_STATEMENTS as any failed verdict — the
+  // statement then reaches the worker.
+  it('rejects MULTIPLE_STATEMENTS from the verdict, posting nothing', async () => {
+    const worker = fakeWorker([]);
+    const { transaction } = harness(worker, {
+      kindOf: async () => {
+        throw new SQLiteError('MULTIPLE_STATEMENTS', 'two statements');
+      },
+    });
+    let refused: unknown;
+    await transaction(async (tx) => {
+      refused = await tx
+        .run('SELECT 1; SELECT 2', [], { signal: ownSignal() })
+        .catch((e) => e);
+    });
+    expect(refused).toMatchObject({ code: 'MULTIPLE_STATEMENTS' });
+    expect(worker.executed).toEqual(['BEGIN IMMEDIATE', 'COMMIT']);
+  });
+
+  // Falsifiable: in `releasing`, take the branch from a decision made at the
+  // call (savepointed: false) instead of awaiting it at the turn.
+  for (const method of ['chunk', 'stream'] as const) {
+    it(`tx.${method}() asks at its first next(), and a write verdict runs it savepointed`, async () => {
+      const worker = fakeWorker([]);
+      const { transaction, asked } = harness(worker, {
+        kindOf: async () => 'write',
+      });
+      let askedAtCall: string[] = [];
+      await transaction(async (tx) => {
+        const call = tx[method] as (
+          sql: string,
+          params: unknown[],
+          options: { signal: AbortSignal },
+        ) => AsyncIterable<unknown>;
+        const rows = call('SELECT 1', [], { signal: ownSignal() });
+        askedAtCall = [...asked];
+        for await (const _ of rows) {
+          // drain it
+        }
+      });
+      expect(askedAtCall).toEqual([]);
+      expect(asked).toEqual(['SELECT 1']);
+      expect(worker.executed).toEqual([
+        'BEGIN IMMEDIATE',
+        'SAVEPOINT __bsq_sp',
+        'SELECT 1',
+        'RELEASE __bsq_sp',
+        'COMMIT',
+      ]);
     });
   }
 });

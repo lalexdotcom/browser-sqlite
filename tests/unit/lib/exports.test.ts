@@ -41,10 +41,7 @@ type _ClientExtras =
   | 'build'
   | 'poolSize'
   | 'ready'
-  | 'inspect'
-  // On the client only until the transaction implements them.
-  | 'run'
-  | 'all';
+  | 'inspect';
 type _TransactionExtras = 'commit' | 'rollback' | 'savepoint' | 'signal';
 type _SharedOfClient = Omit<SQLiteDB, _ClientExtras>;
 type _SharedOfTransaction = Omit<SQLiteTransactionDB, _TransactionExtras>;
