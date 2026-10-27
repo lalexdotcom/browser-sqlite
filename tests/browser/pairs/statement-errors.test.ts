@@ -142,40 +142,6 @@ describe('a failed statement carries SQLite codes', {
     );
   });
 
-  // The uncacheable branch. A multi-statement string's first run takes the
-  // fresh branch and marks the string uncacheable; its second run prepares
-  // through wa-sqlite's own statements() generator, where only query's outer
-  // catch stamps. Falsifiable: drop that outer stamp — the second run's
-  // sqliteExtendedCode is undefined. The fresh branch's own stamp (first run)
-  // has no falsifier: nothing runs between that failure and the outer catch,
-  // which would read the same value.
-  it("a later statement's prepare failure, fresh then uncacheable, on every build", async ({
-    task,
-  }) => {
-    const { vfs } = standalonePair(task.tags ?? []);
-    await forEachCase(
-      buildsHere(vfs),
-      (build) => build,
-      async (build) => {
-        const db = await memoryClient(vfs, build);
-        try {
-          const sql = "SELECT 1; SELECT 'a' = 'b' COLLATE nosuch";
-          const expected = {
-            code: 'STATEMENT_FAILED',
-            sqliteCode: SQLITE_CODES.ERROR,
-            sqliteExtendedCode: SQLITE_EXTENDED_CODES.ERROR_MISSING_COLLSEQ,
-          };
-          const fresh = await db.read(sql).catch((e) => e);
-          expect(fresh).toMatchObject(expected);
-          const uncacheable = await db.read(sql).catch((e) => e);
-          expect(uncacheable).toMatchObject(expected);
-        } finally {
-          await db.close();
-        }
-      },
-    );
-  });
-
   // Spec D9: SQLite reports no subtype for a syntax error, so there is no
   // sqliteExtendedCode. Falsifiable: make subtypeOf in src/pool.ts return
   // data.sqliteExtendedCode unconditionally — it arrives as 1.

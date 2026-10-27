@@ -288,7 +288,7 @@ export const createTransaction =
        * (spec 2026-10-04, D9). A failure leaves the stack copy unprovable, so
        * it kills the transaction, whose teardown rolls everything back (E12).
        */
-      const runControl = async (sql: string): Promise<void> => {
+      const runControl = async (...statements: string[]): Promise<void> => {
         const prior = tail;
         const mine = Promise.withResolvers<void>();
         tail = mine.promise;
@@ -296,7 +296,9 @@ export const createTransaction =
           if (prior) await queueWait(prior, signal);
           if (abandoned) await entryWait(signal);
           try {
-            await exec(via(false), sql, { uncached: true });
+            // One statement per call; several share this place in the queue.
+            for (const sql of statements)
+              await exec(via(false), sql, { uncached: true });
           } catch (e) {
             die(e);
             throw e;
@@ -1183,9 +1185,8 @@ export const createTransaction =
                 const release = options?.release ?? true;
                 return savepoints.rollback(entry, release) === 'send'
                   ? runControl(
-                      release
-                        ? `ROLLBACK TO ${quoted}; RELEASE ${quoted}`
-                        : `ROLLBACK TO ${quoted}`,
+                      `ROLLBACK TO ${quoted}`,
+                      ...(release ? [`RELEASE ${quoted}`] : []),
                     )
                   : Promise.resolve();
               } catch (e) {

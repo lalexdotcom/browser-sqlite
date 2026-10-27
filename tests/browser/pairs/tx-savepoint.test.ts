@@ -340,14 +340,14 @@ describe('a load the callback abandons (spec 2026-09-11, R4, D6)', () => {
   );
 });
 
-describe('a consumer savepoint and an abandoned write (spec 2026-10-04)', () => {
-  // The former F2, after the guard: a RELEASE riding on an abandoned write is
-  // refused at its prepare, so it cannot pop __bsq_sp, and the write is undone.
-  // Falsifiable: delete the set_authorizer call in src/worker/worker.ts — the
-  // RELEASE pops __bsq_sp with u, the next conclusion fails and the
-  // transaction dies.
+describe('a consumer savepoint and a RELEASE riding on a write (spec 2026-10-04)', () => {
+  // The former F2: a RELEASE riding on a write could pop __bsq_sp with u. A
+  // string holding the write and the RELEASE is now refused whole, before
+  // either runs, so the stack and the write are untouched.
+  // Falsifiable: send the string without the refusal (delete the `refuseMore`
+  // call in src/worker/worker.ts) — the RELEASE runs and the test fails.
   it(
-    'refuses a RELEASE riding on an abandoned write, and undoes the write',
+    'refuses a RELEASE riding on a write, running neither',
     async () => {
       const db = await setUp();
       try {
@@ -362,7 +362,7 @@ describe('a consumer savepoint and an abandoned write (spec 2026-10-04)', () => 
           await tx.write('INSERT INTO t VALUES (2)');
           await sp.release();
         });
-        expect(first).toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 30 });
+        expect(first).toMatchObject({ code: 'MULTIPLE_STATEMENTS' });
         expect(await rowsOf(db)).toEqual([0, 1, 2]);
         expect(await bigCount(db)).toBe(0);
         expect(workerIdentity(db)).toBe(before);

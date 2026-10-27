@@ -74,14 +74,15 @@ describe('transaction control through the client (spec 2026-10-04, B7)', () => {
     }
   });
 
-  it('refuses it inside a compound string, after running what precedes it', async () => {
+  // A compound string is refused whole, before what precedes the control runs.
+  it('refuses it inside a compound string, running nothing', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
       await db.write('CREATE TABLE t (a INTEGER)');
       expect(await outcome(db.write('INSERT INTO t VALUES (5); BEGIN'))).toBe(
-        REFUSED,
+        'MULTIPLE_STATEMENTS:',
       );
-      expect(await db.read('SELECT a FROM t')).toEqual([{ a: 5 }]);
+      expect(await db.read('SELECT a FROM t')).toEqual([]);
     } finally {
       await db.close();
     }

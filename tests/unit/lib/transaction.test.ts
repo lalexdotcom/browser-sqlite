@@ -864,11 +864,11 @@ describe('transaction — a savepointed write, and the message after it (spec 20
   // T7 for the handle (spec 2026-10-04, U1). Falsifiable, each: run that
   // operation through exec(worker, …) instead of exec(via(false), …).
   for (const [name, end, sql] of [
-    ['release', (sp: SQLiteSavepoint) => sp.release(), 'RELEASE "u"'],
+    ['release', (sp: SQLiteSavepoint) => sp.release(), ['RELEASE "u"']],
     [
       'rollback',
       (sp: SQLiteSavepoint) => sp.rollback(),
-      'ROLLBACK TO "u"; RELEASE "u"',
+      ['ROLLBACK TO "u"', 'RELEASE "u"'],
     ],
   ] as const) {
     it(`a savepoint's ${name}() concludes the abandoned write's savepoint first`, async () => {
@@ -900,7 +900,7 @@ describe('transaction — a savepointed write, and the message after it (spec 20
         'INSERT INTO t VALUES (1)',
         'ROLLBACK TO __bsq_sp',
         'RELEASE __bsq_sp',
-        sql,
+        ...sql,
         'COMMIT',
       ]);
     });

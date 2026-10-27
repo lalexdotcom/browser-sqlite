@@ -53,6 +53,8 @@ export type PoolWorkerQueryOptions = {
   uncached?: boolean;
   /** Forwarded as the protocol's `refuseWrite`: see `SQLOptions` in `types/protocol.ts`. */
   refuseWrite?: RefuseWrite | undefined;
+  /** Forwarded as the protocol's `multi`: see `SQLOptions` in `types/protocol.ts`. */
+  multi?: boolean;
 };
 
 /**
@@ -752,6 +754,7 @@ export const createPoolWorker = (deps: {
         control = false,
         uncached = false,
         refuseWrite,
+        multi = false,
       } = options ?? {};
       suppressServed = noServed;
 
@@ -805,6 +808,7 @@ export const createPoolWorker = (deps: {
             ...(control ? { control: true as const } : {}),
             ...(uncached ? { uncached: true as const } : {}),
             ...(refuseWrite ? { refuseWrite } : {}),
+            ...(multi ? { multi: true as const } : {}),
           },
         },
         block ? block.chunks : [],

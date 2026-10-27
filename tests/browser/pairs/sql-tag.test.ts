@@ -105,29 +105,29 @@ describe('sql tag', () => {
     await db.close();
   });
 
-  it('binds each statement of a multi-statement string to its own values', async () => {
+  it('refuses a multi-statement string, params and all', async () => {
     const db = await createTestClient();
-    await db.write(sql`CREATE TABLE a (v); CREATE TABLE b (v)`);
-    await db.write(
-      sql`INSERT INTO a VALUES (${'x'}); INSERT INTO b VALUES (${'y'})`,
-    );
-    expect(
-      await db.read(sql`SELECT (SELECT v FROM a) AS a, (SELECT v FROM b) AS b`),
-    ).toEqual([{ a: 'x', b: 'y' }]);
+    await db.write(sql`CREATE TABLE t (a, b)`);
+    await expect(
+      db.write(
+        sql`INSERT INTO t VALUES (${1}, ${2}); INSERT INTO t VALUES (${3}, ${4})`,
+      ),
+    ).rejects.toMatchObject({ code: 'MULTIPLE_STATEMENTS' });
+    expect(await db.read(sql`SELECT count(*) AS n FROM t`)).toEqual([{ n: 0 }]);
     await db.close();
   });
 
-  it('sends an object interpolated twice once, into two columns and two statements', async () => {
+  it('sends an object interpolated twice once, into two columns', async () => {
     const db = await createTestClient();
-    await db.write(sql`CREATE TABLE d (x, y); CREATE TABLE e (z)`);
+    await db.write(sql`CREATE TABLE d (x, y)`);
     const doc = { a: [1, 'x'] };
-    const q = sql`INSERT INTO d VALUES (${doc}, ${doc}); INSERT INTO e VALUES (${doc})`;
+    const q = sql`INSERT INTO d VALUES (${doc}, ${doc})`;
     expect(q.params).toHaveLength(1);
     await db.write(q);
     const json = '{"a":[1,"x"]}';
-    expect(
-      await db.read(sql`SELECT x, y, (SELECT z FROM e) AS z FROM d`),
-    ).toEqual([{ x: json, y: json, z: json }]);
+    expect(await db.read(sql`SELECT x, y FROM d`)).toEqual([
+      { x: json, y: json },
+    ]);
     await db.close();
   });
 

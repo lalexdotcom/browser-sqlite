@@ -53,7 +53,7 @@ import {
   type WorkerMessageData,
 } from '../types/protocol';
 import { DATABASE_FILE_SUFFIXES, renderPragmas } from '../utils';
-import { anonymousParams, bindBlock, RowWriter } from './binary';
+import { bindBlock, RowWriter } from './binary';
 import { cloneable } from './cloneable';
 import { isHeldElsewhere } from './held';
 import { firstMissing } from './probes';
@@ -65,6 +65,7 @@ type SQLOptions = {
   signal?: AbortSignal;
   uncached?: boolean;
   refuseWrite?: RefuseWrite;
+  multi?: boolean;
 };
 
 /**
@@ -86,6 +87,14 @@ class WriteRefused extends Error {
         : 'Cannot write in a read-only transaction.',
     );
     this.errorCode = errorCode;
+  }
+}
+
+/** A string holding more than one statement, refused before any step. */
+class MultipleStatements extends Error {
+  errorCode = 'MULTIPLE_STATEMENTS' as const;
+  constructor() {
+    super('Only one statement per call; this string holds more.');
   }
 }
 
@@ -562,8 +571,7 @@ const open = (file: string, options: OpenOptions) => {
   /**
    * The same facts, kept per statement handle for as long as the statement is
    * cached: the authorizer does not run on a cache hit, as for `controlSql`.
-   * An entry goes with its handle (eviction, failure, `markUncacheable`,
-   * `drain`), so the map is bounded by the cache.
+   * An entry goes with its handle (eviction, failure, `drain`), so the map is bounded by the cache.
    */
   const factsOf = new Map<number, AuthorizerFacts>();
   const authorize = (
@@ -726,11 +734,8 @@ const open = (file: string, options: OpenOptions) => {
     if (!openedDB) throw new Error('No DB opened');
     // Wasm allocations the statements' bindings point into, freed last.
     const owned: number[] = [];
-    // The next value a statement of anonymous `?` takes (`run`).
-    let cursor = 0;
-
     const { sqlite, db, module } = await openedDB;
-    const { chunkSize = 1, refuseWrite } = options ?? {};
+    const { chunkSize = 1, refuseWrite, multi } = options ?? {};
     seen = {};
 
     /**
@@ -758,6 +763,22 @@ const open = (file: string, options: OpenOptions) => {
       factsOf.delete(handle);
       await sqlite.finalize(handle);
     };
+    /**
+     * Refuses a string holding more than one statement, from the statements
+     * iterator after its first: a tail that yields a statement or an error is
+     * a refusal, one that yields nothing is a single statement. Runs nothing.
+     */
+    const refuseMore = async (statements: AsyncIterator<number>) => {
+      let more: boolean;
+      try {
+        const tail = await statements.next();
+        if (!tail.done) await finalizeHandle(tail.value);
+        more = !tail.done;
+      } catch {
+        more = true;
+      }
+      if (more) throw new MultipleStatements();
+    };
     // sqlite3_changes() keeps the last write's count across a statement that
     // changes nothing; the total does not move then.
     const totalBefore = module._sqlite3_total_changes(db);
@@ -780,25 +801,13 @@ const open = (file: string, options: OpenOptions) => {
       return e;
     };
 
-    /**
-     * Binds and streams one statement. Never finalises: the caller owns it. In
-     * a multi-statement string, a statement of anonymous `?` takes the values
-     * after the previous such statement's; one with a numbered or named param
-     * reads from the first value, as a single statement does.
-     */
-    const run = async function* (stmt: number, multi = false) {
+    /** Binds and streams one statement. Never finalises: the caller owns it. */
+    const run = async function* (stmt: number) {
       // Before the bindings and the first step, so nothing of it has run.
       if (refuseWrite && kindOf(stmt) === 'write')
         throw new WriteRefused(refuseWrite);
       try {
-        if (params) {
-          let from = 0;
-          if (multi && anonymousParams(module, stmt)) {
-            from = cursor;
-            cursor += module._sqlite3_bind_parameter_count(stmt);
-          }
-          owned.push(bindBlock(module, sqlite, stmt, params, from));
-        }
+        if (params) owned.push(bindBlock(module, sqlite, stmt, params));
       } catch (e) {
         throw stamped(e);
       }
@@ -916,7 +925,7 @@ const open = (file: string, options: OpenOptions) => {
     }
     preparing = options?.uncached ? undefined : sql;
     try {
-      const cached = options?.uncached ? 'uncacheable' : cache.get(sql);
+      const cached = options?.uncached || multi ? undefined : cache.get(sql);
 
       if (typeof cached === 'number') {
         const keyword = controlSql.get(sql);
@@ -937,8 +946,9 @@ const open = (file: string, options: OpenOptions) => {
         } finally {
           await settle(cached, failed);
         }
-      } else if (cached === 'uncacheable') {
-        // Today's path, untouched: the generator finalises what it yields.
+      } else if (multi) {
+        // The barrier's own string: every statement runs in order, none is
+        // kept. The generator finalises what it yields.
         for await (const stmt of sqlite.statements(
           db,
           textOf ? textOf() : sql,
@@ -946,59 +956,45 @@ const open = (file: string, options: OpenOptions) => {
           prepared++;
           factsOf.set(stmt, takeSeen());
           try {
-            yield* run(stmt, true);
+            yield* run(stmt);
           } finally {
-            // The generator finalises the statement itself.
             factsOf.delete(stmt);
           }
         }
       } else {
-        let keep: number | undefined;
-        let live: number | undefined;
-        let single: boolean | undefined;
+        // One statement, kept in the cache; or finalised after it when the
+        // query is `uncached`.
+        const keepIt = !options?.uncached;
+        const statements = sqlite
+          .statements(db, textOf ? textOf() : sql, {
+            unscoped: true,
+            flags: keepIt ? SQLITE_PREPARE_PERSISTENT : 0,
+          })
+          [Symbol.asyncIterator]();
+        let stmt: number | undefined;
         let failed = false;
         try {
-          for await (const stmt of sqlite.statements(
-            db,
-            textOf ? textOf() : sql,
-            {
-              unscoped: true,
-              flags: SQLITE_PREPARE_PERSISTENT,
-            },
-          )) {
+          const first = await statements.next();
+          if (!first.done) {
+            // Assigned BEFORE the rows are streamed: first() leaves the
+            // generator early, and an assignment after `yield*` would never run.
+            stmt = first.value;
             prepared++;
+            // Before the tail is prepared, which the authorizer sees too.
             factsOf.set(stmt, takeSeen());
-            single ??= isSingleStatement(
-              textOf ? textOf() : sql,
-              sqlite.sql(stmt),
-            );
-            // Assigned BEFORE the rows are streamed: first() breaks out of the
-            // loop, and an assignment after `yield*` would never run.
-            if (single) keep = stmt;
-            else live = stmt;
-
-            yield* run(stmt, !single);
-
-            if (!single) {
-              await finalizeHandle(stmt);
-              live = undefined;
-            }
+            await refuseMore(statements);
+            yield* run(stmt);
           }
         } catch (e) {
           failed = !(e instanceof WriteRefused);
           throw stamped(e);
         } finally {
-          if (keep !== undefined) {
-            await settle(keep, failed);
-          } else if (live !== undefined) {
-            // An early exit from a multi-statement string.
-            await finalizeHandle(live);
+          if (stmt !== undefined) {
+            if (keepIt) await settle(stmt, failed);
+            else await finalizeHandle(stmt);
           }
-          if (single === false) {
-            for (const handle of cache.markUncacheable(sql)) {
-              await finalizeHandle(handle);
-            }
-          }
+          // Frees the SQL text wa-sqlite copied into wasm memory.
+          await statements.return?.();
         }
       }
 
@@ -1006,14 +1002,14 @@ const open = (file: string, options: OpenOptions) => {
         ? 0
         : sqlite.changes(db);
     } catch (e) {
-      // Only the uncacheable branch can still reach here unstamped: its
+      // Only the multi branch can still reach here unstamped: its
       // prepare failures come straight from wa-sqlite's own statements()
       // generator, with no catch of ours in between. Checked 2026-09-14 in
       // sqlite-api.js: between a failed prepare and the error leaving that
       // generator, it calls only sqlite3_errmsg (read-only) and sqlite3_free
       // (memory only) — neither touches sqlite3_extended_errcode(db). The
-      // cached and fresh branches already stamp in `run` and their own inner
-      // catch, so `??=` makes this a no-op for those.
+      // cached and single-statement branches already stamp in `run` and their own
+      // inner catch, so `??=` makes this a no-op for those.
       throw stamped(e);
     } finally {
       preparing = undefined;
@@ -1247,24 +1243,6 @@ const open = (file: string, options: OpenOptions) => {
       }
     }
   };
-};
-
-/**
- * Whether `sql` compiled to exactly one statement, decided from the text
- * `sqlite3_sql` returns for the first statement — its own span of the input,
- * not the whole input. Asked before the first `step`, because `first()` and an
- * aborted read both leave the generator early and would never learn a count.
- *
- * Normalisation is edge whitespace and one trailing semicolon, applied
- * identically to both sides, which are two views of the same text: nothing is
- * case-folded, and an interior newline sits in the same place on both sides.
- * A false negative costs a compilation; a false positive would replay only
- * the first statement of a multi-statement string, so the failure direction
- * is the safe one.
- */
-const isSingleStatement = (sql: string, statementText: string) => {
-  const normalize = (s: string) => s.trim().replace(/;+$/, '').trim();
-  return normalize(sql) === normalize(statementText);
 };
 
 /**

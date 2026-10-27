@@ -161,91 +161,52 @@ describe('params', () => {
   });
 
   describe('a multi-statement string', () => {
-    const rows = 'SELECT t, v FROM m ORDER BY rowid';
-
-    // Falsifiable: bind every statement from the first value in worker.ts.
-    it('gives each statement of anonymous `?` the next values', async () => {
+    it('is refused before anything runs, whatever the statements are', async () => {
       const db = await createTestClient();
-      await db.write('CREATE TABLE m (t, v)');
-      await db.write(
-        "INSERT INTO m VALUES ('a', ?), ('a', ?); DELETE FROM m WHERE t = 'z'; INSERT INTO m VALUES ('b', ?)",
-        ['x', 'y', 'z'],
-      );
-      expect(await db.read(rows)).toEqual([
-        { t: 'a', v: 'x' },
-        { t: 'a', v: 'y' },
-        { t: 'b', v: 'z' },
-      ]);
+      await db.write('CREATE TABLE t (a, b)');
+      await expect(
+        db.write('INSERT INTO t VALUES (1, 1); INSERT INTO t VALUES (2, 2)'),
+      ).rejects.toMatchObject({
+        code: 'MULTIPLE_STATEMENTS',
+        message: 'Only one statement per call; this string holds more.',
+      });
+      expect(await db.read('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
+      await expect(
+        db.write('CREATE TABLE n (a); INSERT INTO n VALUES (1)'),
+      ).rejects.toMatchObject({ code: 'MULTIPLE_STATEMENTS' });
+      expect(
+        await db.read("SELECT name FROM sqlite_master WHERE name = 'n'"),
+      ).toEqual([]);
       await db.close();
     });
 
-    // Falsifiable: give one tag the wrong width in bindBlock's skip loop.
-    it('skips every kind of value to reach the cursor', async () => {
+    // A tail that does not prepare is a refusal too: it holds more than one.
+    it('is refused when the second statement is not valid SQL', async () => {
       const db = await createTestClient();
-      await db.write('CREATE TABLE m (t, v)');
-      const skipped = [null, 7, 1.5, 2n ** 40n, 'é€😀', Uint8Array.of(1, 2, 3)];
-      await db.write(
-        `SELECT ${skipped.map(() => '?').join(', ')}; INSERT INTO m VALUES ('b', ?)`,
-        [...skipped, 'z'],
-      );
-      expect(await db.read(rows)).toEqual([{ t: 'b', v: 'z' }]);
+      await db.write('CREATE TABLE t (a)');
+      await expect(
+        db.write('INSERT INTO t VALUES (1); NOT SQL AT ALL'),
+      ).rejects.toMatchObject({ code: 'MULTIPLE_STATEMENTS' });
+      expect(await db.read('SELECT count(*) AS n FROM t')).toEqual([{ n: 0 }]);
       await db.close();
     });
 
-    it('binds NULL where the values run out, and ignores extra ones', async () => {
-      const db = await createTestClient();
-      await db.write('CREATE TABLE m (t, v)');
-      await db.write(
-        "INSERT INTO m VALUES ('a', ?); INSERT INTO m VALUES ('b', ?)",
-        ['x'],
-      );
-      await db.write(
-        "INSERT INTO m VALUES ('c', ?); INSERT INTO m VALUES ('d', ?)",
-        ['x', 'y', 'z'],
-      );
-      expect(await db.read(rows)).toEqual([
-        { t: 'a', v: 'x' },
-        { t: 'b', v: null },
-        { t: 'c', v: 'x' },
-        { t: 'd', v: 'y' },
-      ]);
-      await db.close();
-    });
-
-    // Falsifiable: move the cursor on a statement with a numbered or named param.
-    it('reads numbered and named params from the first value, without moving the cursor', async () => {
-      const db = await createTestClient();
-      await db.write('CREATE TABLE m (t, v)');
-      await db.write(
-        "INSERT INTO m VALUES ('a', ?2); INSERT INTO m VALUES ('b', ?1); INSERT INTO m VALUES ('c', :x)",
-        ['x', 'y'],
-      );
-      await db.write(
-        "INSERT INTO m VALUES ('d', ?); INSERT INTO m VALUES ('e', ?2); INSERT INTO m VALUES ('f', ?)",
-        ['x', 'y', 'z'],
-      );
-      expect(await db.read(rows)).toEqual([
-        { t: 'a', v: 'y' },
-        { t: 'b', v: 'x' },
-        { t: 'c', v: 'x' },
-        { t: 'd', v: 'x' },
-        { t: 'e', v: 'y' },
-        { t: 'f', v: 'y' },
-      ]);
-      await db.close();
-    });
-
-    it('applies the same rule to a read, and from a cleared cursor on each call', async () => {
+    it('is refused on a read, and the worker serves the next call', async () => {
       const db = await createTestClient({ poolSize: 1 });
-      const twice = 'SELECT ? AS a; SELECT ? AS a, ? AS b';
-      expect(await db.read(twice, [1, 2, 3])).toEqual([
-        { a: 1 },
-        { a: 2, b: 3 },
-      ]);
-      expect(await db.read(twice, [4, 5, 6])).toEqual([
-        { a: 4 },
-        { a: 5, b: 6 },
-      ]);
+      await expect(db.read('SELECT 1; SELECT 2')).rejects.toMatchObject({
+        code: 'MULTIPLE_STATEMENTS',
+      });
+      expect(await db.read('SELECT 1 AS x')).toEqual([{ x: 1 }]);
+      await db.close();
+    });
+
+    it('is one statement when only `;`, whitespace or a comment follows', async () => {
+      const db = await createTestClient();
+      expect(await db.read('SELECT 1; ')).toEqual([{ 1: 1 }]);
+      // SQLite names the column after the text, comment included.
+      const [row] = await db.read('SELECT 1 -- note');
+      expect(Object.values(row as object)).toEqual([1]);
+      expect(await db.read('SELECT 1; /* note */ ;\n')).toEqual([{ 1: 1 }]);
       await db.close();
     });
   });

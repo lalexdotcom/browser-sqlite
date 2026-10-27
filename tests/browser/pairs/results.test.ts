@@ -133,19 +133,6 @@ describe('result rows', () => {
     await db.close();
   });
 
-  it('gives each statement of a multi-statement string its own columns', async () => {
-    const db = await createTestClient();
-    const rows: unknown[] = [];
-    for await (const chunk of db.chunk(
-      'SELECT 1 AS a; SELECT 2 AS b, 3 AS c',
-      [],
-      { chunkSize: 10 },
-    ))
-      rows.push(chunk);
-    expect(rows).toEqual([[{ a: 1 }], [{ b: 2, c: 3 }]]);
-    await db.close();
-  });
-
   it('decodes short, long and invalid texts as before', async () => {
     const db = await createTestClient();
     await db.write('CREATE TABLE e (id INTEGER PRIMARY KEY, v TEXT)');

@@ -35,24 +35,6 @@ describe('query timeout', () => {
     }
   });
 
-  it('spends the budget over the whole call, not per statement', {
-    tags: ['requires:interruptible'],
-  }, async () => {
-    // Needs interruptible: so the write is really cut and close() does not
-    // wait it out (mem:measurements, CI-QUERY-TIMEOUT).
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.read('SELECT 1');
-      // Two statements, each shorter than the budget, whose sum is not.
-      const half = `${longQuery(8_000_000)};`;
-      await expect(
-        db.write(`${half} ${half}`, [], { timeout: 400 }),
-      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
-    } finally {
-      await db.close();
-    }
-  });
-
   it('charges the consumer for its own slowness', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {

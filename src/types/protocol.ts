@@ -56,6 +56,11 @@ type SQLOptions = {
    * step, with this as the error's `errorCode`.
    */
   refuseWrite?: RefuseWrite;
+  /**
+   * The string may hold several statements, run in order. Internal: only the
+   * barrier sets it; any other string holding more than one is refused.
+   */
+  multi?: true;
 };
 
 /**

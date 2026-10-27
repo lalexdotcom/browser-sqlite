@@ -30,18 +30,6 @@ describe('prepare counter', () => {
     expect(runsOf(db, 'CREATE TABLE t (a)')[0]?.prepared).toBe(1);
     await db.close();
   });
-
-  it('reports one compilation per statement of a multi-statement string', async () => {
-    const db = await createTestClient(single);
-    const sql = 'CREATE TABLE t (a); CREATE TABLE u (b)';
-    await db.write(sql);
-    // The premise Task 3 rests on, measured rather than assumed: wa-sqlite's
-    // generator yields one statement per statement of the string.
-    // Falsifiability: increment `prepared` once per query instead of once per
-    // yielded statement and this is 1.
-    expect(runsOf(db, sql)[0]?.prepared).toBe(2);
-    await db.close();
-  });
 });
 
 describe('statement cache', () => {
@@ -66,12 +54,13 @@ describe('statement cache', () => {
       'SELECT 1;',
       'SELECT 1\n  WHERE 1=1',
       'SELECT 1; ',
+      'SELECT 1 -- note',
+      'SELECT 1; /* note */',
     ]) {
       await db.read(sql);
       await db.read(sql);
-      // Falsifiability: replace `isSingleStatement(sql, sqlite.sql(stmt))` with
-      // `false` unconditionally in the `else` branch of `query`, and all
-      // entries become 1 (each run compiles, marked uncacheable on the first).
+      // Falsifiability: make `refuseMore` in `query` refuse unconditionally and
+      // every read rejects.
       expect(runsOf(db, sql)[1]?.prepared).toBe(0);
     }
     await db.close();
@@ -80,15 +69,13 @@ describe('statement cache', () => {
   it('never caches a multi-statement string', async () => {
     const db = await createTestClient(single);
     const sql = 'SELECT 1; SELECT 2';
-    await db.read(sql);
-    await db.read(sql);
-    // The false positive of spec §4.2, and the worst defect available here:
-    // if `sqlite3_sql` returned the whole input rather than the statement's
-    // own span, this string would be cached and every later execution would
-    // run `SELECT 1` alone.
-    // Falsifiability: replace the comparison in `isSingleStatement` with
-    // `true` and this is 0.
-    expect(runsOf(db, sql)[1]?.prepared).toBe(2);
+    const refused = { code: 'MULTIPLE_STATEMENTS' };
+    await expect(db.read(sql)).rejects.toMatchObject(refused);
+    // The worst defect available here: a first statement kept after the
+    // refusal would answer the second call, running `SELECT 1` alone.
+    // Falsifiability: let a refusal settle its statement as a success in
+    // `query` (`failed = false`) and this resolves.
+    await expect(db.read(sql)).rejects.toMatchObject(refused);
     await db.close();
   });
 

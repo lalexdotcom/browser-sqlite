@@ -875,6 +875,7 @@ export const createSQLiteClient = (
     const barrierIter = worker.query(barrierSql, undefined, {
       noServed: true,
       internal: true,
+      multi: true,
     });
     while (!(await barrierIter.next()).done) {
       /* discard rows */
