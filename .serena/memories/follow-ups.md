@@ -15,7 +15,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
-| `sqlite-routing` | One `run()` routed by SQLite's own read/write diagnosis, to stream a write's `RETURNING`; holds the `sqlite3_stmt_readonly` entry | IN PROGRESS — spec committed on `feat/sqlite-routing`, plan next (2026-10-27) |
+| `sqlite-routing` | One `run()` routed by SQLite's own read/write diagnosis, to stream a write's `RETURNING`; holds the `sqlite3_stmt_readonly` entry | IN PROGRESS — implemented and measured on `feat/sqlite-routing`; two perf deltas, the final review and the merge owed (handoff 2026-10-27) |
 | `named-params` | Params as an object, bound by name | OPEN — not designed |
 | `bulkwrite-types` | More `types` values for `bulkWrite()` | OPEN — not designed |
 | `jspi-before-sync` | `jspi` before `sync` in the build order | OPEN — to examine; measurements owed |

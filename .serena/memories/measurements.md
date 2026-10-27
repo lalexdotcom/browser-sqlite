@@ -164,6 +164,10 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - JSPI-SYNC-RELAYS
 - BULK-VALUES — converting cells in `enqueue()` costs nothing; JSONB faster on Chromium, slower on Firefox
 
+## `mem:measurements/routing` — routing by SQLite's verdict
+
+- ROUTING-VS-MAIN — the verdict and the memo against `main`, stock Chrome 153 / Firefox 155: first call +0.05-0.19 ms per statement, steady state equal with the memo, +25-60 % without; two open deltas (Firefox `stream()`, Chrome Adaptive repeated writes)
+
 ## `mem:measurements/step` — the step loop
 
 - FAST-STEP — the library's own step against `main`, stock Chrome 153 / Firefox 158: `chunk()` of 4 000 000 rows −49 % / −80 % on `sync`, every VFS faster, one-row queries unchanged
