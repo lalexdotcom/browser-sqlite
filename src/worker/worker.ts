@@ -1,9 +1,10 @@
 /**
  * SQLite Web Worker entry point.
  *
- * Each worker in the pool runs this module. It handles two message types:
+ * Each worker in the pool runs this module. Among the messages it handles:
  * - `open` — loads the wa-sqlite WASM module, opens the database, and transitions to READY
  * - `query` — executes a SQL statement and streams results back as chunks
+ * - `verdict` — prepares a SQL statement and says whether it reads or writes
  *
  * Lifecycle labels (`NEW`, `READY`, `RUNNING`, `ABORTING`, `CLOSED`, `DEAD`) are
  * maintained by `src/pool.ts`, not by this module. From this worker's perspective:
@@ -49,6 +50,7 @@ import {
   KILLED_SLOT,
   type ParamsBlock,
   type RefuseWrite,
+  type Verdict,
   type WasmLocation,
   type WorkerMessageData,
 } from '../types/protocol';
@@ -540,7 +542,8 @@ const open = (file: string, options: OpenOptions) => {
 
   // Spec 2026-10-04, § 4: SQLite's authorizer refuses transaction control
   // unless the message carries the library's `control` flag. One query runs
-  // at a time per worker, so plain variables cannot interleave.
+  // at a time per worker, and a verdict between two of its chunks restores
+  // what it changes, so plain variables cannot interleave.
   let allowControl = false;
   /** The SQL being prepared, so an allowed control statement is remembered. */
   let preparing: string | undefined;
@@ -724,20 +727,35 @@ const open = (file: string, options: OpenOptions) => {
     maxBytes: options.statementCacheBytes ?? 0,
   });
 
-  const query = async function* (
-    callId: number,
-    sql: string,
-    params: ParamsBlock | undefined,
-    options?: SQLOptions,
-    textOf?: () => string,
-  ) {
-    if (!openedDB) throw new Error('No DB opened');
-    // Wasm allocations the statements' bindings point into, freed last.
-    const owned: number[] = [];
-    const { sqlite, db, module } = await openedDB;
-    const { chunkSize = 1, refuseWrite, multi } = options ?? {};
-    seen = {};
+  /**
+   * One SQLite call sequence at a time in this worker: a query holds it from
+   * its start to its reply except while it waits for a credit, a verdict for
+   * its prepare-to-finalize. `sync` never interleaves the two; on
+   * `async`/`jspi` a verdict would otherwise enter the module mid-call.
+   */
+  let sqliteHeld = false;
+  const sqliteWaiters: (() => void)[] = [];
+  /** `undefined` when free: the query's per-chunk take awaits nothing then. */
+  const holdSqlite = (): Promise<void> | undefined => {
+    if (!sqliteHeld) {
+      sqliteHeld = true;
+      return undefined;
+    }
+    return new Promise((resolve) => sqliteWaiters.push(resolve));
+  };
+  /** Hands the mutex to the next waiter, in arrival order. */
+  const releaseSqlite = () => {
+    const next = sqliteWaiters.shift();
+    if (next) next();
+    else sqliteHeld = false;
+  };
 
+  /** What both the query and the verdict do with a prepared statement. */
+  const statementTools = (
+    sqlite: SQLiteAPI,
+    module: WASQLiteModule,
+    db: number,
+  ) => {
     /**
      * Read or write, from what SQLite reports about the prepared statement
      * and what the authorizer saw preparing it. Synchronous, runs nothing.
@@ -779,12 +797,6 @@ const open = (file: string, options: OpenOptions) => {
       }
       if (more) throw new MultipleStatements();
     };
-    // sqlite3_changes() keeps the last write's count across a statement that
-    // changes nothing; the total does not move then.
-    const totalBefore = module._sqlite3_total_changes(db);
-
-    // The size the query's previous chunk needed: the next one starts there.
-    let chunkBytes = 0;
 
     /**
      * Stamps SQLite's extended result code on a wa-sqlite error where the
@@ -800,6 +812,105 @@ const open = (file: string, options: OpenOptions) => {
       }
       return e;
     };
+
+    return { kindOf, finalizeHandle, refuseMore, stamped };
+  };
+
+  /** The refusal of a cached control statement: no SQLite call failed. */
+  const cachedControlRefusal = (keyword: string) => {
+    denied = keyword;
+    // The connection's extended code is some earlier statement's: stamp it
+    // here, `stamped` keeps the first.
+    const refusal = new SQLite.SQLiteError('not authorized', SQLITE_AUTH);
+    (refusal as { extendedCode?: number }).extendedCode = SQLITE_AUTH;
+    return refusal;
+  };
+
+  /**
+   * Prepares `sql`, classifies it and runs nothing; the caller holds the
+   * mutex. The cache is read on a hit; on a miss the statement is filed only
+   * where nothing can be using a cached one — no transaction open, no query
+   * in flight — since an insertion can evict, and so finalise, a statement.
+   */
+  const verdictOf = async (sql: string): Promise<Verdict> => {
+    if (!openedDB) throw new Error('No DB opened');
+    const { sqlite, db, module } = await openedDB;
+    if (closing) throw new Error('The SQLite client has been closed.');
+    const { kindOf, finalizeHandle, refuseMore, stamped } = statementTools(
+      sqlite,
+      module,
+      db,
+    );
+    const cached = cache.get(sql);
+    if (typeof cached === 'number') {
+      const keyword = controlSql.get(sql);
+      if (keyword !== undefined) throw cachedControlRefusal(keyword);
+      return kindOf(cached);
+    }
+    const keep =
+      cached === undefined &&
+      queryRunning === undefined &&
+      sqlite.get_autocommit(db) === 1;
+    const statements = sqlite
+      .statements(db, sql, {
+        unscoped: true,
+        flags: keep ? SQLITE_PREPARE_PERSISTENT : 0,
+      })
+      [Symbol.asyncIterator]();
+    let stmt: number | undefined;
+    let file = false;
+    try {
+      const first = await statements.next();
+      // Nothing to run, so nothing written.
+      if (first.done) return 'read';
+      stmt = first.value;
+      factsOf.set(stmt, takeSeen());
+      try {
+        await refuseMore(statements);
+      } catch (e) {
+        if (e instanceof MultipleStatements) return 'refused';
+        throw e;
+      }
+      file = keep;
+      return kindOf(stmt);
+    } catch (e) {
+      throw stamped(e);
+    } finally {
+      if (stmt !== undefined) {
+        if (file) {
+          for (const handle of cache.set(sql, stmt, stmtWeight(module, stmt)))
+            await finalizeHandle(handle);
+        } else await finalizeHandle(stmt);
+      }
+      // Frees the SQL text wa-sqlite copied into wasm memory.
+      await statements.return?.();
+    }
+  };
+
+  const query = async function* (
+    callId: number,
+    sql: string,
+    params: ParamsBlock | undefined,
+    options?: SQLOptions,
+    textOf?: () => string,
+  ) {
+    if (!openedDB) throw new Error('No DB opened');
+    // Wasm allocations the statements' bindings point into, freed last.
+    const owned: number[] = [];
+    const { sqlite, db, module } = await openedDB;
+    const { chunkSize = 1, refuseWrite, multi } = options ?? {};
+    seen = {};
+    const { kindOf, finalizeHandle, refuseMore, stamped } = statementTools(
+      sqlite,
+      module,
+      db,
+    );
+    // sqlite3_changes() keeps the last write's count across a statement that
+    // changes nothing; the total does not move then.
+    const totalBefore = module._sqlite3_total_changes(db);
+
+    // The size the query's previous chunk needed: the next one starts there.
+    let chunkBytes = 0;
 
     /** Binds and streams one statement. Never finalises: the caller owns it. */
     const run = async function* (stmt: number) {
@@ -929,14 +1040,8 @@ const open = (file: string, options: OpenOptions) => {
 
       if (typeof cached === 'number') {
         const keyword = controlSql.get(sql);
-        if (keyword !== undefined && !allowControl) {
-          denied = keyword;
-          // No SQLite call failed, so the connection's extended code is some
-          // earlier statement's: stamp it here, `stamped` keeps the first.
-          const refusal = new SQLite.SQLiteError('not authorized', SQLITE_AUTH);
-          (refusal as { extendedCode?: number }).extendedCode = SQLITE_AUTH;
-          throw refusal;
-        }
+        if (keyword !== undefined && !allowControl)
+          throw cachedControlRefusal(keyword);
         let failed = false;
         try {
           yield* run(cached);
@@ -1024,14 +1129,17 @@ const open = (file: string, options: OpenOptions) => {
     switch (data.type) {
       case 'query': {
         const { callId, sql, params, options } = data;
+        // Reset the credit gate for this call before the mutex: a `stop` for
+        // it may arrive while a verdict holds the mutex. pool.ts sets the
+        // worker's status to RUNNING after posting the query.
+        gate.reset(callId, options?.credits ?? DEFAULT_CREDIT_WINDOW);
+        queryRunning = Promise.withResolvers<void>();
+        const held = holdSqlite();
+        if (held) await held;
         denied = undefined;
         allowControl = options?.control === true;
         try {
-          // Reset the credit gate for this call. pool.ts sets the worker's
-          // status to RUNNING after posting the query.
-          gate.reset(callId, options?.credits ?? DEFAULT_CREDIT_WINDOW);
           prepared = 0;
-          queryRunning = Promise.withResolvers<void>();
           let affected = 0;
 
           // Spec 2026-09-11, D5: conclude the savepoint the previous
@@ -1104,7 +1212,14 @@ const open = (file: string, options: OpenOptions) => {
               affected = chunk;
               break;
             }
-            if ((await gate.take(callId)) === 'stopped') break;
+            // The mutex is let go while the query waits for its credit: no
+            // SQLite call is in flight, and the consumer's next pull, which
+            // sends the credit, may itself be waiting on a verdict.
+            releaseSqlite();
+            const taken = await gate.take(callId);
+            const back = holdSqlite();
+            if (back) await back;
+            if (taken === 'stopped') break;
             reply({ type: 'chunk', callId, data: chunk }, [chunk.buffer]);
           }
 
@@ -1160,6 +1275,45 @@ const open = (file: string, options: OpenOptions) => {
           allowControl = false;
           queryRunning?.resolve();
           queryRunning = undefined;
+          releaseSqlite();
+        }
+        break;
+      }
+      case 'verdict': {
+        const { callId, sql } = data;
+        const held = holdSqlite();
+        if (held) await held;
+        // A query waiting for a credit keeps its own; the verdict's prepare
+        // is never control.
+        const kept = { allowControl, preparing, denied, seen };
+        allowControl = false;
+        preparing = undefined;
+        denied = undefined;
+        seen = {};
+        try {
+          reply({ type: 'verdict', callId, kind: await verdictOf(sql) });
+        } catch (e) {
+          const sqliteCode = sqliteCodeOf(e);
+          const message =
+            denied !== undefined && sqliteCode === SQLITE_AUTH
+              ? controlRefusedMessage(denied, await connectionInTransaction())
+              : e instanceof Error
+                ? e.message
+                : `Unknown error (${e})`;
+          const extendedCode = (e as { extendedCode?: unknown } | undefined)
+            ?.extendedCode;
+          reply({
+            type: 'verdict-error',
+            callId,
+            message,
+            ...(sqliteCode !== undefined ? { sqliteCode } : {}),
+            ...(typeof extendedCode === 'number'
+              ? { sqliteExtendedCode: extendedCode }
+              : {}),
+          });
+        } finally {
+          ({ allowControl, preparing, denied, seen } = kept);
+          releaseSqlite();
         }
         break;
       }
@@ -1183,6 +1337,9 @@ const open = (file: string, options: OpenOptions) => {
         closing = true;
         gate.stop();
         await idleUntilQueryEnds();
+        // A verdict may be mid-prepare.
+        const held = holdSqlite();
+        if (held) await held;
         try {
           // open() assigns openedDB before this loop runs; the throw is caught below.
           if (!openedDB) throw new Error('No DB opened');
@@ -1199,6 +1356,8 @@ const open = (file: string, options: OpenOptions) => {
         } catch {
           // A database that never opened has nothing to close; the client is
           // shutting down either way and must still get its reply.
+        } finally {
+          releaseSqlite();
         }
         // sqlite.close returns before its VFS's last transaction completes.
         await closeIdbVfs(vfs, vfsInstanceSeen);
@@ -1534,7 +1693,8 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         });
       break;
     }
-    case 'query': {
+    case 'query':
+    case 'verdict': {
       // queries arrive only after open() replaces self.onmessage; this case
       // is unreachable at runtime but satisfies the exhaustive check.
       break;

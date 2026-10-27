@@ -17,6 +17,7 @@ import {
   type RefuseWrite,
   type RowsBlock,
   type SavepointOp,
+  type Verdict,
   type WasmLocation,
   type WorkerMessageData,
 } from './types/protocol';
@@ -95,6 +96,14 @@ export type PoolWorker = Worker & {
     params?: QueryParams,
     options?: PoolWorkerQueryOptions,
   ) => AsyncGenerator<T[] | number>;
+  /**
+   * What the worker's SQLite says of `sql` — read, write, or refused for a
+   * string holding more than one statement — without running it. Apart from
+   * the query transport: it touches neither the reuse guard nor
+   * `inTransaction`. Rejects with `STATEMENT_FAILED` on a failed prepare, and
+   * with the poison reason once the transport is dead.
+   */
+  verdict: (sql: string) => Promise<Verdict>;
   /**
    * Ask the worker to stop. Also settles a `next()` already in flight, which
    * is what lets the consumer's queued `return()` reach the generator's
@@ -343,7 +352,12 @@ export const createPoolWorker = (deps: {
 
   const debugWorker = createWorkerDebugState?.(index, workerName);
 
+  /** The last callId drawn, by a query or a verdict: the two never collide. */
+  let lastCallId = 0;
+  /** The query in flight's callId; a verdict's never lands here. */
   let currentCallId = 0;
+  /** Verdicts posted and not answered, by callId. */
+  const verdicts = new Map<number, PromiseWithResolvers<Verdict>>();
   // The debug record of the query in flight; replaced at every post, like
   // `deferredChunk`, so the callId check below also guards it.
   let debugQuery: QueryDebugHandle | undefined;
@@ -473,6 +487,8 @@ export const createPoolWorker = (deps: {
     deathDeferred.reject(error);
     // The delivery loop's wait: it races `lost`, never `deathDeferred`.
     lost?.reject(error);
+    for (const pending of verdicts.values()) pending.reject(error);
+    verdicts.clear();
     deferredInit.reject(error); // no-op once resolved
     // A dead worker can never send the 'closed' reply close() is awaiting —
     // it either never received the 'close' message or is gone before it could
@@ -674,6 +690,16 @@ export const createPoolWorker = (deps: {
         }
         break;
       }
+      case 'verdict': {
+        verdicts.get(data.callId)?.resolve(data.kind);
+        verdicts.delete(data.callId);
+        break;
+      }
+      case 'verdict-error': {
+        verdicts.get(data.callId)?.reject(statementError(data));
+        verdicts.delete(data.callId);
+        break;
+      }
       case 'deleted': {
         // A connection worker never deletes; this message belongs to the
         // delete-worker path handled in src/delete.ts and cannot arrive here.
@@ -791,10 +817,11 @@ export const createPoolWorker = (deps: {
       // query, so a transaction's pending conclusion leaves only with a message
       // that is actually sent (spec 2026-09-11, §4).
       const op = savepoint?.();
+      currentCallId = ++lastCallId;
       worker.postMessage(
         {
           type: 'query',
-          callId: ++currentCallId,
+          callId: currentCallId,
           sql,
           ...(block ? { params: block } : {}),
           ...(encoded?.pattern !== undefined
@@ -994,6 +1021,15 @@ export const createPoolWorker = (deps: {
   // Attach query method to worker
   Object.assign(worker, {
     query,
+    verdict: (sql: string): Promise<Verdict> => {
+      // Rejected with the poison reason, and already observed.
+      if (dead) return deathDeferred.promise;
+      const callId = ++lastCallId;
+      const pending = Promise.withResolvers<Verdict>();
+      verdicts.set(callId, pending);
+      worker.postMessage({ type: 'verdict', callId, sql });
+      return pending.promise;
+    },
     terminate: (reason?: SQLiteError) => {
       // Read before poison(), which marks every worker DEAD and ends the query
       // in flight. A worker that answered `closed` has let its transactions

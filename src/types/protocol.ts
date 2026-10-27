@@ -34,6 +34,12 @@ export type SQLWorkerResultData<T = unknown> = {
  */
 export type SavepointOp = { conclude?: 'release' | 'undo'; open?: true };
 
+/**
+ * What a worker says of a SQL text without running it: what its one statement
+ * does, or `refused` for a string holding more than one.
+ */
+export type Verdict = 'read' | 'write' | 'refused';
+
 /** The code a worker refuses a write with: see `SQLOptions.refuseWrite`. */
 export type RefuseWrite = 'NOT_A_READ_QUERY' | 'READ_ONLY_TRANSACTION';
 
@@ -157,6 +163,11 @@ export type ClientMessageData =
       pattern?: string;
       options?: SQLOptions;
     }
+  /**
+   * Prepare `sql`, classify it and run nothing: the worker answers `verdict`
+   * or `verdict-error`. Apart from the query transport.
+   */
+  | { type: 'verdict'; callId: number; sql: string }
   | { type: 'close'; callId: number }
   | { type: 'credit'; callId: number; n: number }
   | { type: 'stop'; callId: number }
@@ -261,6 +272,15 @@ export type WorkerMessageData =
        * whole transaction back. Absent when the worker could not read it.
        */
       inTransaction?: boolean | undefined;
+    }
+  | { type: 'verdict'; callId: number; kind: Verdict }
+  /** The verdict's prepare failed: a failure says nothing of the statement's kind. */
+  | {
+      type: 'verdict-error';
+      callId: number;
+      message: string;
+      sqliteCode?: SQLiteResultCode;
+      sqliteExtendedCode?: number;
     }
   | { type: 'closed'; callId: number }
   /** Nothing of this worker's IndexedDB is live any more; terminate it. */
