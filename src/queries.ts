@@ -108,6 +108,34 @@ export const affectedSlot = (): AffectedSlot => {
 };
 
 /**
+ * Settles `affected` with 0 once `gen` is closed by `return()` or `throw()`:
+ * an async generator closed before its first `next()` runs nothing, not even
+ * its `finally`, so nothing was written. A no-op once the slot is settled.
+ */
+export const settleOnClose = <G extends AsyncIterator<unknown>>(
+  gen: G,
+  affected: AffectedSlot,
+): G => {
+  const close = gen.return?.bind(gen);
+  const fail = gen.throw?.bind(gen);
+  const settled = <R>(pending: Promise<R>): Promise<R> =>
+    pending.finally(() => affected.resolve(0));
+  if (close)
+    Object.defineProperty(gen, 'return', {
+      value: (value?: unknown) => settled(close(value)),
+      configurable: true,
+      writable: true,
+    });
+  if (fail)
+    Object.defineProperty(gen, 'throw', {
+      value: (error?: unknown) => settled(fail(error)),
+      configurable: true,
+      writable: true,
+    });
+  return gen;
+};
+
+/**
  * `SQLiteChunkOptions` plus what only this library passes. `registry` is
  * TEST-ONLY and unsupported; it exists so the abandonment path can be driven
  * without a garbage collection.

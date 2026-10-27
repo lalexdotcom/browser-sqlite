@@ -993,7 +993,10 @@ const open = (file: string, options: OpenOptions) => {
         }
       }
 
-      // A stop during the drain: the write was interrupted, nothing is sent.
+      // A stop during the drain: nothing is sent. The write rolls back only
+      // when the progress handler cut a step; a stop seen between steps, or on
+      // the step that returned SQLITE_DONE, leaves a statement whose reset
+      // halts it as a success, and in autocommit that commits.
       if (!kept || !finished) return;
       yield new Affected(
         module._sqlite3_total_changes(db) === totalBefore

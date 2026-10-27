@@ -23,6 +23,7 @@ import {
   raceAbort,
   readWorker,
   runWorker,
+  settleOnClose,
 } from './queries';
 import { createSavepointStack, type SavepointEntry } from './savepoints';
 import type { Lease } from './scheduler';
@@ -1228,7 +1229,10 @@ export const createTransaction =
                   yield* start();
                 })();
           return carryAffected(
-            releasing(source, entry, st, 'chunk', affected),
+            settleOnClose(
+              releasing(source, entry, st, 'chunk', affected),
+              affected,
+            ),
             affected.promise,
           );
         },
@@ -1261,12 +1265,12 @@ export const createTransaction =
           // it before each buffered row and throws its reason into `releasing`.
           // Read per buffered row: a stream decided not savepointed keeps the
           // adapter's fast path, with no signal to check.
-          const rows = flatten(
-            releasing(source, entry, st, 'stream', affected),
-            {
+          const rows = settleOnClose(
+            flatten(releasing(source, entry, st, 'stream', affected), {
               signal: () => (st.savepointed ? st.own : undefined),
               affected: affected.promise,
-            },
+            }),
+            affected,
           );
           // The transaction closes the adapter, which drops its buffered rows
           // and closes `releasing` in turn.

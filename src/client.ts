@@ -46,6 +46,7 @@ import {
   raceAbort,
   readWorker,
   runWorker,
+  settleOnClose,
 } from './queries';
 import {
   createScheduler,
@@ -1277,11 +1278,10 @@ export const createSQLiteClient = (
       const lease = await acquireInstrumented(kind, signal);
       // Owed once by a write, complete or not: a failed write bumps too, as
       // `runOnWriter` does.
-      let published = kind !== 'write';
-      const publish = () => {
-        if (published) return;
-        published = true;
-        void afterWrite(lease.worker);
+      let publication: Promise<unknown> | undefined;
+      const publish = (): Promise<unknown> | undefined => {
+        if (kind === 'write') publication ??= afterWrite(lease.worker);
+        return publication;
       };
       // The lease returns when the worker confirms it is idle, not when the
       // caller leaves: a worker still inside step() must not be re-lent. This
@@ -1294,17 +1294,28 @@ export const createSQLiteClient = (
           () => lease.release(),
         );
       };
+      // A complete write's `affected`, settled once its epoch is published;
+      // its first row waits for it.
+      let announced: Promise<void> | undefined;
       const affected = (count: number, drained: boolean) => {
         if (drained && kind === 'write') {
           // Complete: the epoch first, so the lock waits for its publication.
-          publish();
+          const published = publish() ?? Promise.resolve();
           lease.releaseWriteLock();
           lease.demote();
+          // As `run()` resolves: after the publication, so a caller reading
+          // the held lock names then sees the new marker alone.
+          announced = published.then(() => onAffected(count));
+          return;
         }
         onAffected(count);
       };
       try {
         for await (const item of body(lease.worker, giveBack, affected)) {
+          if (announced) {
+            await announced;
+            announced = undefined;
+          }
           delivered = true;
           yield item;
         }
@@ -1321,6 +1332,9 @@ export const createSQLiteClient = (
         }
       } finally {
         giveBack();
+        // A write without rows, or one whose delivery ended early, still
+        // settles its count before the caller's end does.
+        if (announced) await announced;
       }
     }
   };
@@ -1522,11 +1536,14 @@ export const createSQLiteClient = (
     const bound = prepareParams(params);
     const affected = affectedSlot();
     return carryAffected(
-      chunkRows<T>(
-        sql,
-        bound,
-        options,
-        withDeadline(options, 'chunk'),
+      settleOnClose(
+        chunkRows<T>(
+          sql,
+          bound,
+          options,
+          withDeadline(options, 'chunk'),
+          affected,
+        ),
         affected,
       ),
       affected.promise,
@@ -1550,15 +1567,18 @@ export const createSQLiteClient = (
     assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
     const affected = affectedSlot();
-    return flatten(
-      chunkRows<T>(
-        sql,
-        bound,
-        options,
-        withDeadline(options, 'stream'),
-        affected,
+    return settleOnClose(
+      flatten(
+        chunkRows<T>(
+          sql,
+          bound,
+          options,
+          withDeadline(options, 'stream'),
+          affected,
+        ),
+        { affected: affected.promise },
       ),
-      { affected: affected.promise },
+      affected,
     );
   };
 

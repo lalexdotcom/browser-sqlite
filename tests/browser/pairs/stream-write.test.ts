@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { databasePath } from '../../../src/utils';
 import {
   type ClientOptions,
   createTestClient,
   scaled,
   sharedDatabase,
+  TEST_TARGET,
   theQueryIsRunning,
   waitUntil,
 } from '../helpers';
+import { heldNamesIn } from '../helpers/realm';
 
 /**
  * `stream()` and `chunk()` take a write: the worker steps it to its end before
@@ -34,6 +37,22 @@ const setUp = async (options: ClientOptions = {}) =>
 
 const count = async (db: Db) =>
   (await db.all<{ n: number }>('SELECT count(*) AS n FROM t'))[0]?.n;
+
+/** `pending`'s outcome, or `'waited'` once `ms` (scaled) have passed. */
+const within = <T>(pending: Promise<T>, ms: number) =>
+  Promise.race([
+    pending,
+    new Promise<'waited'>((resolve) =>
+      setTimeout(() => resolve('waited'), scaled(ms)),
+    ),
+  ]);
+
+/** Reads `iterator` to its end; the rows read. */
+const readRest = async (iterator: AsyncIterator<unknown>) => {
+  let rows = 0;
+  while (!(await iterator.next()).done) rows++;
+  return rows;
+};
 
 describe('stream() and chunk() take a write', () => {
   // Falsifiable: put assertReadable back in stream() in src/client.ts.
@@ -167,6 +186,9 @@ describe('stream() and chunk() take a write', () => {
     expect(await count(db)).toBe(0);
   });
 
+  // The 1 ms deadline mostly lands during the verdict, before anything is
+  // posted: this pins the deadline on the whole call. The abort that reaches
+  // the drain itself is the next test's.
   // Falsifiable: in chunkRows in src/client.ts, hand the deadline's signal to
   // nothing — the DELETE then runs to its end and commits.
   it('an abort before affected leaves the table untouched', {
@@ -207,6 +229,76 @@ describe('stream() and chunk() take a write', () => {
     ctl.abort(reason);
     await expect(outcome).rejects.toBe(reason);
     await expect(rows.affected).rejects.toBe(reason);
+    expect(await count(db)).toBe(ROWS);
+  });
+
+  // Falsifiable: drop the lease.demote() call from streamWithRetry's
+  // `affected` in src/client.ts — the INSERT then waits for the designated
+  // writer, which the stream still holds.
+  it("gives up the writer at affected: the same client's next write runs on another worker", {
+    tags: ['requires:two-workers'],
+  }, async () => {
+    const db = await setUp({ poolSize: 2, debug: true });
+    await waitUntil(
+      () =>
+        db.debug?.workers.length === 2 &&
+        db.debug.workers.every((w) => w.status === 'READY'),
+      'two READY workers',
+    );
+    const rows = db.stream('DELETE FROM t RETURNING a', [], {
+      chunkSize: 100,
+    });
+    const iterator = rows[Symbol.asyncIterator]();
+    const first = iterator.next();
+    expect(await rows.affected).toBe(ROWS);
+    const inserted = db.run('INSERT INTO t (a) VALUES (-1)');
+    expect(
+      await within(
+        inserted.then(() => 'resolved'),
+        5_000,
+      ),
+    ).toBe('resolved');
+    expect((await first).done).toBe(false);
+    expect(await readRest(iterator)).toBe(ROWS - 1);
+    expect(await count(db)).toBe(1);
+  });
+
+  // Falsifiable: in streamWithRetry's `affected` in src/client.ts, settle the
+  // count at once instead of after the publication — the marker is then
+  // still the previous one, or both are held.
+  it('affected resolves once the epoch is published: one marker, the new one', {
+    tags: ['requires:shared-second-client'],
+  }, async () => {
+    const database = sharedDatabase();
+    const db = await seed(database.open());
+    const prefix = `bsq:epoch:${TEST_TARGET.vfs}:${databasePath(TEST_TARGET.vfs, database.name)}:`;
+    const markers = async () =>
+      (await heldNamesIn(window)).filter((name) => name.startsWith(prefix));
+    const before = await markers();
+    expect(before).toHaveLength(1);
+    const rows = db.stream('DELETE FROM t RETURNING a', [], {
+      chunkSize: 100,
+    });
+    const iterator = rows[Symbol.asyncIterator]();
+    const first = iterator.next();
+    await rows.affected;
+    const after = await markers();
+    expect(after).toHaveLength(1);
+    expect(after).not.toEqual(before);
+    expect((await first).done).toBe(false);
+    expect(await readRest(iterator)).toBe(ROWS - 1);
+  });
+
+  // Falsifiable: make settleOnClose in src/queries.ts return `gen` untouched —
+  // a generator closed before it ran never settles its count.
+  it('a stream() or chunk() closed before its first next() has affected 0, and wrote nothing', async () => {
+    const db = await setUp();
+    const rows = db.stream('DELETE FROM t RETURNING a');
+    await rows.return(undefined);
+    const chunks = db.chunk('DELETE FROM t RETURNING a');
+    await chunks.return(undefined);
+    expect(await within(rows.affected, 5_000)).toBe(0);
+    expect(await within(chunks.affected, 5_000)).toBe(0);
     expect(await count(db)).toBe(ROWS);
   });
 });

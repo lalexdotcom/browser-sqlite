@@ -12,6 +12,13 @@ const CHUNK_SIZE = 1_000;
 const SERIES = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${ROWS}) SELECT x FROM c`;
 
 const setUp = async () => {
+  const db = await createTestClient({ poolSize: 1 });
+  await db.write('CREATE TABLE t (a INTEGER)');
+  return db;
+};
+
+/** `setUp`, with the debug tree `theQueryIsRunning` reads and a `big` table. */
+const setUpWrites = async () => {
   const db = await createTestClient({ poolSize: 1, debug: true });
   await db.write('CREATE TABLE t (a INTEGER)');
   await db.write('CREATE TABLE big (x INTEGER)');
@@ -121,7 +128,7 @@ describe('tx.stream() takes a write (spec 2026-10-26, § Streaming a write)', ()
   // Falsifiable: put the `'stream'` method back in tx.stream's checksql() in
   // src/transaction.ts — the call then throws NOT_A_READ_QUERY.
   it('a tx.stream() INSERT … RETURNING delivers its rows and the transaction commits it', async () => {
-    const db = await setUp();
+    const db = await setUpWrites();
     let seen = 0;
     let affected: number | undefined;
     await db.transaction(async (tx) => {
@@ -141,7 +148,7 @@ describe('tx.stream() takes a write (spec 2026-10-26, § Streaming a write)', ()
   // Falsifiable: in `releasing`, keep the write when its own signal lands
   // before `affected` too (skip the abandon) — the INSERT then stays.
   it('a savepointed tx.stream() write aborted before affected is undone, and the transaction commits the rest', async () => {
-    const db = await setUp();
+    const db = await setUpWrites();
     const ctl = new AbortController();
     const reason = new Error('abort before affected');
     let caught: unknown;
@@ -165,7 +172,7 @@ describe('tx.stream() takes a write (spec 2026-10-26, § Streaming a write)', ()
   // Falsifiable: in `releasing`, undo on every abandon by the statement's own
   // signal, as before this branch — the INSERT is then rolled back.
   it('a savepointed tx.stream() write aborted between buffered rows after affected keeps its write, and the next statement runs', async () => {
-    const db = await setUp();
+    const db = await setUpWrites();
     const ctl = new AbortController();
     const reason = new Error('abort after affected');
     let first: IteratorResult<{ x: number }> | undefined;
@@ -198,5 +205,26 @@ describe('tx.stream() takes a write (spec 2026-10-26, § Streaming a write)', ()
     expect(outcome).toBe('returned');
     expect(await rowsOf(db)).toEqual([1, 2]);
     expect(await bigCount(db)).toBe(ROWS);
+  });
+
+  // Falsifiable: make settleOnClose in src/queries.ts return `gen` untouched —
+  // the transaction closes both generators before they ran, and their count
+  // never settles.
+  it('a tx.stream() or tx.chunk() write never pulled has affected 0 once the transaction closes it', async () => {
+    const db = await setUpWrites();
+    let rows: { affected: Promise<number> } | undefined;
+    let chunks: { affected: Promise<number> } | undefined;
+    await db.transaction(async (tx) => {
+      rows = tx.stream(`INSERT INTO big ${SERIES} RETURNING x`);
+      chunks = tx.chunk(`INSERT INTO big ${SERIES} RETURNING x`);
+    });
+    const waited = (pending: Promise<number> | undefined) =>
+      Promise.race([
+        pending,
+        new Promise((resolve) => setTimeout(() => resolve('waited'), 5_000)),
+      ]);
+    expect(await waited(rows?.affected)).toBe(0);
+    expect(await waited(chunks?.affected)).toBe(0);
+    expect(await bigCount(db)).toBe(0);
   });
 });
