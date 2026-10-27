@@ -1,3 +1,8 @@
+import {
+  BARE_WRITING_PRAGMAS,
+  INTROSPECTION_PRAGMAS,
+  WRITING_PRAGMAS,
+} from './classify';
 import type { SQLiteBuild } from './const/builds';
 import { folderOf, type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { SQLiteError } from './types/errors';
@@ -86,51 +91,8 @@ const WRITE_KEYWORDS =
  */
 const READ_PRAGMA = /^\s*PRAGMA\s+(?:\w+\.)?(\w+)\s*;?\s*$/i;
 
-/**
- * The pragmas that write the database file, with a value or without one.
- * Measured on 2026-10-01 — each took a write lock where the others never did —
- * except `optimize` and `wal_checkpoint`, which write only when they find
- * work, per SQLite's pragma.c.
- */
-const WRITING_PRAGMAS = new Set([
-  'user_version',
-  'application_id',
-  'schema_version',
-  'auto_vacuum',
-  'incremental_vacuum',
-  'optimize',
-  'wal_checkpoint',
-]);
-
 const isWritingPragma = (name: string) =>
   WRITING_PRAGMAS.has(name.toLowerCase());
-
-/** Those of them that write with no value at all, so look like a lookup. */
-const BARE_WRITING_PRAGMAS = new Set([
-  'incremental_vacuum',
-  'optimize',
-  'wal_checkpoint',
-]);
-
-/**
- * The pragmas whose argument names what to inspect rather than a value to set.
- * Everywhere else `PRAGMA x(v)` is SQLite's other assignment syntax. Probed on
- * wa-sqlite's SQLite 3.53.0, whose `pragma_list` holds no other: each ran on a
- * read-only connection, where `user_version(5)` fails. Closed by meaning, not
- * by that probe — `cache_size(10)` passes it too, and changes the connection.
- */
-const INTROSPECTION_PRAGMAS = new Set([
-  'table_info',
-  'table_xinfo',
-  'table_list',
-  'index_info',
-  'index_xinfo',
-  'index_list',
-  'foreign_key_list',
-  'foreign_key_check',
-  'integrity_check',
-  'quick_check',
-]);
 
 /**
  * One such pragma with one argument — a name, quoted or bare, or an integer —
