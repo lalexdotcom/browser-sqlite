@@ -4,6 +4,7 @@ import {
   interceptWorkers,
   scaled,
   sharedDatabase,
+  sleep,
   TEST_TARGET,
 } from '../helpers';
 
@@ -73,7 +74,8 @@ describe('inspectDatabase write', () => {
 // access handle, while another client's transaction holds it). The tests hold
 // the verdict at the worker's door instead, so every target waits the same way.
 describe('a verdict that gives up says who was holding', () => {
-  const setUp = async () => {
+  // `holder: false` leaves the write lock free.
+  const setUp = async (holder = true) => {
     const records = interceptWorkers();
     const shared = sharedDatabase();
     const a = shared.open();
@@ -111,18 +113,20 @@ describe('a verdict that gives up says who was holding', () => {
     const gate = new Promise<void>((resolve) => {
       commit = resolve;
     });
-    const transaction = a.transaction(async (tx) => {
-      await tx.run('INSERT INTO t VALUES (1)');
-      entered();
-      await gate;
-    });
-    await inside;
+    const transaction = holder
+      ? a.transaction(async (tx) => {
+          await tx.run('INSERT INTO t VALUES (1)');
+          entered();
+          await gate;
+        })
+      : Promise.resolve();
+    if (holder) await inside;
     // A failed case must not leave the lock held and the verdicts parked.
     onTestFinished(() => {
       commit();
       release();
     });
-    return { a, b, transaction, commit, release, held };
+    return { a, b, shared, transaction, commit, release, held };
   };
 
   // Falsifiable: drop the explanation in kindFor in src/client.ts.
@@ -152,23 +156,82 @@ describe('a verdict that gives up says who was holding', () => {
     await expect(b.run('INSERT INTO t VALUES (3)')).resolves.toBeDefined();
   });
 
-  // Falsifiable: wrap every rejection of the wait in kindFor's catch in a new
-  // error, not only the deadline this library minted.
-  it("returns a caller's own abort reason as it is", {
+  // Falsifiable: drop the isDeadlineError gate in explainWriteLockTimeout in
+  // src/client.ts (or wrap every rejection of the wait in kindFor's catch).
+  it("returns a caller's own abort reason as it is, an OPERATION_TIMEOUT too", {
     tags: ['requires:shared-second-client'],
     timeout: scaled(30_000),
   }, async () => {
     const { b, transaction, commit, release } = await setUp();
-    const reason = new Error('the caller gave up');
     const ctl = new AbortController();
     const waiting = b.run('INSERT INTO t VALUES (2)', [], {
       signal: ctl.signal,
     });
+    const reason = new SQLiteError('OPERATION_TIMEOUT', 'the caller gave up');
     ctl.abort(reason);
     await expect(waiting).rejects.toBe(reason);
 
     commit();
     await transaction;
+    release();
+  });
+
+  // Falsifiable: drop the isDeadlineError gate in explainWriteLockTimeout in
+  // src/client.ts. The verdict is memoised here, so the wait is the write
+  // lock's.
+  it("returns a caller's own abort reason as it is from the write lock's wait", {
+    tags: ['requires:shared-second-client'],
+    timeout: scaled(30_000),
+  }, async () => {
+    const { b, shared, transaction, commit, release } = await setUp();
+    release();
+    // Asks the verdict, memoises it, then gives up on the lock.
+    await expect(
+      b.run('INSERT INTO t VALUES (2)', [], { timeout: 100 }),
+    ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
+
+    const ctl = new AbortController();
+    const waiting = b.run('INSERT INTO t VALUES (2)', [], {
+      signal: ctl.signal,
+    });
+    waiting.catch(() => {});
+    // b queues on the write lock behind a's transaction, or the case is not
+    // exercised.
+    let queued = 0;
+    for (let attempt = 0; attempt < 50 && queued < 1; attempt++) {
+      queued = (await inspectDatabase(shared.name, { vfs: TEST_TARGET.vfs }))
+        .write.waiting;
+      if (queued < 1) await sleep(20);
+    }
+    expect(queued).toBe(1);
+    const reason = new SQLiteError('OPERATION_TIMEOUT', 'the caller gave up');
+    ctl.abort(reason);
+    await expect(waiting).rejects.toBe(reason);
+
+    commit();
+    await transaction;
+  });
+
+  // Falsifiable: drop the `'silent'` argument kindFor passes to
+  // explainWriteLockTimeout in src/client.ts.
+  it('says nothing about writers when the write lock is free', {
+    tags: ['requires:shared-second-client'],
+    timeout: scaled(30_000),
+  }, async () => {
+    const { b, release, held } = await setUp(false);
+
+    const failure = await b
+      .run('INSERT INTO t VALUES (2)', [], { timeout: 300 })
+      .then(
+        () => undefined,
+        (error: unknown) => error as SQLiteError,
+      );
+
+    expect(held.length).toBeGreaterThan(0);
+    expect(failure?.code).toBe('OPERATION_TIMEOUT');
+    expect(failure?.message).toBe('run() exceeded its timeout of 300 ms.');
+    expect(failure?.cause).toBeUndefined();
+
     release();
   });
 

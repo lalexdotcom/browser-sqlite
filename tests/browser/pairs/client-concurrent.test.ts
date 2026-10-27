@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, longQuery, scaled } from '../helpers';
+import {
+  createTestClient,
+  interceptWorkers,
+  longQuery,
+  scaled,
+} from '../helpers';
 
 /**
  * Calls created in the SAME tick at the CLIENT level — `Promise.all`, which is
@@ -218,6 +223,42 @@ describe('calls issued in the same tick on one worker', () => {
         ]);
 
         expect(rows).toEqual([{ n: 1 }]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
+
+  it(
+    'queues a memoised all() ahead of a first() issued after it in the same tick',
+    async () => {
+      const records = interceptWorkers();
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        await db.run('CREATE TABLE t (n INTEGER)');
+        const memoised = 'SELECT n FROM t';
+        const other = 'SELECT n + 1 AS n FROM t';
+        // The verdict is memoised: the next all() waits for nothing. One worker,
+        // so the order of the two calls is the order their queries are posted.
+        await db.all(memoised);
+        const posted: string[] = [];
+        const worker = records[0]?.worker as Worker;
+        const post = worker.postMessage.bind(worker) as (
+          message: unknown,
+          ...rest: unknown[]
+        ) => void;
+        worker.postMessage = ((message: unknown, ...rest: unknown[]) => {
+          const { type, sql } = message as { type?: string; sql?: string };
+          if (type === 'query' && sql !== undefined) posted.push(sql);
+          post(message, ...rest);
+        }) as typeof worker.postMessage;
+
+        await Promise.all([db.all(memoised), db.first(other)]);
+
+        // Falsifiable: await in kindFor, or in runStatement, on a verdict
+        // already known.
+        expect(posted).toEqual([memoised, other]);
       } finally {
         await db.close();
       }

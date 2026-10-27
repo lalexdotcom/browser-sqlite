@@ -63,6 +63,7 @@ import {
   assertReadable,
   assertStatementAllowed,
   databaseFiles,
+  isDeadlineError,
   mergeSignals,
   randomId,
   renderPragmas,
@@ -929,20 +930,32 @@ export const createSQLiteClient = (
    * Turns a bare `OPERATION_TIMEOUT` spent on the write lock into one that says
    * who was holding it.
    *
-   * ONLY the deadline this library minted is enriched. A caller who supplied a
-   * `signal` owns its rejection value and gets it back verbatim — that is lot
-   * 10's ownership rule, and widening this would weaken it.
+   * ONLY the deadline this library minted is enriched (`isDeadlineError`). A
+   * caller who supplied a `signal` owns its rejection value and gets it back
+   * verbatim, whatever it is — that is lot 10's ownership rule.
+   *
+   * `whenFree: 'silent'` is for a wait whose kind of statement is not known: a
+   * free write lock then says nothing about what the caller waited for, so the
+   * timeout is returned as it is.
    *
    * One `locks.query()`, on the failure path only. If the snapshot cannot be
    * taken the original error is returned untouched: the cause is a courtesy and
    * must never replace the timeout the caller needs to see.
    */
-  const explainWriteLockTimeout = async (error: unknown): Promise<unknown> => {
-    if (!(error instanceof SQLiteError) || error.code !== 'OPERATION_TIMEOUT')
+  const explainWriteLockTimeout = async (
+    error: unknown,
+    whenFree: 'say' | 'silent' = 'say',
+  ): Promise<unknown> => {
+    if (
+      !isDeadlineError(error) ||
+      !(error instanceof SQLiteError) ||
+      error.code !== 'OPERATION_TIMEOUT'
+    )
       return error;
     let cause: string;
     try {
       const inspection = await inspectWith(locks, logicalFile, vfs, markerName);
+      if (whenFree === 'silent' && inspection.write.tab === null) return error;
       cause = writeLockCause(inspection.write);
     } catch {
       return error;
@@ -1409,7 +1422,7 @@ export const createSQLiteClient = (
     // Every promise in the memo is one this function stored, with its state.
     return waitForKind(sql, known as Asking, signal).catch(
       async (error: unknown) => {
-        throw await explainWriteLockTimeout(error);
+        throw await explainWriteLockTimeout(error, 'silent');
       },
     );
   };

@@ -161,6 +161,13 @@ export const mergeSignals = (
   };
 };
 
+/** The errors `withDeadline` minted: the only timeouts the library may explain. */
+const deadlineErrors = new WeakSet<object>();
+
+/** Whether this library's own deadline minted `error`, not a caller's signal. */
+export const isDeadlineError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && deadlineErrors.has(error);
+
 /**
  * The `timeout` option: a wall-clock budget in milliseconds, counted from the
  * call, `chunk()` and `stream()` included. Returns the
@@ -189,13 +196,13 @@ export const withDeadline = (
 
   const controller = new AbortController();
   const timer = setTimeout(() => {
-    controller.abort(
-      new SQLiteError(
-        'OPERATION_TIMEOUT',
-        `${method}() exceeded its timeout of ${budget} ms.`,
-        { timeout: budget },
-      ),
+    const expired = new SQLiteError(
+      'OPERATION_TIMEOUT',
+      `${method}() exceeded its timeout of ${budget} ms.`,
+      { timeout: budget },
     );
+    deadlineErrors.add(expired);
+    controller.abort(expired);
     // A generator never read never calls release(): once spent, leave nothing
     // on the caller's signal.
     release();
