@@ -198,6 +198,34 @@ describe('calls issued in the same tick on one worker', () => {
   );
 
   it(
+    'reads a memoised statement before a transaction issued in the same tick',
+    async () => {
+      const db = await createTestClient(ONE_WORKER);
+      try {
+        await db.run('CREATE TABLE t (n INTEGER)');
+        await db.run('INSERT INTO t (n) VALUES (1)');
+        const query = 'SELECT n FROM t ORDER BY n';
+        // The verdict is memoised: the next all() waits for nothing, and joins
+        // its queue as read() would. Falsifiable: await in kindFor, or in
+        // runStatement, on a verdict already known.
+        await db.all(query);
+
+        const [rows] = await Promise.all([
+          db.all<{ n: number }>(query),
+          db.transaction(async (tx) => {
+            await tx.run('INSERT INTO t (n) VALUES (2)');
+          }),
+        ]);
+
+        expect(rows).toEqual([{ n: 1 }]);
+      } finally {
+        await db.close();
+      }
+    },
+    scaled(60_000),
+  );
+
+  it(
     'closes two output() loads',
     async () => {
       const db = await createTestClient(ONE_WORKER);

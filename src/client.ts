@@ -1370,13 +1370,18 @@ export const createSQLiteClient = (
 
   /**
    * Whether `sql` reads or writes, as a worker said: from the memo, joining a
-   * verdict already in flight for the same text, or asked now. `signal` ends
-   * this caller's wait; the request itself ends once every caller has left.
+   * verdict already in flight for the same text, or asked now. A verdict the
+   * memo holds is returned as it is, so a caller that branches on it joins its
+   * queue in the same tick; only a wait returns a promise. `signal` ends this
+   * caller's wait; the request itself ends once every caller has left. A cold
+   * verdict can wait on the file lock inside its prepare, so a deadline this
+   * library minted is explained as the write lock's wait is: it names who was
+   * holding.
    */
-  const kindFor = async (
+  const kindFor = (
     sql: string,
     signal?: AbortSignal,
-  ): Promise<StatementKind> => {
+  ): StatementKind | Promise<StatementKind> => {
     signal?.throwIfAborted();
     let known = verdicts.get(sql);
     if (known === undefined) {
@@ -1402,7 +1407,22 @@ export const createSQLiteClient = (
     }
     if (typeof known === 'string') return kindOf(known);
     // Every promise in the memo is one this function stored, with its state.
-    const asked = known as Asking;
+    return waitForKind(sql, known as Asking, signal).catch(
+      async (error: unknown) => {
+        throw await explainWriteLockTimeout(error);
+      },
+    );
+  };
+
+  /**
+   * One caller's wait on a verdict in flight. It leaves the request, and
+   * cancels it if it was the last, before any explanation is looked up.
+   */
+  const waitForKind = async (
+    sql: string,
+    asked: Asking,
+    signal: AbortSignal | undefined,
+  ): Promise<StatementKind> => {
     asked.waiters += 1;
     try {
       return kindOf(await (signal ? raceAbort(signal, asked) : asked));
@@ -1491,7 +1511,8 @@ export const createSQLiteClient = (
   ): AsyncGenerator<T[], void, unknown> {
     const { signal, release } = deadline;
     try {
-      const kind = await kindFor(sql, signal);
+      const known = kindFor(sql, signal);
+      const kind = typeof known === 'string' ? known : await known;
       yield* streamWithRetry(
         kind,
         signal,
@@ -1657,7 +1678,11 @@ export const createSQLiteClient = (
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, method);
     try {
-      if ((await kindFor(sql, signal)) === 'write')
+      // Not awaited when the verdict is known: the statement then joins its
+      // queue in this tick, as read() and write() did.
+      const known = kindFor(sql, signal);
+      const kind = typeof known === 'string' ? known : await known;
+      if (kind === 'write')
         return await runOnWriter<T>(sql, bound, options, signal);
       const rows = await readWithRetry(signal, (worker) =>
         readWorker<T>(worker, sql, bound, { ...options, signal }),
