@@ -74,11 +74,13 @@ export type Scheduler<W> = {
   acquire: (
     kind: 'read' | 'write' | 'verdict',
     signal?: AbortSignal,
+    /** `free`: a verdict only a free worker may serve, never `offer()`. */
+    options?: { free?: boolean },
   ) => Promise<Lease<W>>;
   /**
    * Lends `worker`, which the scheduler does not own (a transaction holds it),
-   * to the head of the verdict queue. Returns whether a verdict was waiting.
-   * The lease is `borrowed`: releasing it touches no availability.
+   * to the first verdict waiter that is not free-only. Returns whether one was
+   * waiting. The lease is `borrowed`: releasing it touches no availability.
    */
   offer: (worker: W) => boolean;
   /**
@@ -263,6 +265,8 @@ export const createScheduler = <W extends { index: number }>(
   type Waiter = {
     resolve: (worker: W, borrowed?: true) => void;
     reject: (error: Error) => void;
+    /** A verdict that only a free worker may serve: `offer()` skips it. */
+    free?: true;
   };
   const readerQueue: Waiter[] = [];
   const writerQueue: Waiter[] = [];
@@ -478,9 +482,10 @@ export const createScheduler = <W extends { index: number }>(
     },
 
     offer: (worker) => {
-      const waiter = verdictQueue.shift();
-      if (!waiter) return false;
-      waiter.resolve(worker, true);
+      const at = verdictQueue.findIndex((waiter) => !waiter.free);
+      if (at === -1) return false;
+      const [waiter] = verdictQueue.splice(at, 1);
+      waiter?.resolve(worker, true);
       return true;
     },
 
@@ -524,7 +529,7 @@ export const createScheduler = <W extends { index: number }>(
       if (!gateOpen) settledSlots.delete(index);
     },
 
-    acquire: async (kind, signal) => {
+    acquire: async (kind, signal, options) => {
       if (shutdownReason) throw shutdownReason;
       // Before the queue, not after: a caller who has already given up must not
       // take a place in line and be served a worker nobody will release.
@@ -583,6 +588,7 @@ export const createScheduler = <W extends { index: number }>(
       const waiter: Waiter = {
         resolve: (worker, borrowed) => resolve({ worker, borrowed }),
         reject,
+        ...(kind === 'verdict' && options?.free ? { free: true as const } : {}),
       };
       queue.push(waiter);
 

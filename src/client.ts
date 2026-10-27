@@ -1302,7 +1302,8 @@ export const createSQLiteClient = (
   };
 
   const verdictDeps = {
-    acquire: (signal: AbortSignal) => scheduler.acquire('verdict', signal),
+    acquire: (signal: AbortSignal, free: boolean) =>
+      scheduler.acquire('verdict', signal, { free }),
     applyBarrier,
   };
 

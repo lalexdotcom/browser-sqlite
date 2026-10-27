@@ -1314,6 +1314,36 @@ describe('scheduler — offer()', () => {
     expect(scheduler.offer(workers[0] as TestWorker)).toBe(false);
   });
 
+  // Falsifiable: let offer() take the head of the verdict queue whatever it is.
+  it('skips a free-only verdict and serves the next ordinary one; a free worker serves the free-only one', async () => {
+    const { scheduler, workers } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    let freeServed = false;
+    const freeOnly = scheduler
+      .acquire('verdict', undefined, { free: true })
+      .then((l) => {
+        freeServed = true;
+        return l;
+      });
+    const ordinary = scheduler.acquire('verdict');
+    await flush();
+
+    expect(scheduler.offer(workers[0] as TestWorker)).toBe(true);
+    const borrowed = await ordinary;
+    expect(borrowed.borrowed).toBe(true);
+    await flush();
+    expect(freeServed).toBe(false);
+    // Only the free-only waiter is left: a second offer serves nobody.
+    expect(scheduler.offer(workers[0] as TestWorker)).toBe(false);
+    expect(scheduler.stats().verdict).toBe(1);
+
+    held.release();
+    const lease = await freeOnly;
+    expect(lease.borrowed).toBeUndefined();
+    expect(lease.worker).toBe(workers[0]);
+    lease.release();
+  });
+
   // Falsifiable: make the borrowed release() add to available, hand over, or
   // delete from leased.
   it('leaves availability and leases untouched when the borrowed lease is released', async () => {

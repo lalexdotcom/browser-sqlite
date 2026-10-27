@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Lease } from '../../../src/scheduler';
 import { SQLiteError } from '../../../src/types/errors';
 import { askVerdict, createVerdictMemo } from '../../../src/verdicts';
 
@@ -107,4 +108,52 @@ describe('askVerdict', () => {
       expect(worker.asks).toBe(2);
     },
   );
+
+  // Falsifiable: leave `free` false after a borrowed failed prepare in
+  // askVerdict — the re-ask may be lent another transaction's worker.
+  it("asks a free worker once a transaction's worker failed the prepare, and surfaces its error after the barrier", async () => {
+    const borrowedError = new SQLiteError('STATEMENT_FAILED', 'no such table', {
+      sqliteCode: 1,
+    });
+    const freeError = new SQLiteError('STATEMENT_FAILED', 'no such table', {
+      sqliteCode: 1,
+    });
+    const txWorker = failing(borrowedError);
+    const freeWorker = failing(freeError);
+    const asked: boolean[] = [];
+    const barriers: unknown[] = [];
+    const leases = [
+      { worker: txWorker, borrowed: true as const },
+      { worker: freeWorker },
+    ];
+    const asking = askVerdict('SELECT * FROM t', new AbortController().signal, {
+      acquire: (_signal, free) => {
+        asked.push(free);
+        const next = leases.shift() ?? { worker: freeWorker };
+        const lease: Lease<typeof freeWorker> = {
+          ...next,
+          release: () => {},
+          demote: () => {},
+        };
+        return new Promise<typeof lease>((resolve) =>
+          setTimeout(resolve, 0, lease),
+        );
+      },
+      applyBarrier: async (worker) => {
+        barriers.push(worker);
+      },
+    });
+    const outcome = await Promise.race([
+      asking.then(
+        () => 'resolved',
+        (e: unknown) => e,
+      ),
+      new Promise((resolve) => setTimeout(resolve, 200, 'still asking')),
+    ]);
+    expect(outcome).toBe(freeError);
+    expect(asked).toEqual([false, true]);
+    expect(txWorker.asks).toBe(1);
+    expect(freeWorker.asks).toBe(2);
+    expect(barriers).toEqual([freeWorker]);
+  });
 });

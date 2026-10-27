@@ -81,7 +81,8 @@ export type VerdictWorker = {
  *
  * A failed prepare is not a verdict. On a free worker it is asked once more
  * past the barrier, and only that second failure is the statement's; on a
- * transaction's worker, where no barrier applies, a free worker is asked. A
+ * transaction's worker, where no barrier applies, a free worker is asked —
+ * never another transaction's, which `offer()` could otherwise lend. A
  * passing failure is asked once more, as `readWithRetry` does, then surfaces
  * as it is; a detected death, likewise once.
  */
@@ -89,14 +90,18 @@ export const askVerdict = async <W extends VerdictWorker>(
   sql: string,
   cancel: AbortSignal,
   deps: {
-    acquire: (signal: AbortSignal) => Promise<Lease<W>>;
+    /** `free`: a free worker only, never a transaction's through `offer()`. */
+    acquire: (signal: AbortSignal, free: boolean) => Promise<Lease<W>>;
     applyBarrier: (worker: W) => Promise<void>;
   },
 ): Promise<Verdict> => {
   let deaths = 0;
   let passes = 0;
+  // Set once a transaction's worker failed the prepare: from then on only a
+  // free worker is asked, where the barrier applies.
+  let free = false;
   while (true) {
-    const lease = await deps.acquire(cancel);
+    const lease = await deps.acquire(cancel, free);
     const { worker } = lease;
     let barrier = false;
     try {
@@ -116,7 +121,9 @@ export const askVerdict = async <W extends VerdictWorker>(
       } else if (isPassingFailure(error)) {
         passes += 1;
         if (passes > 1) throw error;
-      } else if (!(lease.borrowed && isFailedPrepare(error))) {
+      } else if (lease.borrowed && isFailedPrepare(error)) {
+        free = true;
+      } else {
         throw error;
       }
     } finally {
