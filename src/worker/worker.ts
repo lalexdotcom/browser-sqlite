@@ -21,6 +21,7 @@ import {
   SQLITE_DENY,
   SQLITE_DETACH,
   SQLITE_FUNCTION,
+  SQLITE_IGNORE,
   SQLITE_INTERRUPT,
   SQLITE_OK,
   SQLITE_OPEN_READWRITE,
@@ -88,7 +89,10 @@ class Affected {
  * What the authorizer sees while a statement is prepared: the part of
  * `PrepareFacts` that only the authorizer can tell.
  */
-type AuthorizerFacts = Pick<PrepareFacts, 'pragma' | 'attach'>;
+type AuthorizerFacts = Pick<PrepareFacts, 'pragma' | 'attach'> & {
+  /** A pragma was answered SQLITE_IGNORE: the program is a no-op, never cached. */
+  ignored?: true;
+};
 
 /**
  * A write refused before its first step. Not a failure of the statement: it
@@ -120,6 +124,9 @@ const READ_ACTIONS = new Set<number>([
   SQLITE_TRANSACTION,
   SQLITE_SAVEPOINT,
 ]);
+
+/** A text whose first keyword is EXPLAIN, past blanks, `;` and comments. */
+const EXPLAIN_FIRST = /^(?:\s|;|--[^\n]*|\/\*[\s\S]*?\*\/)*explain\b/i;
 
 /**
  * wa-sqlite hands the authorizer "" for a null argument, so a bare pragma and
@@ -624,6 +631,14 @@ const open = (file: string, options: OpenOptions) => {
    */
   const factsOf = new Map<number, AuthorizerFacts>();
   /**
+   * The text being prepared, and whether a pragma that writes is to be
+   * answered SQLITE_IGNORE: some act at prepare (`cache_size`, `busy_timeout`),
+   * so a statement that must not write cannot even be prepared with them.
+   * `guarded` holds for a verdict, a statement carrying `refuseWrite` and any
+   * tail; an EXPLAIN is guarded on every route, since it never runs.
+   */
+  let compiling: { text: string; guarded: boolean } | undefined;
+  /**
    * The text of a statement carrying `refuseWrite` while it steps. Its kind
    * was checked before the first step, but a cached statement whose schema
    * changed is re-prepared during the step and may become a write then
@@ -640,9 +655,18 @@ const open = (file: string, options: OpenOptions) => {
   ): number => {
     // What SQLite re-prepares during a step is its own, not a new statement.
     if (!stepping) {
-      if (action === SQLITE_PRAGMA)
-        seen.pragma = { name: operation ?? '', value: argument ?? null };
-      else if (action === SQLITE_ATTACH || action === SQLITE_DETACH)
+      if (action === SQLITE_PRAGMA) {
+        const pragma = { name: operation ?? '', value: argument ?? null };
+        seen.pragma = pragma;
+        if (
+          compiling &&
+          (compiling.guarded || EXPLAIN_FIRST.test(compiling.text)) &&
+          pragmaWrites(pragmaIn(pragma, compiling.text))
+        ) {
+          seen.ignored = true;
+          return SQLITE_IGNORE;
+        }
+      } else if (action === SQLITE_ATTACH || action === SQLITE_DETACH)
         seen.attach = true;
     } else if (
       guardingStep !== undefined &&
@@ -853,6 +877,8 @@ const open = (file: string, options: OpenOptions) => {
      */
     const refuseMore = async (statements: AsyncIterator<number>) => {
       let more: boolean;
+      // The tail is refused whatever it holds: no pragma of it may act.
+      if (compiling) compiling.guarded = true;
       try {
         const tail = await statements.next();
         if (!tail.done) await finalizeHandle(tail.value);
@@ -916,6 +942,10 @@ const open = (file: string, options: OpenOptions) => {
       return kindOf(cached);
     }
     const keep = cached === undefined && queryRunning === undefined && free;
+    // A query between two chunks has taken its facts and finished preparing.
+    seen = {};
+    const outer = compiling;
+    compiling = { text: sql, guarded: true };
     const statements = sqlite
       .statements(db, sql, {
         unscoped: true,
@@ -936,11 +966,12 @@ const open = (file: string, options: OpenOptions) => {
         if (e instanceof MultipleStatements) return 'refused';
         throw e;
       }
-      file = keep;
+      file = keep && factsOf.get(stmt)?.ignored !== true;
       return kindOf(stmt);
     } catch (e) {
       throw stamped(e);
     } finally {
+      compiling = outer;
       if (stmt !== undefined) {
         if (file) {
           for (const handle of cache.set(sql, stmt, stmtWeight(module, stmt)))
@@ -1204,6 +1235,10 @@ const open = (file: string, options: OpenOptions) => {
         let stmt: number | undefined;
         let failed = false;
         try {
+          compiling = {
+            text: textOf ? textOf() : sql,
+            guarded: refuseWrite !== undefined,
+          };
           const first = await statements.next();
           if (!first.done) {
             // Assigned BEFORE the rows are streamed: first() leaves the
@@ -1213,14 +1248,17 @@ const open = (file: string, options: OpenOptions) => {
             // Before the tail is prepared, which the authorizer sees too.
             factsOf.set(stmt, takeSeen());
             await refuseMore(statements);
+            compiling = undefined;
             yield* run(stmt);
           }
         } catch (e) {
           failed = !(e instanceof WriteRefused);
           throw stamped(refusal(e));
         } finally {
+          compiling = undefined;
           if (stmt !== undefined) {
-            if (keepIt) await settle(stmt, failed);
+            if (keepIt && factsOf.get(stmt)?.ignored !== true)
+              await settle(stmt, failed);
             else await finalizeHandle(stmt);
           }
           // Frees the SQL text wa-sqlite copied into wasm memory.
