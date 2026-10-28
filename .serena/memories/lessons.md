@@ -114,6 +114,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - An edit that reports a failure may still have written the file: check `git diff` (2026-10-23)
 - Two test planners at once rebuild each other's build: one at a time (2026-10-26)
 - A throwaway Safari CI spike: six traps of one afternoon (2026-10-25, `spike/safari-step-asap`)
+- Bypassing the project's own runner drops what it was handling (2026-10-28, `spike/safari27-running-wait`)
 
 ## `mem:lessons/design` — design of the library
 
