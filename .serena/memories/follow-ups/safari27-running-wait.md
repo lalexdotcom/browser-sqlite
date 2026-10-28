@@ -1,6 +1,6 @@
 # Follow-up — on Safari 27, a long statement of the routing tests is never seen running
 
-**Status: OPEN** — found 2026-10-28 on the first macOS 27 runs after `feat/sqlite-routing`'s merge; cause unknown, diagnosis not started.
+**Status: OPEN** — found 2026-10-28 on the first macOS 27 runs after `feat/sqlite-routing`'s merge; cause unknown, diagnosis in progress (systematic debugging, phase 1).
 
 Part of `mem:follow-ups`.
 
@@ -12,6 +12,8 @@ Part of `mem:follow-ups`.
 
 **Alone, it does not reproduce (spike run 40725890211, 2026-10-28).** One spike file, one Vitest process per project: on Safari 27.0.1, `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` — the failing pairs — see a cold 2 M-step `all()`, the same warm, and a savepointed `tx.stream()` write running in 11-14 ms, a 20 M-step read in ~100 ms; Safari 26.6.2 alike. So the verdict, the read, the streamed write and `db.debug`'s view all work there: **the failure needs the suite's context** (earlier files or tests of the cell). Aside: on the `async` build (Safari 26 and 27), the third client of that file (a cold 20 M-step read) got its request only 4-9 s after the call — something earlier in the file held it; not investigated.
 
-**In flight:** the two failing cells run whole through the planner, with `waitUntil` printing the debug history of a `theQueryIsRunning` that times out (branch `spike/safari27-running-wait`, run 40727661900).
+**In its cell, it reproduces, and the poll is what is late (spike run 40727661900, 2026-10-28).** The two cells whole through the planner, Safari 27 alone: `OPFSWriteAheadVFS/sync` red on `verdict` "waits for a query stepping on the worker" only (its `tx-stream` case green this time), `OPFSAdaptiveVFS/jspi` green — intermittent even in the cell. The debug history of the timed-out wait: at +1 ms no read yet; the read gets its worker at once (`acq=1`, no queue, no request or worker state left by earlier tests) and ends at +365 ms; **the next poll is at +760 ms**, by when it is over. The poll loop is `await sleep(0)` (`setTimeout(0)`) and would have seen the read at any turn in 2-364 ms. `db.debug` is live main-thread state (`src/debug.ts`): `query.endTime`/`request.endTime` are set by `Date.now()` when the main thread handles the worker's message, so the main thread handled a message at +365 while the timer did not fire before +760. **So the library runs the statement; the test's observation misses it** — leaning to a late timer over a busy main thread, not settled. Worker status `READY/applying pragmas` in every sample, which proves nothing: no sample fell while it ran.
 
-**Next, recommended:** a diagnostic branch whose spike prints `db.debug`'s request/worker state live to the step log while it waits, on macOS 27 only (`mem:conventions`: spikes are observable), before changing code or tests. macOS 27 runs on the `xcode-27` preview image (`mem:stack-and-build/ci`).
+**In flight:** `waitUntil` times each `setTimeout(0)` and runs a worker heartbeat (posts `Date.now()` every 100 ms; a message handled late means a busy main thread) and prints `document.visibilityState`/`hasFocus()` on a timeout; same two cells, through `tests-macos-27.yaml` dispatched on the spike branch (run 40732354209). The probe's worker must be built with the helper's `NativeWorker`: through `globalThis.Worker` an `interceptWorkers()` test records it as `records[0]` (`abort-slot` went red in the pre-push).
+
+**Next:** read the probe's verdict (late timers or busy main thread) before any change to code or tests. macOS 27 runs on the `xcode-27` preview image (`mem:stack-and-build/ci`); iterations go through `tests-macos-27.yaml` → `tests.yaml` edited on the spike branch (`mem:lessons/process`).
