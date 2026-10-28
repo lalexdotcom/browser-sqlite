@@ -922,8 +922,13 @@ const open = (file: string, options: OpenOptions) => {
     // The size the query's previous chunk needed: the next one starts there.
     let chunkBytes = 0;
 
-    /** Binds and streams one statement. Never finalises: the caller owns it. */
-    const run = async function* (stmt: number) {
+    /**
+     * Binds and streams one statement. Never finalises: the caller owns it.
+     * Returns whether it reached SQLITE_DONE. Nothing but the row loop goes
+     * here: with `drainWrite`'s code in this generator, executed or not,
+     * Firefox streams 6-16 % slower (ROUTING-DELTAS, `mem:measurements/routing`).
+     */
+    const rows = async function* (stmt: number, announce: boolean) {
       // Before the bindings and the first step, so nothing of it has run.
       if (refuseWrite && kindOf(stmt) === 'write')
         throw new WriteRefused(refuseWrite);
@@ -932,14 +937,9 @@ const open = (file: string, options: OpenOptions) => {
       } catch (e) {
         throw stamped(e);
       }
-      // A write streamed with `drainWrites` is stepped to SQLITE_DONE first:
-      // its chunks are kept here and sent once `affected` has gone out.
-      let kept: RowsBlock[] | undefined;
+      // A read streamed with `drainWrites` announces its count first.
+      if (announce) yield new Affected(0, false);
       let finished = false;
-      if (drainWrites) {
-        if (kindOf(stmt) === 'write') kept = [];
-        else yield new Affected(0, false);
-      }
       // Column names are read after the first SQLITE_ROW, not before: v2
       // re-preparation happens during step(), so names read beforehand would
       // describe the old schema on a cached statement after an ALTER TABLE.
@@ -979,25 +979,36 @@ const open = (file: string, options: OpenOptions) => {
             const block = writer.finish(cols);
             chunkBytes = block.used;
             writer = undefined;
-            if (kept) kept.push(block);
-            else yield block;
+            yield block;
           }
         } else {
-          if (writer && cols) {
-            const block = writer.finish(cols);
-            if (kept) kept.push(block);
-            else yield block;
-          }
+          if (writer && cols) yield writer.finish(cols);
           finished = true;
           break;
         }
       }
 
+      return finished;
+    };
+
+    /**
+     * A write streamed with `drainWrites`, stepped to SQLITE_DONE first: its
+     * chunks are kept here and sent once `affected` has gone out. Apart from
+     * `rows`, see there.
+     */
+    const drainWrite = async function* (stmt: number) {
+      const kept: RowsBlock[] = [];
+      const source = rows(stmt, false);
+      let step = await source.next();
+      while (!step.done) {
+        kept.push(step.value as RowsBlock);
+        step = await source.next();
+      }
       // A stop during the drain: nothing is sent. The write rolls back only
       // when the progress handler cut a step; a stop seen between steps, or on
       // the step that returned SQLITE_DONE, leaves a statement whose reset
       // halts it as a success, and in autocommit that commits.
-      if (!kept || !finished) return;
+      if (!step.value) return;
       yield new Affected(
         module._sqlite3_total_changes(db) === totalBefore
           ? 0
@@ -1007,6 +1018,14 @@ const open = (file: string, options: OpenOptions) => {
       // Under the credit gate, as any chunk; each let go once handed over.
       while (kept.length > 0) yield kept.shift() as RowsBlock;
     };
+
+    /** Not a generator: a read takes no extra level of delegation. */
+    const run = (stmt: number) =>
+      !drainWrites
+        ? rows(stmt, false)
+        : kindOf(stmt) === 'write'
+          ? drainWrite(stmt)
+          : rows(stmt, true);
 
     /**
      * The exit discipline, on every path out of a retained statement:
