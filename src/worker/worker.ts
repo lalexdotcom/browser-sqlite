@@ -20,13 +20,17 @@ import {
   SQLITE_CANTOPEN,
   SQLITE_DENY,
   SQLITE_DETACH,
+  SQLITE_FUNCTION,
   SQLITE_INTERRUPT,
   SQLITE_OK,
   SQLITE_OPEN_READWRITE,
   SQLITE_PRAGMA,
   SQLITE_PREPARE_PERSISTENT,
+  SQLITE_READ,
+  SQLITE_RECURSIVE,
   SQLITE_ROW,
   SQLITE_SAVEPOINT,
+  SQLITE_SELECT,
   SQLITE_TRANSACTION,
 } from 'wa-sqlite/src/sqlite-constants.js';
 import {
@@ -96,11 +100,43 @@ class WriteRefused extends Error {
     super(
       errorCode === 'NOT_A_READ_QUERY'
         ? 'first() only accepts reads; this statement writes.'
-        : 'Cannot write in a read-only transaction.',
+        : errorCode === 'READ_ONLY_TRANSACTION'
+          ? 'Cannot write in a read-only transaction.'
+          : 'A write was routed as a read.',
     );
     this.errorCode = errorCode;
   }
 }
+
+/**
+ * The authorizer codes a read's program is made of. A statement carrying
+ * `refuseWrite` that SQLite re-prepares mid-step into anything else is denied.
+ */
+const READ_ACTIONS = new Set<number>([
+  SQLITE_READ,
+  SQLITE_SELECT,
+  SQLITE_FUNCTION,
+  SQLITE_RECURSIVE,
+  SQLITE_TRANSACTION,
+  SQLITE_SAVEPOINT,
+]);
+
+/**
+ * wa-sqlite hands the authorizer "" for a null argument, so a bare pragma and
+ * `PRAGMA x('')` look alike: only an `=` or `(` in the text, which errs toward
+ * a value, tells them apart.
+ */
+const pragmaIn = (
+  pragma: NonNullable<PrepareFacts['pragma']>,
+  text: string,
+): NonNullable<PrepareFacts['pragma']> =>
+  pragma.value === '' && !/[=(]/.test(text)
+    ? { name: pragma.name, value: null }
+    : pragma;
+
+/** Whether a pragma, as `classifyStatement` reads it, writes. */
+const pragmaWrites = (pragma: NonNullable<PrepareFacts['pragma']>) =>
+  classifyStatement({ pragma, explain: false, readonly: true }) === 'write';
 
 /** A string holding more than one statement, refused before any step. */
 class MultipleStatements extends Error {
@@ -587,6 +623,15 @@ const open = (file: string, options: OpenOptions) => {
    * An entry goes with its handle (eviction, failure, `drain`), so the map is bounded by the cache.
    */
   const factsOf = new Map<number, AuthorizerFacts>();
+  /**
+   * The text of a statement carrying `refuseWrite` while it steps. Its kind
+   * was checked before the first step, but a cached statement whose schema
+   * changed is re-prepared during the step and may become a write then
+   * (`DROP TRIGGER IF EXISTS` once the trigger exists).
+   */
+  let guardingStep: string | undefined;
+  /** The authorizer denied such a re-preparation: the step's error is a refusal. */
+  let stepRefused = false;
   const authorize = (
     _: unknown,
     action: number,
@@ -599,6 +644,19 @@ const open = (file: string, options: OpenOptions) => {
         seen.pragma = { name: operation ?? '', value: argument ?? null };
       else if (action === SQLITE_ATTACH || action === SQLITE_DETACH)
         seen.attach = true;
+    } else if (
+      guardingStep !== undefined &&
+      !(action === SQLITE_PRAGMA
+        ? !pragmaWrites(
+            pragmaIn(
+              { name: operation ?? '', value: argument ?? null },
+              guardingStep,
+            ),
+          )
+        : READ_ACTIONS.has(action))
+    ) {
+      stepRefused = true;
+      return SQLITE_DENY;
     }
     if (action !== SQLITE_TRANSACTION && action !== SQLITE_SAVEPOINT)
       return SQLITE_OK;
@@ -772,12 +830,9 @@ const open = (file: string, options: OpenOptions) => {
      */
     const kindOf = (stmt: number): StatementKind => {
       const seenFacts = factsOf.get(stmt);
-      let pragma = seenFacts?.pragma;
-      // wa-sqlite hands the authorizer "" for a null argument, so a bare
-      // pragma and `PRAGMA x('')` look alike: only an `=` or `(` in the text,
-      // which errs toward a value, tells them apart.
-      if (pragma?.value === '' && !/[=(]/.test(sqlite.sql(stmt)))
-        pragma = { name: pragma.name, value: null };
+      const pragma = seenFacts?.pragma
+        ? pragmaIn(seenFacts.pragma, sqlite.sql(stmt))
+        : undefined;
       return classifyStatement({
         ...seenFacts,
         ...(pragma ? { pragma } : {}),
@@ -851,16 +906,16 @@ const open = (file: string, options: OpenOptions) => {
       module,
       db,
     );
-    const cached = cache.get(sql);
+    const free = sqlite.get_autocommit(db) === 1;
+    // In a transaction the answer must hold for the statement's own turn,
+    // and a cached program predates the transaction's schema changes.
+    const cached = free ? cache.get(sql) : undefined;
     if (typeof cached === 'number') {
       const keyword = controlSql.get(sql);
       if (keyword !== undefined) throw cachedControlRefusal(keyword);
       return kindOf(cached);
     }
-    const keep =
-      cached === undefined &&
-      queryRunning === undefined &&
-      sqlite.get_autocommit(db) === 1;
+    const keep = cached === undefined && queryRunning === undefined && free;
     const statements = sqlite
       .statements(db, sql, {
         unscoped: true,
@@ -923,6 +978,19 @@ const open = (file: string, options: OpenOptions) => {
     let chunkBytes = 0;
 
     /**
+     * `refuseWrite`'s check, before the first step; its steps are guarded too
+     * (`guardingStep`). An EXPLAIN runs no program, whatever it re-prepares.
+     */
+    const refuseWrites = (stmt: number, code: RefuseWrite) => {
+      if (kindOf(stmt) === 'write') throw new WriteRefused(code);
+      if (module._sqlite3_stmt_isexplain(stmt) === 0)
+        guardingStep = sqlite.sql(stmt);
+    };
+    /** A step whose re-preparation the authorizer denied is a refused write. */
+    const refusal = (e: unknown) =>
+      stepRefused && refuseWrite ? new WriteRefused(refuseWrite) : e;
+
+    /**
      * Binds and streams one statement. Never finalises: the caller owns it.
      * Returns whether it reached SQLITE_DONE. Nothing but the row loop goes
      * here: with `drainWrite`'s code in this generator, executed or not,
@@ -930,8 +998,7 @@ const open = (file: string, options: OpenOptions) => {
      */
     const rows = async function* (stmt: number, announce: boolean) {
       // Before the bindings and the first step, so nothing of it has run.
-      if (refuseWrite && kindOf(stmt) === 'write')
-        throw new WriteRefused(refuseWrite);
+      if (refuseWrite) refuseWrites(stmt, refuseWrite);
       try {
         if (params) owned.push(bindBlock(module, sqlite, stmt, params));
       } catch (e) {
@@ -1103,8 +1170,9 @@ const open = (file: string, options: OpenOptions) => {
         try {
           yield* run(cached);
         } catch (e) {
+          // A denied re-preparation leaves no program fit to keep.
           failed = !(e instanceof WriteRefused);
-          throw e;
+          throw refusal(e);
         } finally {
           await settle(cached, failed);
         }
@@ -1149,7 +1217,7 @@ const open = (file: string, options: OpenOptions) => {
           }
         } catch (e) {
           failed = !(e instanceof WriteRefused);
-          throw stamped(e);
+          throw stamped(refusal(e));
         } finally {
           if (stmt !== undefined) {
             if (keepIt) await settle(stmt, failed);
@@ -1175,6 +1243,8 @@ const open = (file: string, options: OpenOptions) => {
       throw stamped(e);
     } finally {
       preparing = undefined;
+      guardingStep = undefined;
+      stepRefused = false;
       if (yields || polls) sqlite.progress_handler(db, 0, () => 0, null);
       // After settle(): the bindings pointing into these are cleared.
       for (const p of owned) module._sqlite3_free(p);

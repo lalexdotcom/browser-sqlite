@@ -40,8 +40,15 @@ export type SavepointOp = { conclude?: 'release' | 'undo'; open?: true };
  */
 export type Verdict = 'read' | 'write' | 'refused';
 
-/** The code a worker refuses a write with: see `SQLOptions.refuseWrite`. */
-export type RefuseWrite = 'NOT_A_READ_QUERY' | 'READ_ONLY_TRANSACTION';
+/**
+ * The code a worker refuses a write with: see `SQLOptions.refuseWrite`.
+ * `ROUTED_AS_READ` is the client's own: a statement sent down the read path on
+ * a verdict that no longer holds. It never reaches the consumer.
+ */
+export type RefuseWrite =
+  | 'NOT_A_READ_QUERY'
+  | 'READ_ONLY_TRANSACTION'
+  | 'ROUTED_AS_READ';
 
 type SQLOptions = {
   chunkSize?: number;
@@ -269,13 +276,11 @@ export type WorkerMessageData =
        * boundary — `worker.ts` copies it off any thrown error carrying one, so
        * this is a structural contract and not a hook for one class.
        *
-       * **Nothing sets it today.** `WorkerQueryTimeout` was its only producer
-       * and it went with the execution budget when `timeout` became a
-       * client-side wall-clock deadline. Kept rather than deleted: it is the
-       * twin of `sqliteCode` above, which is load-bearing, and rebuilding it
-       * would cost the same three sites it occupies.
+       * Set by a refused write and a refused multi-statement string; the
+       * client turns `ROUTED_AS_READ` into `RoutedAsRead`, never an error a
+       * consumer sees.
        */
-      errorCode?: SQLiteErrorCode;
+      errorCode?: SQLiteErrorCode | 'ROUTED_AS_READ';
       /**
        * Whether the connection is inside a transaction once this query has
        * ended — `sqlite3_get_autocommit() === 0`. SQLite can leave a

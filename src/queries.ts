@@ -301,7 +301,7 @@ export const readWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: QueryParams,
-  options?: SQLiteChunkOptions,
+  options?: SQLiteChunkOptions & { refuseWrite?: RefuseWrite | undefined },
 ): Promise<T[]> => {
   const result: T[] = [];
   for await (const rows of chunk<T>(worker, sql, params, options)) {

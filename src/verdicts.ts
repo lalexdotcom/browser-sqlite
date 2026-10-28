@@ -5,7 +5,9 @@ import type { Verdict } from './types/protocol';
 
 /**
  * A client's verdicts by SQL text: settled, or still being asked. A verdict
- * depends on the text alone, so no entry is ever invalidated.
+ * can depend on the schema — `DROP TRIGGER IF EXISTS` reads while the trigger
+ * is absent — so a read verdict is never trusted alone: whatever runs on it
+ * carries a refusal, and a refused one is set to `write` (`RoutedAsRead`).
  */
 export type VerdictMemo = {
   /** The entry for `sql`, which becomes the most recently used. */
@@ -50,6 +52,17 @@ export const createVerdictMemo = (bounds: {
     },
   };
 };
+
+/**
+ * A statement sent down the read path that the worker found to write, before
+ * it changed anything. Internal: the client sends it to the writer instead.
+ */
+export class RoutedAsRead extends Error {
+  constructor() {
+    super('A write was routed as a read.');
+    this.name = 'RoutedAsRead';
+  }
+}
 
 /**
  * A failed prepare SQLite can give a statement it would prepare fine: a

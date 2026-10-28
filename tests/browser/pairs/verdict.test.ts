@@ -93,7 +93,8 @@ describe('verdict', () => {
     const { db, worker } = await setUp({ debug: true });
     await db.transaction(async (tx) => {
       await tx.run('INSERT INTO t VALUES (1, 1)');
-      // A miss, then a hit on the statement the transaction just ran.
+      // Both prepared afresh, the statement the transaction just ran too: a
+      // cached program predates the transaction's schema changes.
       expect(await worker.verdict('SELECT 42 WHERE 0')).toBe('read');
       expect(await worker.verdict('INSERT INTO t VALUES (1, 1)')).toBe('write');
       await tx.run('INSERT INTO t VALUES (2, 2)');

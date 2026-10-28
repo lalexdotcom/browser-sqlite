@@ -21,6 +21,7 @@ import {
   type WasmLocation,
   type WorkerMessageData,
 } from './types/protocol';
+import { RoutedAsRead } from './verdicts';
 
 /**
  * Query execution options forwarded to a pool worker.
@@ -217,8 +218,9 @@ export const statementError = (data: {
   cause?: unknown;
   sqliteCode?: SQLiteResultCode;
   sqliteExtendedCode?: number;
-  errorCode?: SQLiteErrorCode;
+  errorCode?: SQLiteErrorCode | 'ROUTED_AS_READ';
 }): Error => {
+  if (data.errorCode === 'ROUTED_AS_READ') return new RoutedAsRead();
   if (data.errorCode) {
     return new SQLiteError(data.errorCode, data.message, {
       cause: data.cause,

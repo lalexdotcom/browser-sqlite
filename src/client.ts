@@ -71,7 +71,7 @@ import {
   splitPragmas,
   withDeadline,
 } from './utils';
-import { askVerdict, createVerdictMemo } from './verdicts';
+import { askVerdict, createVerdictMemo, RoutedAsRead } from './verdicts';
 
 /**
  * SQLite client for browser environments using a pool of Web Workers.
@@ -1273,19 +1273,28 @@ export const createSQLiteClient = (
    * released and the designation given up, while the lease stays until the
    * delivery ends or is abandoned. A write that never completes keeps the
    * lock until the worker is idle, as `run()`'s does.
+   *
+   * A read the worker refuses as a write (`RoutedAsRead`) is sent again as a
+   * write, with `onMisrouted` told, under the same `signal`.
    */
   const streamWithRetry = async function* <Y>(
-    kind: StatementKind,
+    routed: StatementKind,
     signal: AbortSignal | undefined,
     body: (
       worker: PoolWorker,
       onAbandon: () => void,
       onAffected: (affected: number, drained: boolean) => void,
+      kind: StatementKind,
     ) => AsyncGenerator<Y, void, unknown>,
     onAffected: (affected: number) => void,
+    onMisrouted: () => void,
   ): AsyncGenerator<Y, void, unknown> {
+    let kind = routed;
     for (let attempt = 1; ; attempt++) {
       let delivered = false;
+      // A read's count waits for its first chunk: a write refused at its
+      // first step is sent again, and its count is the one owed.
+      let early: number | undefined;
       const lease = await acquireInstrumented(kind, signal);
       // Owed once by a write, complete or not: a failed write bumps too, as
       // `runOnWriter` does.
@@ -1319,19 +1328,29 @@ export const createSQLiteClient = (
           announced = published.then(() => onAffected(count));
           return;
         }
-        onAffected(count);
+        if (kind === 'read') early = count;
+        else onAffected(count);
       };
       try {
-        for await (const item of body(lease.worker, giveBack, affected)) {
+        for await (const item of body(lease.worker, giveBack, affected, kind)) {
           if (announced) {
             await announced;
             announced = undefined;
+          }
+          if (early !== undefined) {
+            onAffected(early);
+            early = undefined;
           }
           delivered = true;
           yield item;
         }
         return;
       } catch (error) {
+        if (kind === 'read' && !delivered && error instanceof RoutedAsRead) {
+          onMisrouted();
+          kind = 'write';
+          continue;
+        }
         if (
           kind === 'write' ||
           delivered ||
@@ -1377,6 +1396,14 @@ export const createSQLiteClient = (
       'MULTIPLE_STATEMENTS',
       'Only one statement per call; this string holds more.',
     );
+  };
+
+  /**
+   * A read verdict the worker refused (`RoutedAsRead`): the schema changed
+   * under it. From now on the text goes to the writer.
+   */
+  const misrouted = (sql: string) => {
+    verdicts.set(sql, 'write');
   };
 
   /**
@@ -1447,11 +1474,13 @@ export const createSQLiteClient = (
   };
 
   /**
-   * `kindFor` for a transaction: a settled memo entry, or else a verdict from
-   * `worker` itself — the transaction's, idle at its statement's turn — kept
-   * in the memo. A verdict in flight elsewhere is not joined: it may be
-   * waiting for this very worker, which is not offered until the statement
-   * settles. `signal` ends the caller's wait, not the verdict.
+   * `kindFor` for a transaction: a memoised `write` or `refused`, or else a
+   * verdict from `worker` itself — the transaction's, idle at its statement's
+   * turn — kept in the memo. A memoised `read` is asked again: a savepoint is
+   * decided on it, and the transaction's own schema changes can make it a
+   * write. A verdict in flight elsewhere is not joined: it may be waiting for
+   * this very worker, which is not offered until the statement settles.
+   * `signal` ends the caller's wait, not the verdict.
    */
   const kindOnWorker = async (
     worker: PoolWorker,
@@ -1460,7 +1489,7 @@ export const createSQLiteClient = (
   ): Promise<StatementKind> => {
     signal?.throwIfAborted();
     const known = verdicts.get(sql);
-    if (typeof known === 'string') return kindOf(known);
+    if (typeof known === 'string' && known !== 'read') return kindOf(known);
     const asked = worker.verdict(sql);
     asked.then(
       (verdict) => {
@@ -1513,11 +1542,14 @@ export const createSQLiteClient = (
       yield* streamWithRetry(
         kind,
         signal,
-        (worker, onAbandon, onAffected) =>
+        (worker, onAbandon, onAffected, routed) =>
           chunkWorker<T>(worker, sql, bound, {
             ...options,
             signal,
             drainWrites: true,
+            ...(routed === 'read'
+              ? { refuseWrite: 'ROUTED_AS_READ' as const }
+              : {}),
             onAffected,
             onAbandon: () => {
               onAbandon();
@@ -1525,6 +1557,7 @@ export const createSQLiteClient = (
             },
           }),
         affected.resolve,
+        () => misrouted(sql),
       );
       // Ended without a count: nothing ran.
       affected.resolve(0);
@@ -1679,12 +1712,22 @@ export const createSQLiteClient = (
       // queue in this tick.
       const known = kindFor(sql, signal);
       const kind = typeof known === 'string' ? known : await known;
-      if (kind === 'write')
-        return await runOnWriter<T>(sql, bound, options, signal);
-      const rows = await readWithRetry(signal, (worker) =>
-        readWorker<T>(worker, sql, bound, { ...options, signal }),
-      );
-      return { rows, affected: 0 };
+      if (kind === 'read') {
+        try {
+          const rows = await readWithRetry(signal, (worker) =>
+            readWorker<T>(worker, sql, bound, {
+              ...options,
+              signal,
+              refuseWrite: 'ROUTED_AS_READ',
+            }),
+          );
+          return { rows, affected: 0 };
+        } catch (error) {
+          if (!(error instanceof RoutedAsRead)) throw error;
+          misrouted(sql);
+        }
+      }
+      return await runOnWriter<T>(sql, bound, options, signal);
     } finally {
       release();
     }
