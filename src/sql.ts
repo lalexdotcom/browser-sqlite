@@ -17,9 +17,8 @@ type Shape = {
 const shapeOf = new WeakMap<SQLQuery, Shape>();
 
 /**
- * `parts[0] ?a parts[1] ?b … parts[N]`. Numbered, so each statement of a
- * multi-statement string binds its own values: the worker binds the params
- * to every statement from the first one.
+ * `parts[0] ?a parts[1] ?b … parts[N]`. Numbered, so an object interpolated
+ * twice is one param, sent once, bound at both places.
  */
 const render = ({ parts, slots }: Shape): string => {
   let text = parts[0] as string;

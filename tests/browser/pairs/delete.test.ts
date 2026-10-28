@@ -23,7 +23,7 @@ import {
  */
 const tableCount = async (file: string, { vfs, build }: TestTarget) => {
   const db = createSQLiteClient(file, { vfs, build });
-  const rows = await db.read<{ n: number }>(
+  const rows = await db.all<{ n: number }>(
     "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 't'",
   );
   await db.close();
@@ -40,7 +40,7 @@ describe('deleteDatabase', () => {
     const database = sharedDatabase();
     const file = database.name;
     const db = database.open();
-    await db.write('CREATE TABLE t (a INTEGER)');
+    await db.run('CREATE TABLE t (a INTEGER)');
     await db.close();
     expect(await tableCount(file, { vfs, build })).toBe(1);
 
@@ -102,7 +102,7 @@ describe('deleteDatabase', () => {
     const file = database.name;
     // Create the database so the retry resolves rather than throwing DATABASE_NOT_FOUND.
     const db = database.open();
-    await db.write('CREATE TABLE t (a INTEGER)');
+    await db.run('CREATE TABLE t (a INTEGER)');
     await db.close();
 
     const release = Promise.withResolvers<void>();
@@ -164,7 +164,7 @@ describe('deleteDatabase', () => {
       const { vfs, build } = TEST_TARGET;
       const dbName = `bsq-test-${crypto.randomUUID()}`;
       const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
-      await db.write('CREATE TABLE t (n)');
+      await db.run('CREATE TABLE t (n)');
       await db.close();
 
       await expect(
@@ -184,7 +184,7 @@ describe('deleteDatabase', () => {
       const { vfs, build } = TEST_TARGET;
       const dbName = `bsq-test-${crypto.randomUUID()}`;
       const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
-      await db.write('CREATE TABLE t (n)');
+      await db.run('CREATE TABLE t (n)');
       await db.close();
 
       await expect(
@@ -206,7 +206,7 @@ describe('deleteDatabase', () => {
       const dbName = `bsq-test-${crypto.randomUUID()}`;
       const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
       // No write, so SQLite lays down no page and the file stays at 0 bytes.
-      await db.read('SELECT 1');
+      await db.all('SELECT 1');
       await db.close();
 
       await expect(
@@ -223,7 +223,7 @@ describe('deleteDatabase', () => {
       const { vfs, build } = TEST_TARGET;
       const dbName = `bsq-test-${crypto.randomUUID()}`;
       const db = createSQLiteClient(dbName, { vfs, build, poolSize: 1 });
-      await db.write('CREATE TABLE t (n)');
+      await db.run('CREATE TABLE t (n)');
       await db.close();
 
       await expect(
@@ -276,8 +276,8 @@ describe('deleteDatabase under a live connection', () => {
   }, async () => {
     const { vfs, build } = TEST_TARGET;
     const { db, dbName } = liveClient();
-    await db.write('CREATE TABLE t (n)');
-    await db.write('INSERT INTO t VALUES (1)');
+    await db.run('CREATE TABLE t (n)');
+    await db.run('INSERT INTO t VALUES (1)');
 
     const error = await deleteDatabase(dbName, { vfs, build }).then(
       () => undefined,
@@ -287,14 +287,14 @@ describe('deleteDatabase under a live connection', () => {
     expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
 
     // The live client is untouched — this is the whole point.
-    const rows = await db.read<{ n: number }>('SELECT n FROM t');
+    const rows = await db.all<{ n: number }>('SELECT n FROM t');
     expect(rows.map((r) => r.n)).toEqual([1]);
   });
 
   it('deletes once the client has closed', async () => {
     const { vfs, build } = TEST_TARGET;
     const { db, dbName } = liveClient();
-    await db.write('CREATE TABLE t (n)');
+    await db.run('CREATE TABLE t (n)');
     await db.close();
     await expect(
       deleteDatabase(dbName, { vfs, build }),
@@ -316,7 +316,7 @@ describe('deleteDatabase under a live connection', () => {
         /* a failed client has nothing to close */
       }
     });
-    await db.write('CREATE TABLE t (n)');
+    await db.run('CREATE TABLE t (n)');
     await expect(deleteDatabase(dbName, target)).resolves.toBeUndefined();
   });
 
@@ -343,8 +343,8 @@ describe('deleteDatabase under a live connection', () => {
     expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
 
     // And the client that won the race is usable.
-    await db.write('CREATE TABLE t (n)');
-    const rows = await db.read('SELECT n FROM t');
+    await db.run('CREATE TABLE t (n)');
+    const rows = await db.all('SELECT n FROM t');
     expect(rows).toEqual([]);
   });
 });
@@ -370,11 +370,11 @@ describe('deleting after a worker died inside a statement', () => {
   }, async () => {
     const { vfs, build } = TEST_TARGET;
     const db = await createTestClient({ poolSize: 1, drainTimeout: 200 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     // Abandoned on purpose: close() bounds the drain and terminates the worker
     // while it is still inside the statement.
-    const running = db.read(longQuery(20_000_000)).catch(() => {});
+    const running = db.all(longQuery(20_000_000)).catch(() => {});
     await sleep(100);
     await db.close();
     await running;

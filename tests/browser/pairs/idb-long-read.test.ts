@@ -35,16 +35,16 @@ describe('IDBBatchAtomicVFS during a long statement', {
         await db.close();
         await deleteDatabase(file, { vfs });
       });
-      await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)');
-      await db.write(FILL);
+      await db.run('CREATE TABLE t (id INTEGER PRIMARY KEY, s TEXT)');
+      await db.run(FILL);
       // Both connections open and warm before the race.
       await Promise.all([
-        db.read('SELECT s FROM t WHERE id = 2'),
-        db.read('SELECT s FROM t WHERE id = 3'),
+        db.all('SELECT s FROM t WHERE id = 2'),
+        db.all('SELECT s FROM t WHERE id = 3'),
       ]);
 
       let longSettled = false;
-      const long = db.read(LONG).finally(() => {
+      const long = db.all(LONG).finally(() => {
         longSettled = true;
       });
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -52,7 +52,7 @@ describe('IDBBatchAtomicVFS during a long statement', {
       expect(longSettled).toBe(false);
 
       const winner = await Promise.race([
-        db.read('SELECT s FROM t WHERE id = 1').then(() => 'read'),
+        db.all('SELECT s FROM t WHERE id = 1').then(() => 'read'),
         long.then(() => 'long'),
       ]);
       await long;

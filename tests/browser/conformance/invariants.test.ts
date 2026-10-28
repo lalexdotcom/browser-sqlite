@@ -30,9 +30,9 @@ describe('invariant 1 — what is written is read back', () => {
     }
     it(`${vfs}`, async () => {
       const { db } = conformanceClient(vfs);
-      await db.write('CREATE TABLE t (a INTEGER)');
-      await db.write('INSERT INTO t VALUES (42)');
-      const rows = await db.read<{ a: number }>('SELECT a FROM t');
+      await db.run('CREATE TABLE t (a INTEGER)');
+      await db.run('INSERT INTO t VALUES (42)');
+      const rows = await db.all<{ a: number }>('SELECT a FROM t');
       expect(rows).toEqual([{ a: 42 }]);
       await db.close();
     });
@@ -52,12 +52,12 @@ describe('invariant 2 — data survives close and reopen', () => {
     }
     it(`${vfs}`, async () => {
       const { file, db } = conformanceClient(vfs);
-      await db.write('CREATE TABLE t (a INTEGER)');
-      await db.write('INSERT INTO t VALUES (7)');
+      await db.run('CREATE TABLE t (a INTEGER)');
+      await db.run('INSERT INTO t VALUES (7)');
       await db.close();
 
       const reopened = createReopened(file, vfs);
-      const rows = await reopened.read<{ a: number }>('SELECT a FROM t');
+      const rows = await reopened.all<{ a: number }>('SELECT a FROM t');
       expect(rows).toEqual([{ a: 7 }]);
       await reopened.close();
     });
@@ -77,16 +77,16 @@ describe('invariant 3 — concurrent writes lose nothing', () => {
     }
     it(`${vfs}`, async () => {
       const { db } = conformanceClient(vfs);
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
 
       const N = 20;
       await Promise.all(
         Array.from({ length: N }, (_, i) =>
-          db.write('INSERT INTO t VALUES (?)', [i]),
+          db.run('INSERT INTO t VALUES (?)', [i]),
         ),
       );
 
-      const rows = await db.read<{ n: number }>('SELECT count(*) AS n FROM t');
+      const rows = await db.all<{ n: number }>('SELECT count(*) AS n FROM t');
       expect(rows[0].n).toBe(N);
       await db.close();
     });
@@ -102,16 +102,16 @@ describe('invariant 4 — a rolled-back transaction leaves nothing', () => {
     }
     it(`${vfs}`, async () => {
       const { db } = conformanceClient(vfs);
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
 
       await expect(
         db.transaction(async (tx) => {
-          await tx.write('INSERT INTO t VALUES (1)');
+          await tx.run('INSERT INTO t VALUES (1)');
           throw new Error('deliberate rollback');
         }),
       ).rejects.toThrow('deliberate rollback');
 
-      const rows = await db.read<{ n: number }>('SELECT count(*) AS n FROM t');
+      const rows = await db.all<{ n: number }>('SELECT count(*) AS n FROM t');
       expect(rows[0].n).toBe(0);
       await db.close();
     });
@@ -127,11 +127,11 @@ describe('invariant 5 — close settles', () => {
     }
     it(`${vfs}`, async () => {
       const { db } = conformanceClient(vfs);
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       // No clock: a close that never settles exhausts the 60 s testTimeout,
       // which is the failure. Asserting a duration here would be a benchmark.
       await db.close();
-      await expect(db.read('SELECT 1 AS n')).rejects.toThrow();
+      await expect(db.all('SELECT 1 AS n')).rejects.toThrow();
     });
   }
 });
@@ -144,7 +144,7 @@ describe('invariant 5 — close settles', () => {
 // handle (HANDLE-1: OPFSAdaptiveVFS, OPFSWriteAheadVFS, OPFSCoopSyncVFS on
 // Firefox), no other worker can be admitted until the transaction releases the
 // handle — the pool-acquire call blocks at the scheduler level, before the
-// AbortSignal passed to read() is ever checked. That is a structural property
+// AbortSignal passed to all() is ever checked. That is a structural property
 // of the VFS model, not an isolation failure.
 //
 // The read is raced against a 2 s AbortController to detect the blocked case:
@@ -165,7 +165,7 @@ describe('invariant 6 — no read runs inside an open transaction', () => {
     }
     it(`${vfs}`, async () => {
       const { db } = conformanceClient(vfs);
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
 
       let release!: () => void;
       const held = new Promise<void>((resolve) => {
@@ -173,7 +173,7 @@ describe('invariant 6 — no read runs inside an open transaction', () => {
       });
 
       const tx = db.transaction(async (inner) => {
-        await inner.write('INSERT INTO t VALUES (1)');
+        await inner.run('INSERT INTO t VALUES (1)');
         // Falsifiable: comment out `await held` so the transaction commits
         // before the concurrent read below runs. On a VFS where the pool can
         // serve a second worker (no HANDLE-1), the read then sees the
@@ -188,7 +188,7 @@ describe('invariant 6 — no read runs inside an open transaction', () => {
       // Always-settling wrapper so the promise never becomes an unhandled
       // rejection when the race abandons it after the abort fires.
       const readOutcome = db
-        .read<{ n: number }>('SELECT count(*) AS n FROM t', undefined, {
+        .all<{ n: number }>('SELECT count(*) AS n FROM t', undefined, {
           signal: controller.signal,
         })
         .then(
@@ -255,14 +255,14 @@ describe('invariant 7 — a deleted database is gone', () => {
     }
     it(`${vfs}`, async () => {
       const { file, db } = conformanceClient(vfs);
-      await db.write('CREATE TABLE t (a INTEGER)');
-      await db.write('INSERT INTO t VALUES (1)');
+      await db.run('CREATE TABLE t (a INTEGER)');
+      await db.run('INSERT INTO t VALUES (1)');
       await db.close();
 
       await deleteDatabase(file, { vfs });
 
       const reopened = createReopened(file, vfs);
-      const rows = await reopened.read<{ n: number }>(
+      const rows = await reopened.all<{ n: number }>(
         "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 't'",
       );
       expect(rows[0].n).toBe(0);

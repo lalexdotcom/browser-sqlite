@@ -4,7 +4,7 @@ Every method, property and option of [browser-sqlite](README.md).
 
 [*client*.id](#clientid) · [*client*.name](#clientname) · [*client*.file](#clientfile) · [*client*.files](#clientfiles) · [*client*.vfs](#clientvfs) · [*client*.build](#clientbuild) · [*client*.poolSize](#clientpoolsize) · [*client*.ready](#clientready) · [*client*.debug](#clientdebug)
 
-[createSQLiteClient()](#createsqliteclient) · [*client*.read()](#clientread) · [*client*.write()](#clientwrite) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase) · [sql\`…\`](#sql)
+[createSQLiteClient()](#createsqliteclient) · [*client*.run()](#clientrun) · [*client*.all()](#clientall) · [*client*.stream()](#clientstream) · [*client*.chunk()](#clientchunk) · [*client*.first()](#clientfirst) · [*client*.transaction()](#clienttransaction) · [*client*.bulkWrite()](#clientbulkwrite) · [*client*.output()](#clientoutput) · [*client*.inspect()](#clientinspect) · [*client*.close()](#clientclose) · [deleteDatabase()](#deletedatabase) · [inspectDatabase()](#inspectdatabase) · [sql\`…\`](#sql)
 
 **[Queries](#queries)**: [Using sql\`…\`](#using-sql) · [How params are bound](#how-params-are-bound) · [How a query runs](#how-a-query-runs) · [Inside a transaction](#inside-a-transaction)
 
@@ -118,46 +118,22 @@ A database name may be 52 characters once normalized, where a non-ASCII characte
 
 You never need to await it: queries wait for the pool on their own. It settles once — a worker lost later is reported by [`onWorkerLost`](#onworkerlost), not here — and leaving it unread never raises an unhandled rejection.
 
-## *client*.read
+## *client*.run
 
-Sends a read query and returns the full result.
-
-```typescript
-type User = { id: number; name: string };
-
-const users = await db.read<User>(
-  'SELECT id, name FROM users WHERE active = ?',
-  [1],
-);
-// users: User[]
-```
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`.<br>See [Interrupting a call](#interrupting-a-call). |
-| `timeout` | `number` (ms) | — | Milliseconds before it is aborted and rejected with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
-| `chunkSize` | `number` | `500` | Rows per chunk<sup><a href="#fn-1">[1]</a></sup>. |
-
-On `read()` this is transport only — it still resolves with the whole array.
-
-See [Queries](#queries).
-
-## *client*.write
-
-Sends a write query and resolves with `affected`, how many rows it changed — 0 for a statement that changes nothing — and `result`, the rows it returned.
+Runs a single statement, a read or a write, and resolves with `rows`, the rows it returned, and `affected`, how many rows it changed — 0 for a statement that changes nothing.
 
 ```typescript
-const { affected } = await db.write(
+const { affected } = await db.run(
   'INSERT INTO users (name, email) VALUES (?, ?)',
   ['Alice', 'alice@example.com'],
 );
 // affected: number of rows inserted
 
-const { result } = await db.write<{ id: number }>(
+const { rows } = await db.run<{ id: number }>(
   'INSERT INTO users (name) VALUES (?) RETURNING id',
   ['Bob'],
 );
-// result: { id: number }[]
+// rows: { id: number }[]
 ```
 
 | Option | Type | Default | Description |
@@ -165,20 +141,60 @@ const { result } = await db.write<{ id: number }>(
 | `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`.<br>See [Interrupting a call](#interrupting-a-call). |
 | `timeout` | `number` (ms) | — | Milliseconds before it is aborted and rejected with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
 
-**`result` is how to read a `RETURNING` clause.**<br>It holds every row the statement returns, gathered before the call resolves, from `write()` and from `tx.write()` inside a [transaction](#clienttransaction). `read()`, `first()`, `chunk()` and `stream()` refuse a write, inside a transaction too.
+**`rows` is how to read a `RETURNING` clause.**<br>It holds every row the statement returns, gathered before the call resolves, from `run()` and from `tx.run()` inside a [transaction](#clienttransaction). Only [`first()`](#clientfirst) refuses a write.
 
-**Transaction control is refused.**<br>`BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` reject with `STATEMENT_FAILED` and `sqliteCode` `23` (`SQLITE_CODES.AUTH`), on the client and inside a transaction alike. On the client, each call may run on a different connection, so a transaction opened this way could never be closed; inside a transaction, the library owns the transaction and its savepoints. Use [`transaction()`](#clienttransaction), and `tx.savepoint()` inside it. In a string of several statements, the ones before the refused statement have run — outside a transaction, they are committed.
+**One statement per call.**<br>A string that holds more than one statement is refused with `MULTIPLE_STATEMENTS`, before anything runs. Send each statement in its own call, with its own params, or in a [transaction](#clienttransaction).
+
+**Transaction control is refused.**<br>`BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, `RELEASE` and `ROLLBACK TO` reject with `STATEMENT_FAILED` and `sqliteCode` `23` (`SQLITE_CODES.AUTH`), on the client and inside a transaction alike. On the client, each call may run on a different connection, so a transaction opened this way could never be closed; inside a transaction, the library owns the transaction and its savepoints. Use [`transaction()`](#clienttransaction), and `tx.savepoint()` inside it.
+
+See [Queries](#queries).
+
+## *client*.all
+
+Runs a single statement, a read or a write, and resolves with its rows.
+
+```typescript
+type User = { id: number; name: string };
+
+const users = await db.all<User>(
+  'SELECT id, name FROM users WHERE active = ?',
+  [1],
+);
+// users: User[]
+
+const removed = await db.all<{ id: number }>(
+  'DELETE FROM users WHERE active = 0 RETURNING id',
+);
+// removed: { id: number }[], and the rows are deleted
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `signal` | `AbortSignal` | — | Aborts the query. Rejects with `signal.reason`.<br>See [Interrupting a call](#interrupting-a-call). |
+| `timeout` | `number` (ms) | — | Milliseconds before it is aborted and rejected with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
+
+`all()` is [`run()`](#clientrun) without `affected`: it takes the same statements, one per call, and a write is run. It resolves with the whole result at once; use [`stream()`](#clientstream) or [`chunk()`](#clientchunk) to receive the rows piece by piece.
 
 See [Queries](#queries).
 
 ## *client*.stream
 
-Yields individual rows without buffering the full result set in memory. Use [`chunk()`](#clientchunk) to iterate in batches instead.
+Yields the rows of a single statement, a read or a write, one by one, without buffering the full result set in memory. Use [`chunk()`](#clientchunk) to iterate in batches instead.
 
 ```typescript
 for await (const row of db.stream<User>('SELECT * FROM large_table', [])) {
   processRow(row); // row is User
 }
+```
+
+The generator carries `affected`, a promise of how many rows the statement changed:
+
+```typescript
+const removed = db.stream<{ id: number }>('DELETE FROM users WHERE active = 0 RETURNING id');
+for await (const row of removed) {
+  forget(row.id);
+}
+const count = await removed.affected;
 ```
 
 | Option | Type | Default | Description |
@@ -189,11 +205,15 @@ for await (const row of db.stream<User>('SELECT * FROM large_table', [])) {
 
 On `stream()`, `chunkSize` is the only lever on how many rows are in flight.
 
+**`affected` settles once the statement has run.**<br>It resolves with the rows the statement changed — 0 for a read — and rejects with the statement's error; leaving it unread never raises an unhandled rejection. A generator you never iterate does not run its statement, and its `affected` stays pending; one you close before the statement ran settles it with 0.
+
+**A write is completed before its first row is delivered.**<br>By then the write is visible to every other call and the write lock is released, so a slow loop never holds other writers up; breaking out of the loop afterwards keeps the write. Abandoning it earlier, with an abort or a timeout, undoes it inside a [transaction](#clienttransaction), whose savepoint takes it back. Outside one it is undone only where the abort reaches the running statement (see [Interrupting a call](#interrupting-a-call)); elsewhere the write completes even though the call rejects. A write is never retried, and its rows are held in memory until you have read them.
+
 See [Queries](#queries).
 
 ## *client*.chunk
 
-Yields arrays of rows instead of rows one by one.
+Yields arrays of rows instead of rows one by one. It takes the same statements as [`stream()`](#clientstream), a write included, and carries `affected` the same way.
 
 ```typescript
 for await (const rows of db.chunk<User>('SELECT * FROM large_table', [])) {
@@ -208,6 +228,8 @@ for await (const rows of db.chunk<User>('SELECT * FROM large_table', [])) {
 | `chunkSize` | `number` | `500` | Rows per chunk<sup><a href="#fn-1">[1]</a></sup>. |
 
 Here `chunkSize` is the batch size the consumer sees, not only a transport detail.
+
+**A write is completed before its first chunk is delivered,** as on [`stream()`](#clientstream), and so is `affected`.
 
 See [Queries](#queries).
 
@@ -230,6 +252,8 @@ const user = await db.first<User>(
 
 `first()` stops the query after one row instead of draining the result set.
 
+**`first()` is the only method that refuses a write.**<br>A statement that writes rejects with `NOT_A_READ_QUERY` before it runs, on the client and inside a transaction: it would write every row and return one. Use [`run()`](#clientrun) or [`all()`](#clientall) to read what a write returns.
+
 See [Queries](#queries).
 
 ## *client*.transaction
@@ -238,9 +262,9 @@ Runs a callback inside a transaction. Returning commits, throwing rolls back and
 
 ```typescript
 const orders = await db.transaction(async (tx) => {
-  await tx.write('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 42]);
-  await tx.write('UPDATE stock SET qty = qty - 1 WHERE id = ?', [7]);
-  const rows = await tx.read<{ n: number }>('SELECT count(*) AS n FROM orders');
+  await tx.run('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 42]);
+  await tx.run('UPDATE stock SET qty = qty - 1 WHERE id = ?', [7]);
+  const rows = await tx.all<{ n: number }>('SELECT count(*) AS n FROM orders');
   return rows[0].n;
 });
 ```
@@ -252,7 +276,7 @@ const orders = await db.transaction(async (tx) => {
 | `signal` | `AbortSignal` | — | Abandons the transaction. Rolls back and rejects with `signal.reason`; never commits.<br>See [Interrupting a call](#interrupting-a-call). |
 | `timeout` | `number` (ms) | — | Milliseconds before the transaction is abandoned. Rolls back and rejects with `OPERATION_TIMEOUT`.<br>See [Interrupting a call](#interrupting-a-call). |
 
-**One worker serves the whole callback.**<br>This way, the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `read`, `write`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit`, `rollback`, `savepoint` and `signal`. `signal` aborts whenever `transaction()` rejects; see [Inside a transaction](#inside-a-transaction).
+**One worker serves the whole callback.**<br>This way, the transaction is genuinely isolated rather than merely wrapped in `BEGIN`. `tx` carries the same querying surface as the client — `run`, `all`, `chunk`, `stream`, `first`, `bulkWrite`, `output` — plus `commit`, `rollback`, `savepoint` and `signal`. `signal` aborts whenever `transaction()` rejects; see [Inside a transaction](#inside-a-transaction).
 
 **`tx.savepoint(name?)` opens a block you can undo without abandoning the transaction.**<br>It resolves to a handle with `name`, `release()` and `rollback({ release = true })`:
 
@@ -261,8 +285,8 @@ await db.transaction(async (tx) => {
   for (const order of orders) {
     const sp = await tx.savepoint();
     try {
-      await tx.write('INSERT INTO orders (id, total) VALUES (?, ?)', [order.id, order.total]);
-      await tx.write('UPDATE stock SET qty = qty - 1 WHERE id = ?', [order.item]);
+      await tx.run('INSERT INTO orders (id, total) VALUES (?, ?)', [order.id, order.total]);
+      await tx.run('UPDATE stock SET qty = qty - 1 WHERE id = ?', [order.item]);
       await sp.release();
     } catch {
       await sp.rollback(); // this order only
@@ -456,7 +480,7 @@ Builds a query from a template, and is the recommended way to write queries: eac
 ```typescript
 import { sql } from 'browser-sqlite';
 
-const users = await db.read<User>(
+const users = await db.all<User>(
   sql`SELECT id, name FROM users WHERE active = ${1} AND name LIKE ${pattern}`,
   { timeout: 5_000 },
 );
@@ -485,7 +509,7 @@ See [sql\`…\`](#sql) for its syntax and helpers.
 
 ```typescript
 const filter = name ? sql`AND name = ${name}` : sql``;
-const rows = await db.read(sql`SELECT * FROM users WHERE active = 1 ${filter}`);
+const rows = await db.all(sql`SELECT * FROM users WHERE active = 1 ${filter}`);
 ```
 
 **An array is one value, not a list.**<br>`` IN (${ids}) `` matches nothing: write `` IN ${sql.list(ids)} ``. A list's elements may be numbers, bigints, strings, booleans, `null`, `undefined` and `Date`s.
@@ -521,13 +545,13 @@ Every method that takes `params` — and `bulkWrite()`'s rows — converts each 
 
 **A `JSONB` column stores every value as JSON.**<br>Declare it with `types: { doc: 'JSONB' }`; each value is stored through `jsonb()` as JSON, a string as a JSON string. A `Uint8Array` is taken as JSONB already encoded, and one that is not valid JSONB fails its batch. A plain `SELECT` returns the column as bytes (a `Uint8Array`); `json(col)` returns it as JSON text.
 
-**In a string of several statements, each statement of `?` takes the next values.**<br>`INSERT INTO a VALUES (?); INSERT INTO b VALUES (?)` with `[x, y]` stores `x` in `a` and `y` in `b`. A statement with numbered or named params (`?2`, `:id`) reads them from the first value. A missing value is bound as `NULL` and an extra one is ignored, as SQLite does.
-
 ### How a query runs
 
 Read queries are dispatched to any available worker, so several run at once.
 
 Write queries are serialized per database across the whole origin — one at a time, across every client and every tab, not only within the client that issued them.
+
+**Whether a statement reads or writes is decided by SQLite, not by its text.**<br>The first call of a statement may ask the pool which kind it is, one extra round trip before the call is queued; the client remembers the answer, so the same SQL text costs nothing more afterwards. On a VFS that serialises its connections through one file handle, the first call of a statement from a second client can wait for another client's transaction before it is even queued. The call's `timeout` and `signal` bound that wait.
 
 **A generator holds its worker for its whole lifetime.**<br>[`stream()`](#clientstream) and [`chunk()`](#clientchunk) keep the worker that serves them until the loop ends, so always exhaust the generator, `break` out of it, or call its `return()` — `await using` does the same where your engine has the syntax. One you simply drop is recovered only when the engine collects it, which is no schedule to rely on; a `timeout` or a `signal` is what gives it a deadline. Prefer `chunk()` where the work is per-batch — one `INSERT` per chunk rather than per row.
 
@@ -547,9 +571,9 @@ When using [*client*.transaction()](#clienttransaction), the rules below apply t
 
 ```typescript
 await db.transaction(async (tx) => {
-  const rows = await tx.read('SELECT …');
+  const rows = await tx.all('SELECT …');
   const priced = await fetch(url, { signal: tx.signal });
-  await tx.write('INSERT …', [priced]);
+  await tx.run('INSERT …', [priced]);
 });
 ```
 
@@ -559,7 +583,9 @@ await db.transaction(async (tx) => {
 
 **A statement waits for the connection before it resolves.**<br>Every statement in a transaction runs on the same connection, and one that ends early leaves it finishing behind: [`first()`](#clientfirst) stops at the first row, a [`chunk()`](#clientchunk) or [`stream()`](#clientstream) you `break` out of stops mid-result, an abort cuts a statement short. Each one waits for the connection to be free, so the next statement in the same callback runs normally. Any generator the callback leaves open is closed before the transaction commits or rolls back.
 
-**Statements share one connection and run one at a time, in the order you issue them.**<br>Creating several without awaiting each in turn is fine — `await Promise.all([tx.read(…), tx.read(…)])` runs them back to back, in the order you called them, not the order they resolve. `commit()` takes its place in that queue like any other statement, and so does each batch a `bulkWrite()` flushes. A statement aborted by its own `signal` or `timeout` while it is still waiting its turn never reaches the database and rejects alone; the ones behind it keep their order.
+**A streamed write is final once its first row arrives, but the next statement waits for the delivery to end.**<br>`tx.stream()` and `tx.chunk()` take writes: the write has run and `affected` has settled by the first row, and the transaction's next statement runs once you have read the last row or closed the generator, as after a read — see below on a generator you have stopped pulling.
+
+**Statements share one connection and run one at a time, in the order you issue them.**<br>Creating several without awaiting each in turn is fine — `await Promise.all([tx.all(…), tx.all(…)])` runs them back to back, in the order you called them, not the order they resolve. `commit()` takes its place in that queue like any other statement, and so does each batch a `bulkWrite()` flushes. A statement aborted by its own `signal` or `timeout` while it is still waiting its turn never reaches the database and rejects alone; the ones behind it keep their order.
 
 **Savepoints follow the same order.**<br>They form a stack in the order `tx.savepoint()`, `release()` and `rollback()` are called, not in the shape of your code. Two async branches that open savepoints in the same transaction undo each other's writes: a branch rolling back its savepoint also undoes what the other branch wrote after that savepoint opened. A `bulkWrite()` still open when its savepoint closes sends its later batches to the enclosing scope, and an `output()` must be closed before the savepoint that contains it ends — its staging table is created asynchronously, so a rollback issued while it is open may or may not undo it. Close a load before you end its savepoint.
 
@@ -578,10 +604,10 @@ See [Queries: How a query runs](#how-a-query-runs).
 
 ```typescript
 // Rejects with OPERATION_TIMEOUT.
-const rows = await db.read('SELECT * FROM large_table', [], { timeout: 5_000 });
+const rows = await db.all('SELECT * FROM large_table', [], { timeout: 5_000 });
 
 // Rejects with the signal's reason (a DOMException TimeoutError).
-const rows = await db.read('SELECT * FROM large_table', [], {
+const rows = await db.all('SELECT * FROM large_table', [], {
   signal: AbortSignal.timeout(5_000),
 });
 ```
@@ -613,14 +639,15 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 
 | Code | When it is thrown |
 |------|------------------|
-| `NOT_A_READ_QUERY` | `read()`, `chunk()`, `stream()`, or `first()` was called with a statement that is not a provably readable query. |
+| `NOT_A_READ_QUERY` | `first()` was called with a statement that writes. |
+| `MULTIPLE_STATEMENTS` | A SQL string held more than one statement. Raised before anything runs, by every method that takes SQL: send each statement in its own call. |
 | `CLIENT_CLOSED` | A query was queued after `close()` was called. |
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. When SQLite refused to open the database — a file that is not a database, a `pragmas` entry it rejected — `sqliteCode` carries its result code. |
 | `WORKER_ERROR` | A statement failed in its worker without SQLite reporting it — a JavaScript exception, kept as `cause`. It has no `sqliteCode`, and the worker keeps serving. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
 | `OPERATION_TIMEOUT` | The `timeout` set on a call was spent. The error carries it as `error.timeout`. Deliberately not `TIMEOUT`, which means a deadline this library imposed on itself — a worker that never became ready, a deletion that did not complete. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
-| `STATEMENT_FAILED` | SQLite refused or failed a statement for any reason other than a lock conflict: a constraint, a syntax error, a full disk, a file that is not a database. `message` is SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode` its subtype when SQLite reports one. Transaction control sent as SQL is refused with `sqliteCode` `23` (`SQLITE_AUTH`); see [*client*.write](#clientwrite). |
+| `STATEMENT_FAILED` | SQLite refused or failed a statement for any reason other than a lock conflict: a constraint, a syntax error, a full disk, a file that is not a database. `message` is SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode` its subtype when SQLite reports one. Transaction control sent as SQL is refused with `sqliteCode` `23` (`SQLITE_AUTH`); see [*client*.run](#clientrun). |
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with its result code on `sqliteCode` and, when SQLite reports one, its subtype on `sqliteExtendedCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
 | `INVALID_OPTION` | An option was refused at the call, before any worker ran: `vfs` missing or unknown, a `(vfs, build)` pair the VFS does not support, a `poolSize` above what the VFS allows, a `wasmUrl` that is not a URL, a database name too long once normalized, a database name that is empty once normalized, a `bulkWrite()` `types` naming a column it does not write or a type other than `'JSONB'`, or `inspectDatabase` on a memory VFS. The message names the option and what it accepts. |
 | `INVALID_PRAGMA` | A `pragmas` entry could not be rendered — the name must be a bare word; the value must be an integer, a bare word such as `WAL`, or a quoted SQL literal — or the VFS refuses it, in `pragmas` or in a statement that sets it ([VFS.md](VFS.md)). |
@@ -643,7 +670,7 @@ Discriminate on `error.code` or `error.name` — they carry the same value, so `
 import { SQLITE_EXTENDED_CODES, SQLiteError } from 'browser-sqlite';
 
 try {
-  await db.write('...');
+  await db.run('...');
 } catch (err) {
   if (err instanceof SQLiteError) {
     switch (err.code) {
@@ -660,7 +687,7 @@ try {
 ```
 
 
-**Read methods reject write statements.**<br>`read()`, `chunk()`, `stream()`, and `first()`, on the client and inside a transaction, reject any statement that is not a provably readable query, throwing `NOT_A_READ_QUERY`.
+**`first()` rejects write statements.**<br>On the client and inside a transaction, it rejects a statement that writes, throwing `NOT_A_READ_QUERY`. Every other method takes it.
 
 ## Debugging
 
@@ -675,7 +702,7 @@ It is one object, updated in place: keep the reference and read it as often as y
 | `workers` | One entry per slot: `index`, `generation` (0 for the slot's first worker, +1 per replacement), `name`, `creationTime`, `initializationTime`, `boot` (the step its open has reached — where an open never finishes, the step it stopped at), `status`. |
 | `requests` | The client's recent requests, oldest first. |
 
-**A request is one lease of a worker.**<br>A `read()` is one, and so is a whole transaction. It carries `kind` (`'read'` or `'write'`), `startTime` (the call), `lockTime` (the cross-tab write lock was granted — a write on a VFS whose storage other tabs share), `acquireTime` (a worker was lent), `endTime` (the worker went back, or the request failed before getting one), `worker` and `generation` (who served it), `error` (why it ended before running), `affected`, `rows` and `queries`. Its state is in its timestamps:
+**A request is one lease of a worker.**<br>An `all()` is one, and so is a whole transaction. It carries `kind` (`'read'` or `'write'`), `startTime` (the call), `lockTime` (the cross-tab write lock was granted — a write on a VFS whose storage other tabs share), `acquireTime` (a worker was lent), `endTime` (the worker went back, or the request failed before getting one), `worker` and `generation` (who served it), `error` (why it ended before running), `affected`, `rows` and `queries`. Its state is in its timestamps:
 
 | `lockTime` | `acquireTime` | `endTime` | `error` | The request is |
 |---|---|---|---|---|

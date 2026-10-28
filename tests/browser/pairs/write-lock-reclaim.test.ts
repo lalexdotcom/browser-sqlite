@@ -35,14 +35,14 @@ const held = async (name: string) =>
 const stuckTransaction = async (file: string) => {
   const { vfs, build } = TEST_TARGET;
   const db = createSQLiteClient(file, { vfs, build, drainTimeout: 500 });
-  await db.write('CREATE TABLE IF NOT EXISTS t (v)');
+  await db.run('CREATE TABLE IF NOT EXISTS t (v)');
 
   let entered!: () => void;
   const inside = new Promise<void>((resolve) => {
     entered = resolve;
   });
   db.transaction(async (tx) => {
-    await tx.write('INSERT INTO t VALUES (1)');
+    await tx.run('INSERT INTO t VALUES (1)');
     entered();
     await new Promise<void>(() => {});
   }).catch(() => {});
@@ -74,7 +74,7 @@ describe('the origin write lock is reclaimed', () => {
     onTestFinished(async () => {
       await b.close().catch(() => {});
     });
-    await expect(b.write('INSERT INTO t VALUES (2)')).resolves.toBeDefined();
+    await expect(b.run('INSERT INTO t VALUES (2)')).resolves.toBeDefined();
   });
 });
 
@@ -93,7 +93,7 @@ describe('a write that gives up says who was holding', () => {
     onTestFinished(async () => {
       await db.close().catch(() => {});
     });
-    await db.write('CREATE TABLE IF NOT EXISTS t (v)');
+    await db.run('CREATE TABLE IF NOT EXISTS t (v)');
 
     const realm = await makeRealm();
     const release = await holdIn(
@@ -104,7 +104,7 @@ describe('a write that gives up says who was holding', () => {
     onTestFinished(() => release());
 
     const failure = await db
-      .write('INSERT INTO t VALUES (1)', [], { timeout: 300 })
+      .run('INSERT INTO t VALUES (1)', [], { timeout: 300 })
       .then(
         () => undefined,
         (error: unknown) => error as SQLiteError,
@@ -137,7 +137,7 @@ describe('a write that gives up says who was holding', () => {
     });
 
     const failure = await b
-      .write('INSERT INTO t VALUES (2)', [], { timeout: 300 })
+      .run('INSERT INTO t VALUES (2)', [], { timeout: 300 })
       .then(
         () => undefined,
         (error: unknown) => error as SQLiteError,

@@ -1167,3 +1167,343 @@ describe('scheduler — retire(): a slot that declined to open', () => {
     lease.release();
   });
 });
+
+describe('scheduler — verdict acquisitions', () => {
+  // Falsifiable: serve readers (or writers) before the verdict queue in handOver.
+  it('serves a verdict before a queued writer and a queued reader', async () => {
+    const { scheduler } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    const order: string[] = [];
+    const reader = scheduler.acquire('read').then((l) => {
+      order.push('read');
+      return l;
+    });
+    const writer = scheduler.acquire('write').then((l) => {
+      order.push('write');
+      return l;
+    });
+    const verdict = scheduler.acquire('verdict').then((l) => {
+      order.push('verdict');
+      return l;
+    });
+    await flush();
+    expect(scheduler.stats()).toMatchObject({ read: 1, write: 1, verdict: 1 });
+
+    held.release();
+    (await verdict).release();
+    (await writer).release();
+    (await reader).release();
+    expect(order).toEqual(['verdict', 'write', 'read']);
+  });
+
+  // Falsifiable: serve the verdict queue after the readers in add().
+  it('serves a verdict ahead of a reader when a worker joins', async () => {
+    const scheduler = createScheduler<TestWorker>();
+    const order: string[] = [];
+    void scheduler.acquire('read').then(() => order.push('read'));
+    void scheduler.acquire('verdict').then(() => order.push('verdict'));
+    await flush();
+    scheduler.add({ index: 0 });
+    await flush();
+    expect(order).toEqual(['verdict']);
+  });
+
+  // Falsifiable: leave the verdict kind out of takeAvailable's free-worker path
+  // (queue it unconditionally) and this hangs.
+  it('serves a verdict at once from a free worker', async () => {
+    const { scheduler } = makeScheduler(1);
+    const lease = await scheduler.acquire('verdict');
+    expect(lease.worker.index).toBe(0);
+    expect(lease.borrowed).toBeUndefined();
+    expect(scheduler.stats()).toMatchObject({ available: 0, leased: 1 });
+    lease.release();
+    expect(scheduler.stats()).toMatchObject({ available: 1, leased: 0 });
+  });
+
+  // Falsifiable: let a verdict take the write path in takeAvailable (designate).
+  it('never sets the designation, so a later write designates normally', async () => {
+    const { scheduler } = makeScheduler(2);
+    const verdict = await scheduler.acquire('verdict'); // worker 0, still out
+    // A verdict that had designated worker 0 would leave this write queued
+    // behind a designated, leased worker while worker 1 sits free.
+    const writer = await scheduler.acquire('write');
+    expect(writer.worker.index).toBe(1);
+    verdict.release();
+    writer.release();
+  });
+
+  // Falsifiable: a verdict served by handOver off the designated writer, with
+  // no write queued, keeps the designation -> the next write is pinned to a
+  // worker that is busy while another is free.
+  it('hands the designation back when a verdict takes the writer with no write queued', async () => {
+    const { scheduler } = makeScheduler(2);
+    const writer = await scheduler.acquire('write'); // worker 0 designated
+    const other = await scheduler.acquire('read'); // worker 1
+    const verdict = scheduler.acquire('verdict');
+    await flush();
+    writer.release();
+    const v = await verdict;
+    expect(v.worker.index).toBe(0);
+    other.release(); // worker 1 free; the designation must be gone
+    const write = await scheduler.acquire('write');
+    expect(write.worker.index).toBe(1);
+    v.release();
+    write.release();
+  });
+
+  // Falsifiable: delete the verdict queue from shutdown()'s reject loop.
+  it('rejects verdict waiters on shutdown', async () => {
+    const { scheduler } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    const queued = scheduler.acquire('verdict');
+    const reason = new Error('closing');
+    void scheduler.shutdown(reason);
+    await expect(queued).rejects.toBe(reason);
+    held.release();
+  });
+
+  // Falsifiable: reject in place instead of splicing the verdict queue.
+  it('removes a verdict waiter aborted by its signal', async () => {
+    const { scheduler } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    const controller = new AbortController();
+    const abandoned = scheduler.acquire('verdict', controller.signal);
+    const next = scheduler.acquire('verdict');
+    await flush();
+    expect(scheduler.stats().verdict).toBe(2);
+
+    controller.abort();
+    await expect(abandoned).rejects.toMatchObject({ name: 'AbortError' });
+    expect(scheduler.stats().verdict).toBe(1);
+
+    held.release();
+    expect((await next).worker.index).toBe(0);
+  });
+
+  // Falsifiable: count the wrong queue in stats().verdict.
+  it('counts verdict waiters in stats()', async () => {
+    const { scheduler } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    void scheduler.acquire('verdict');
+    void scheduler.acquire('verdict');
+    await flush();
+    expect(scheduler.stats()).toMatchObject({ verdict: 2, read: 0, write: 0 });
+    held.release();
+  });
+});
+
+describe('scheduler — offer()', () => {
+  // Falsifiable: return false unconditionally, or skip the shift.
+  it('serves a waiting verdict with a borrowed lease and returns true', async () => {
+    const { scheduler, workers } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    const verdict = scheduler.acquire('verdict');
+    await flush();
+
+    expect(scheduler.offer(workers[0] as TestWorker)).toBe(true);
+    const lease = await verdict;
+    expect(lease.worker).toBe(workers[0]);
+    expect(lease.borrowed).toBe(true);
+    expect(scheduler.stats().verdict).toBe(0);
+    held.release();
+  });
+
+  // Falsifiable: return true without a waiter.
+  it('returns false when no verdict is waiting', () => {
+    const { scheduler, workers } = makeScheduler(1);
+    expect(scheduler.offer(workers[0] as TestWorker)).toBe(false);
+  });
+
+  // Falsifiable: let offer() take the head of the verdict queue whatever it is.
+  it('skips a free-only verdict and serves the next ordinary one; a free worker serves the free-only one', async () => {
+    const { scheduler, workers } = makeScheduler(1);
+    const held = await scheduler.acquire('read');
+    let freeServed = false;
+    const freeOnly = scheduler
+      .acquire('verdict', undefined, { free: true })
+      .then((l) => {
+        freeServed = true;
+        return l;
+      });
+    const ordinary = scheduler.acquire('verdict');
+    await flush();
+
+    expect(scheduler.offer(workers[0] as TestWorker)).toBe(true);
+    const borrowed = await ordinary;
+    expect(borrowed.borrowed).toBe(true);
+    await flush();
+    expect(freeServed).toBe(false);
+    // Only the free-only waiter is left: a second offer serves nobody.
+    expect(scheduler.offer(workers[0] as TestWorker)).toBe(false);
+    expect(scheduler.stats().verdict).toBe(1);
+
+    held.release();
+    const lease = await freeOnly;
+    expect(lease.borrowed).toBeUndefined();
+    expect(lease.worker).toBe(workers[0]);
+    lease.release();
+  });
+
+  // Falsifiable: make the borrowed release() add to available, hand over, or
+  // delete from leased.
+  it('leaves availability and leases untouched when the borrowed lease is released', async () => {
+    const { scheduler, workers } = makeScheduler(2);
+    const tx = await scheduler.acquire('read'); // worker 0, a transaction's
+    const other = await scheduler.acquire('read'); // worker 1
+    const verdict = scheduler.acquire('verdict');
+    await flush();
+    const before = scheduler.stats();
+
+    expect(scheduler.offer(workers[0] as TestWorker)).toBe(true);
+    const lease = await verdict;
+    lease.release();
+    lease.release();
+    expect(scheduler.stats()).toMatchObject({
+      available: before.available,
+      leased: before.leased,
+    });
+
+    // The transaction still owns worker 0: a reader queued now is not served by
+    // the borrowed release.
+    const queued = scheduler.acquire('read');
+    await flush();
+    expect(scheduler.stats().read).toBe(1);
+    tx.release();
+    expect((await queued).worker.index).toBe(0);
+    other.release();
+  });
+
+  // Falsifiable: let the borrowed lease's demote() clear the designation.
+  it('lets a borrowed lease demote harmlessly', async () => {
+    const { scheduler, workers } = makeScheduler(2);
+    const writer = await scheduler.acquire('write'); // worker 0, designated
+    const reader = await scheduler.acquire('read'); // worker 1
+    const verdict = scheduler.acquire('verdict');
+    await flush();
+    scheduler.offer(workers[0] as TestWorker);
+    const lease = await verdict;
+    const queuedWrite = scheduler.acquire('write');
+    await flush();
+
+    lease.demote();
+    // The designation is the transaction's own: freeing worker 1 must not
+    // serve the queued write there.
+    reader.release();
+    await flush();
+    expect(scheduler.stats().write).toBe(1);
+    writer.release();
+    expect((await queuedWrite).worker.index).toBe(0);
+  });
+});
+
+describe('scheduler — Lease.demote()', () => {
+  // Falsifiable: make demote() a no-op.
+  it('lets a queued writer be served elsewhere while the first stays leased', async () => {
+    const { scheduler } = makeScheduler(2);
+    const first = await scheduler.acquire('write'); // worker 0
+    const queued = scheduler.acquire('write');
+    await flush();
+    expect(scheduler.stats().write).toBe(1);
+    // The pool still has worker 1, yet the write waits: one designated writer.
+
+    first.demote();
+    const second = await queued;
+    expect(second.worker.index).toBe(1);
+    expect(scheduler.stats()).toMatchObject({ write: 0, leased: 2 });
+
+    first.release();
+    second.release();
+  });
+
+  // Falsifiable: designate nothing when no worker is free and still clear -
+  // here, drop the clear and the later write never finds worker 1.
+  it('serves the queued writer on the next worker that frees up', async () => {
+    const { scheduler } = makeScheduler(2);
+    const first = await scheduler.acquire('write'); // worker 0
+    const reader = await scheduler.acquire('read'); // worker 1
+    const queued = scheduler.acquire('write');
+    await flush();
+
+    first.demote();
+    await flush();
+    expect(scheduler.stats().write).toBe(1);
+    reader.release();
+    expect((await queued).worker.index).toBe(1);
+    first.release();
+  });
+
+  // Falsifiable: drop the idempotence guard (a second demote would clear the
+  // designation the new writer now holds).
+  it('is harmless when called twice', async () => {
+    const { scheduler } = makeScheduler(3);
+    const first = await scheduler.acquire('write');
+    const queued = scheduler.acquire('write');
+    await flush();
+    first.demote();
+    const second = await queued;
+    const another = scheduler.acquire('write');
+    await flush();
+    first.demote(); // must not clear the second writer's designation
+    expect(scheduler.stats().write).toBe(1);
+    second.release();
+    expect((await another).worker.index).toBe(1);
+    first.release();
+  });
+
+  // Falsifiable: clear currentWriterIndex without checking it is this worker.
+  it('is a no-op on a lease without the designation', async () => {
+    const { scheduler } = makeScheduler(3);
+    const writer = await scheduler.acquire('write'); // worker 0
+    const reader = await scheduler.acquire('read'); // worker 1; worker 2 is free
+    const queued = scheduler.acquire('write');
+    await flush();
+    reader.demote();
+    // A wrongful demote would serve the queued write on free worker 2.
+    expect(scheduler.stats().write).toBe(1);
+    writer.release();
+    expect((await queued).worker.index).toBe(0);
+    reader.release();
+  });
+
+  // Falsifiable: drop the `released` guard: a demote after release would clear
+  // the designation the next writer holds on the same worker.
+  it('is a no-op once the lease was released', async () => {
+    const { scheduler } = makeScheduler(2);
+    const first = await scheduler.acquire('write'); // worker 0
+    const queued = scheduler.acquire('write');
+    await flush();
+    first.release(); // handOver gives worker 0 to the queued writer
+    const second = await queued;
+    expect(second.worker.index).toBe(0);
+    const third = scheduler.acquire('write');
+    await flush();
+    first.demote();
+    expect(scheduler.stats().write).toBe(1);
+    second.release();
+    expect((await third).worker.index).toBe(0);
+  });
+
+  // Falsifiable: drop the generation check from demote() — the dead worker's
+  // lease clears the designation its replacement holds, and the queued write
+  // is served on worker 1 beside it: two writers.
+  it('is a no-op on a stale lease, whose worker was replaced', async () => {
+    const { scheduler } = makeScheduler(2);
+    const stale = await scheduler.acquire('write'); // worker 0
+    scheduler.remove(0);
+    scheduler.add({ index: 0 });
+    const writer = await scheduler.acquire('write');
+    expect(writer.worker.index).toBe(0);
+    let served: number | undefined;
+    void scheduler.acquire('write').then((lease) => {
+      served = lease.worker.index;
+    });
+    await flush();
+    stale.demote();
+    await flush();
+    expect(served).toBeUndefined();
+    expect(scheduler.stats().write).toBe(1);
+    writer.release();
+    await flush();
+    expect(served).toBe(0);
+  });
+});

@@ -34,6 +34,22 @@ export type SQLWorkerResultData<T = unknown> = {
  */
 export type SavepointOp = { conclude?: 'release' | 'undo'; open?: true };
 
+/**
+ * What a worker says of a SQL text without running it: what its one statement
+ * does, or `refused` for a string holding more than one.
+ */
+export type Verdict = 'read' | 'write' | 'refused';
+
+/**
+ * The code a worker refuses a write with: see `SQLOptions.refuseWrite`.
+ * `ROUTED_AS_READ` is the client's own: a statement sent down the read path on
+ * a verdict that no longer holds. It never reaches the consumer.
+ */
+export type RefuseWrite =
+  | 'NOT_A_READ_QUERY'
+  | 'READ_ONLY_TRANSACTION'
+  | 'ROUTED_AS_READ';
+
 type SQLOptions = {
   chunkSize?: number;
   /** Chunks the worker may send before waiting for a credit. Spec §3.2. */
@@ -48,6 +64,22 @@ type SQLOptions = {
   control?: true;
   /** Prepared afresh and never cached (spec 2026-10-04, D9). */
   uncached?: true;
+  /**
+   * A statement the worker classifies as a write is refused before its first
+   * step, with this as the error's `errorCode`.
+   */
+  refuseWrite?: RefuseWrite;
+  /**
+   * The string may hold several statements, run in order. Internal: only the
+   * barrier sets it; any other string holding more than one is refused.
+   */
+  multi?: true;
+  /**
+   * Sent by `stream()`/`chunk()`. A statement classified as a write is stepped
+   * to its end before any chunk is sent, and every statement posts `affected`
+   * before its first chunk.
+   */
+  drainWrites?: true;
 };
 
 /**
@@ -144,6 +176,11 @@ export type ClientMessageData =
       pattern?: string;
       options?: SQLOptions;
     }
+  /**
+   * Prepare `sql`, classify it and run nothing: the worker answers `verdict`
+   * or `verdict-error`. Apart from the query transport.
+   */
+  | { type: 'verdict'; callId: number; sql: string }
   | { type: 'close'; callId: number }
   | { type: 'credit'; callId: number; n: number }
   | { type: 'stop'; callId: number }
@@ -193,6 +230,11 @@ export type WorkerMessageData =
    */
   | { type: 'probed'; callId: number; missing: PlatformFeature | null }
   | { type: 'chunk'; callId: number; data: RowsBlock }
+  /**
+   * Ahead of a `drainWrites` query's first chunk: the rows it changed, and
+   * whether it was a write stepped to its end (`drained`) or a read (0).
+   */
+  | { type: 'affected'; callId: number; affected: number; drained: boolean }
   | {
       type: 'done';
       callId: number;
@@ -234,13 +276,11 @@ export type WorkerMessageData =
        * boundary — `worker.ts` copies it off any thrown error carrying one, so
        * this is a structural contract and not a hook for one class.
        *
-       * **Nothing sets it today.** `WorkerQueryTimeout` was its only producer
-       * and it went with the execution budget when `timeout` became a
-       * client-side wall-clock deadline. Kept rather than deleted: it is the
-       * twin of `sqliteCode` above, which is load-bearing, and rebuilding it
-       * would cost the same three sites it occupies.
+       * Set by a refused write and a refused multi-statement string; the
+       * client turns `ROUTED_AS_READ` into `RoutedAsRead`, never an error a
+       * consumer sees.
        */
-      errorCode?: SQLiteErrorCode;
+      errorCode?: SQLiteErrorCode | 'ROUTED_AS_READ';
       /**
        * Whether the connection is inside a transaction once this query has
        * ended — `sqlite3_get_autocommit() === 0`. SQLite can leave a
@@ -248,6 +288,15 @@ export type WorkerMessageData =
        * whole transaction back. Absent when the worker could not read it.
        */
       inTransaction?: boolean | undefined;
+    }
+  | { type: 'verdict'; callId: number; kind: Verdict }
+  /** The verdict's prepare failed: a failure says nothing of the statement's kind. */
+  | {
+      type: 'verdict-error';
+      callId: number;
+      message: string;
+      sqliteCode?: SQLiteResultCode;
+      sqliteExtendedCode?: number;
     }
   | { type: 'closed'; callId: number }
   /** Nothing of this worker's IndexedDB is live any more; terminate it. */

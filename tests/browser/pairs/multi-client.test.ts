@@ -71,14 +71,14 @@ describe('two clients writing at once', {
   // serializes the second write on its own (HANDLE-1, `mem:vfs`).
   it('makes the second writer wait, on both regimes', async () => {
     const { a, b } = twoClients();
-    await a.write('CREATE TABLE t (n)');
+    await a.run('CREATE TABLE t (n)');
 
     let settled = false;
     let attempt!: Promise<unknown>;
     await a.transaction(async (tx) => {
       // A holds the write lock from here until this callback returns.
-      await tx.write('INSERT INTO t VALUES (1)');
-      attempt = rejectionOf(b.write('INSERT INTO t VALUES (2)'));
+      await tx.run('INSERT INTO t VALUES (1)');
+      attempt = rejectionOf(b.run('INSERT INTO t VALUES (2)'));
       settled = await settledWithin(attempt, TURNED_AWAY_WITHIN);
     });
     const error = await attempt;
@@ -88,7 +88,7 @@ describe('two clients writing at once', {
 
     // The invariant a consumer cares about: exactly the writes that were
     // accepted are in the database, and now BOTH are accepted.
-    const rows = await a.read<{ n: number }>('SELECT n FROM t ORDER BY n');
+    const rows = await a.all<{ n: number }>('SELECT n FROM t ORDER BY n');
     expect(rows.map((row) => row.n)).toEqual([1, 2]);
   });
 
@@ -110,16 +110,16 @@ describe('two clients writing at once', {
   // IDBBatchAtomicVFS, IDBMirrorVFS, OPFSAnyContextVFS (Firefox).
   it('never refuses a read-only transaction opened under a writer', async () => {
     const { a, b } = twoClients();
-    await a.write('CREATE TABLE t (n)');
-    await a.write('INSERT INTO t VALUES (1)');
+    await a.run('CREATE TABLE t (n)');
+    await a.run('INSERT INTO t VALUES (1)');
 
     let attempt!: Promise<unknown>;
     await a.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (2)');
+      await tx.run('INSERT INTO t VALUES (2)');
       attempt = rejectionOf(
         b.transaction(
           async (btx) => {
-            await btx.read<{ n: number }>('SELECT n FROM t');
+            await btx.all<{ n: number }>('SELECT n FROM t');
           },
           { readOnly: true },
         ),
@@ -134,7 +134,7 @@ describe('two clients writing at once', {
   });
 
   // `bulkWrite` still commits PER BATCH and still takes one lock per batch —
-  // `bulk.ts` calls the public `write`. So another client's write can still
+  // `bulk.ts` writes through `writeDirect`. So another client's write can still
   // land between two batches; what changed is that neither side is refused.
   //
   // Falsifiable by its own middle assertion: if `bulkWrite` did not commit per
@@ -143,7 +143,7 @@ describe('two clients writing at once', {
   it('interleaves a bulkWrite with another client, refusing neither', async () => {
     const { a, b } = twoClients();
     const keys = Array.from({ length: 16 }, (_, i) => `c${i}`);
-    await a.write(`CREATE TABLE t (${keys.join(', ')})`);
+    await a.run(`CREATE TABLE t (${keys.join(', ')})`);
 
     const batch = Math.floor(32766 / keys.length);
     const row = (n: number) =>
@@ -154,19 +154,17 @@ describe('two clients writing at once', {
 
     let committed = 0;
     for (let poll = 0; poll < 100 && committed === 0; poll += 1) {
-      const [count] = await a.read<{ n: number }>(
-        'SELECT count(*) AS n FROM t',
-      );
+      const [count] = await a.all<{ n: number }>('SELECT count(*) AS n FROM t');
       committed = count?.n ?? 0;
       if (committed === 0) await new Promise((r) => setTimeout(r, 50));
     }
     expect(committed).toBe(batch);
 
-    await a.write(`INSERT INTO t (${keys[0]}) VALUES (-1)`);
+    await a.run(`INSERT INTO t (${keys[0]}) VALUES (-1)`);
     for (let i = 0; i < batch; i += 1) await writer.enqueue(row(i));
     await writer.close();
 
-    const [after] = await a.read<{ n: number }>(
+    const [after] = await a.all<{ n: number }>(
       'SELECT count(*) AS n FROM t WHERE c0 >= 0',
     );
     expect(after?.n).toBe(batch * 2);
@@ -197,17 +195,17 @@ describe('two clients writing at once', {
   // longer cancels it.
   it('gives back a usable client after a transaction is aborted mid-contention', async () => {
     const { a, b } = twoClients();
-    await a.write('CREATE TABLE t (n)');
+    await a.run('CREATE TABLE t (n)');
 
     let error: unknown;
     await a.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
       // B is refused at once or waits for the file, depending on the mode;
       // either way the signal is what ends it.
       error = await rejectionOf(
         b.transaction(
           async (btx) => {
-            await btx.write('INSERT INTO t VALUES (2)');
+            await btx.run('INSERT INTO t VALUES (2)');
           },
           { signal: AbortSignal.timeout(500) },
         ),
@@ -217,13 +215,13 @@ describe('two clients writing at once', {
     expect(error).toBeInstanceOf(Error);
 
     // Nothing of B's abandoned transaction reached the database.
-    const rows = await a.read<{ n: number }>('SELECT n FROM t ORDER BY n');
+    const rows = await a.all<{ n: number }>('SELECT n FROM t ORDER BY n');
     expect(rows.map((row) => row.n)).toEqual([1]);
 
     // And B still works — the connection went back clean, not poisoned. A
     // worker returned mid-transaction would fail or hang here.
-    await b.write('INSERT INTO t VALUES (3)');
-    const after = await b.read<{ n: number }>('SELECT n FROM t ORDER BY n');
+    await b.run('INSERT INTO t VALUES (3)');
+    const after = await b.all<{ n: number }>('SELECT n FROM t ORDER BY n');
     expect(after.map((row) => row.n)).toEqual([1, 3]);
   });
 });
@@ -232,7 +230,7 @@ describe('one client', () => {
   // The other half of the sentence the README puts in front of a consumer:
   // `tx.bulkWrite` is the all-or-nothing shape. Its batches run on the caller's
   // already-open transaction — `bulkFor` there is handed the transaction's own
-  // `write` and a `transaction: (fn) => fn(db)` that opens nothing — so a flush
+  // `writeDirect` and a `transaction: (fn) => fn({ writeDirect })` that opens nothing — so a flush
   // that has already happened is still uncommitted and goes back with the
   // rollback. Engine-independent: no second client, no contention, nothing that
   // depends on how handles are held.
@@ -255,7 +253,7 @@ describe('one client', () => {
   it('leaves nothing behind when a tx.bulkWrite is interrupted', async () => {
     const a = await createTestClient();
     const keys = Array.from({ length: 16 }, (_, i) => `c${i}`);
-    await a.write(`CREATE TABLE t (${keys.join(', ')})`);
+    await a.run(`CREATE TABLE t (${keys.join(', ')})`);
     const batch = Math.floor(32766 / keys.length);
     const row = (n: number) =>
       Object.fromEntries(keys.map((k) => [k, n])) as Record<string, number>;
@@ -285,7 +283,7 @@ describe('one client', () => {
     expect(failure).toBe(boom);
 
     // And none of them survived it. This is what `tx.bulkWrite` buys.
-    const [after] = await a.read<{ n: number }>('SELECT count(*) AS n FROM t');
+    const [after] = await a.all<{ n: number }>('SELECT count(*) AS n FROM t');
     expect(after?.n).toBe(0);
   });
 });

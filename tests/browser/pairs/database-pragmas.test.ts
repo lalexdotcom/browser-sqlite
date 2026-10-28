@@ -26,13 +26,13 @@ describe('a pragma that writes the database', {
   it("waits for another client's write instead of failing", async () => {
     const database = sharedDatabase();
     const a = database.open({ poolSize: 1 });
-    await a.write('CREATE TABLE t (x)');
+    await a.run('CREATE TABLE t (x)');
 
     // A holds its transaction open, past B's busy_timeout, after writing.
     const held = Promise.withResolvers<void>();
     const wrote = Promise.withResolvers<void>();
     const transaction = a.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (1)');
+      await tx.run('INSERT INTO t VALUES (1)');
       wrote.resolve();
       await held.promise;
     });
@@ -55,7 +55,7 @@ describe('a pragma that writes the database', {
         user_version: '7',
       },
     });
-    const read = b.read<{ user_version: number }>('PRAGMA user_version');
+    const read = b.all<{ user_version: number }>('PRAGMA user_version');
 
     await sleep(500);
     held.resolve();
@@ -68,7 +68,7 @@ describe('a pragma that writes the database', {
   // the first read can run before them and report 0.
   it("is in force before the client's first read", async () => {
     const db = await createTestClient({ pragmas: { user_version: '7' } });
-    const rows = await db.read<{ user_version: number }>('PRAGMA user_version');
+    const rows = await db.all<{ user_version: number }>('PRAGMA user_version');
     expect(rows[0]?.user_version).toBe(7);
   });
 
@@ -79,7 +79,7 @@ describe('a pragma that writes the database', {
     const db = await createTestClient({
       pragmas: { query_only: '1', user_version: '7' },
     });
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'STATEMENT_FAILED',
     });
     await expect(db.ready).rejects.toMatchObject({ code: 'STATEMENT_FAILED' });
@@ -92,19 +92,23 @@ describe('a pragma that writes the database', {
  * write after another client's schema change hung there (2026-10-01).
  */
 describe('a pragma the VFS refuses', () => {
-  // Falsifiable: drop the check in write(), or in the transaction's checksql.
+  // Falsifiable: drop the check in runStatement() or first(), or in the
+  // transaction's checksql.
   it('is refused in a statement that sets it, in or out of a transaction', {
     tags: ['vfs:OPFSCoopSyncVFS'],
   }, async () => {
     const db = await createTestClient();
 
-    await expect(db.write('PRAGMA busy_timeout = 100')).rejects.toMatchObject({
+    await expect(db.run('PRAGMA busy_timeout = 100')).rejects.toMatchObject({
+      code: 'INVALID_PRAGMA',
+    });
+    await expect(db.first('PRAGMA busy_timeout = 100')).rejects.toMatchObject({
       code: 'INVALID_PRAGMA',
     });
     await expect(
-      db.transaction((tx) => tx.write('PRAGMA busy_timeout = 100')),
+      db.transaction((tx) => tx.run('PRAGMA busy_timeout = 100')),
     ).rejects.toMatchObject({ code: 'INVALID_PRAGMA' });
     // Reading it is fine.
-    await expect(db.read('PRAGMA busy_timeout')).resolves.toBeDefined();
+    await expect(db.all('PRAGMA busy_timeout')).resolves.toBeDefined();
   });
 });

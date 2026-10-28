@@ -15,10 +15,10 @@ describe('query timeout', () => {
       // to start, and then no statement ever runs. Start the worker, then warm
       // the statement, so the timeout below lands inside step() (mem:lessons,
       // 2026-09-05).
-      await db.read('SELECT 1');
-      await db.read(slow, [], { timeout: 50 }).catch(() => {});
+      await db.all('SELECT 1');
+      await db.all(slow, [], { timeout: 50 }).catch(() => {});
       const started = performance.now();
-      await expect(db.read(slow, [], { timeout: 200 })).rejects.toMatchObject({
+      await expect(db.all(slow, [], { timeout: 200 })).rejects.toMatchObject({
         code: 'OPERATION_TIMEOUT',
       });
       // The rejection is immediate by contract, whether the statement stopped or
@@ -28,26 +28,8 @@ describe('query timeout', () => {
       // Falsifiable: create this client on the `sync` build — the read then
       // waits for the query's natural end, seconds on either engine.
       const next = performance.now();
-      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       expect(performance.now() - next).toBeLessThan(2000);
-    } finally {
-      await db.close();
-    }
-  });
-
-  it('spends the budget over the whole call, not per statement', {
-    tags: ['requires:interruptible'],
-  }, async () => {
-    // Needs interruptible: so the write is really cut and close() does not
-    // wait it out (mem:measurements, CI-QUERY-TIMEOUT).
-    const db = await createTestClient({ poolSize: 1 });
-    try {
-      await db.read('SELECT 1');
-      // Two statements, each shorter than the budget, whose sum is not.
-      const half = `${longQuery(8_000_000)};`;
-      await expect(
-        db.write(`${half} ${half}`, [], { timeout: 400 }),
-      ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
     } finally {
       await db.close();
     }
@@ -56,8 +38,8 @@ describe('query timeout', () => {
   it('charges the consumer for its own slowness', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (x INTEGER)');
-      await db.write(
+      await db.run('CREATE TABLE t (x INTEGER)');
+      await db.run(
         `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1001) ` +
           `INSERT INTO t SELECT x FROM c`,
       );
@@ -100,7 +82,7 @@ describe('query timeout', () => {
       // future edit that "unifies" the two errors. Falsifier: make withDeadline
       // return its own controller's signal instead of the merged one and the
       // rejection becomes OPERATION_TIMEOUT, or never arrives at all.
-      const promise = db.read(longQuery(20_000_000), [], {
+      const promise = db.all(longQuery(20_000_000), [], {
         signal: controller.signal,
         timeout: 30_000,
       });
@@ -124,20 +106,20 @@ describe('query timeout', () => {
     try {
       // The worker must be up, so the long read below occupies it rather than
       // waiting for it to start alongside the call under test.
-      await db.read('SELECT 1');
+      await db.all('SELECT 1');
       // The only worker is busy for seconds; the second call never reaches a
       // step() and must still time out. Falsifier: create the controller below
       // the lease acquisition and this goes green for the wrong reason — the
       // clock must run during the wait, which is what the assertion pins.
       const holder = new AbortController();
-      const long = db.read(longQuery(20_000_000), [], {
+      const long = db.all(longQuery(20_000_000), [], {
         signal: holder.signal,
       });
       long.catch(() => {});
       try {
         const started = performance.now();
         await expect(
-          db.read('SELECT 1 AS one', [], { timeout: 150 }),
+          db.all('SELECT 1 AS one', [], { timeout: 150 }),
         ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
         expect(performance.now() - started).toBeLessThan(1000);
       } finally {
@@ -151,7 +133,7 @@ describe('query timeout', () => {
   it('bounds a transaction, including the callback between its statements', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       // The callback runs no long statement: it sleeps. Only a wall-clock
       // deadline can end this, which is what the test pins. Falsifier: remove
       // the withDeadline composition in transaction.ts and the promise
@@ -159,15 +141,15 @@ describe('query timeout', () => {
       await expect(
         db.transaction(
           async (tx) => {
-            await tx.write('INSERT INTO t VALUES (1)');
+            await tx.run('INSERT INTO t VALUES (1)');
             await new Promise((r) => setTimeout(r, 600));
-            await tx.write('INSERT INTO t VALUES (2)');
+            await tx.run('INSERT INTO t VALUES (2)');
           },
           { timeout: 200 },
         ),
       ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 200 });
       // It rolled back: neither row survived.
-      expect(await db.read('SELECT a FROM t')).toEqual([]);
+      expect(await db.all('SELECT a FROM t')).toEqual([]);
     } finally {
       await db.close();
     }
@@ -176,7 +158,7 @@ describe('query timeout', () => {
   it('bounds a bulkWrite from the call, not from close()', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       const { enqueue, close } = db.bulkWrite('t', ['a'], { timeout: 200 });
       await enqueue({ a: 1 });
       // The producer is slow, which is the whole case: nothing is executing in
@@ -198,7 +180,7 @@ describe('query timeout', () => {
   it('bounds a stream() and a chunk() from the call, not from the first next()', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.read('SELECT 1');
+      await db.all('SELECT 1');
       const rows = db.stream('SELECT 1 AS one', [], { timeout: 200 });
       const chunks = db.chunk('SELECT 1 AS one', [], { timeout: 200 });
       await new Promise((r) => setTimeout(r, 600));
@@ -210,7 +192,7 @@ describe('query timeout', () => {
         code: 'OPERATION_TIMEOUT',
         timeout: 200,
       });
-      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
     } finally {
       await db.close();
     }
@@ -219,8 +201,8 @@ describe('query timeout', () => {
   it('bounds an output() the same way, leaving the target untouched', async () => {
     const db = await createTestClient({ poolSize: 1 });
     try {
-      await db.write('CREATE TABLE dest (a INTEGER)');
-      await db.write('INSERT INTO dest VALUES (42)');
+      await db.run('CREATE TABLE dest (a INTEGER)');
+      await db.run('INSERT INTO dest VALUES (42)');
       const { enqueue, close } = db.output(
         'dest',
         { a: 'INTEGER' },
@@ -233,7 +215,7 @@ describe('query timeout', () => {
       });
       // An aborted output() is observationally a no-op: the previous target
       // stays intact and fully populated.
-      expect(await db.read('SELECT a FROM dest')).toEqual([{ a: 42 }]);
+      expect(await db.all('SELECT a FROM dest')).toEqual([{ a: 42 }]);
     } finally {
       await db.close();
     }

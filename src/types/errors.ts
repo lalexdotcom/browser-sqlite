@@ -19,6 +19,8 @@
  * its subtype when SQLite reports one.
  * `WORKER_ERROR` is a statement that failed in the worker without SQLite
  * reporting it — a JavaScript exception, kept as `cause`; the worker lives on.
+ * `MULTIPLE_STATEMENTS` is a string holding more than one statement, refused
+ * before anything runs: one call, one statement.
  * `INVALID_VALUE` is a param or a `bulkWrite()` cell no rule can bind — refused on the page, before any worker sees it.
  */
 import type {
@@ -28,6 +30,7 @@ import type {
 
 export type SQLiteErrorCode =
   | 'NOT_A_READ_QUERY'
+  | 'MULTIPLE_STATEMENTS'
   | 'CLIENT_CLOSED'
   | 'WORKER_CRASHED'
   | 'WORKER_ERROR'

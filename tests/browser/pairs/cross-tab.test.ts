@@ -82,15 +82,15 @@ describe('an epoch published by another realm', {
       }
     });
 
-    await db.write('CREATE TABLE t (n)');
-    await db.write('INSERT INTO t VALUES (1)');
+    await db.run('CREATE TABLE t (n)');
+    await db.run('INSERT INTO t VALUES (1)');
     // The single worker is now current with the local epoch. A read here
     // will not run a barrier — seen equals target, no foreign marker.
-    await db.read('SELECT n FROM t');
+    await db.all('SELECT n FROM t');
 
     // Control direction: no foreign marker → read adds no barrier statements.
     const noMarkerBefore = countBarrierStatements(db);
-    await db.read('SELECT n FROM t');
+    await db.all('SELECT n FROM t');
     expect(countBarrierStatements(db)).toBe(noMarkerBefore);
 
     // Hold a marker far ahead of the local epoch from another realm, exactly
@@ -102,7 +102,7 @@ describe('an epoch published by another realm', {
     // Foreign-marker direction: originMax() now reports 9999, raiseTo raises
     // the local floor, and every worker's seen (≤ 2) is below the new target.
     const withMarkerBefore = countBarrierStatements(db);
-    await db.read('SELECT n FROM t');
+    await db.all('SELECT n FROM t');
     expect(countBarrierStatements(db)).toBeGreaterThan(withMarkerBefore);
 
     release();
@@ -110,19 +110,19 @@ describe('an epoch published by another realm', {
 
   it('never lets the target go backwards when the marker disappears', async () => {
     const { db, dbName, vfs } = oneClient();
-    await db.write('CREATE TABLE t (n)');
+    await db.run('CREATE TABLE t (n)');
 
     const realm = await makeRealm();
     const path = databasePath(vfs, dbName);
     const marker = epochLockName(vfs, path, 4_242);
     const release = await holdIn(realm, marker, 'shared');
-    await db.read('SELECT n FROM t');
+    await db.all('SELECT n FROM t');
     release();
 
     // The origin now reports nothing, but the local floor holds 4242. A write
     // must produce 4243, never 1 — a restarted counter is the one class of bug
     // this design has to make impossible (epochs.ts:51-53).
-    await db.write('INSERT INTO t VALUES (1)');
+    await db.run('INSERT INTO t VALUES (1)');
     const published = (await heldNamesIn(window)).filter((name) =>
       name.startsWith(`bsq:epoch:${vfs}:${path}:`),
     );
@@ -151,7 +151,7 @@ describe('an epoch published by another realm', {
     // sees the pre-held lock, calls raiseTo(1), then afterWrite bumps to 2
     // and publishes epoch 2 — bypassing the blocked epoch 1 entirely.
     //
-    // This version holds the exclusive lock INSIDE the callback, AFTER tx.write().
+    // This version holds the exclusive lock INSIDE the callback, AFTER tx.run().
     // applyBarrier runs before the callback and cannot see it. The epoch
     // counter stays at 0, so afterWrite will publish epoch 1 and be blocked.
     // A realm (iframe) is used for the hold so the exclusive and shared
@@ -182,7 +182,7 @@ describe('an epoch published by another realm', {
     let txResolved = false;
     const txDone = db
       .transaction(async (tx) => {
-        await tx.write('CREATE TABLE t (n)');
+        await tx.run('CREATE TABLE t (n)');
         // applyBarrier ran before this callback — it does not see this lock.
         // The epoch counter is still 0. afterWrite will bump to 1 and try
         // to hold epoch 1 as shared; our exclusive blocks that grant.
@@ -217,10 +217,10 @@ describe('an epoch published by another realm', {
 
   it('publishes exactly one marker per realm, whatever the pool size', async () => {
     const { db, dbName, vfs } = oneClient();
-    await db.write('CREATE TABLE t (n)');
-    await db.write('INSERT INTO t VALUES (1)');
-    await db.write('INSERT INTO t VALUES (2)');
-    await db.write('INSERT INTO t VALUES (3)');
+    await db.run('CREATE TABLE t (n)');
+    await db.run('INSERT INTO t VALUES (1)');
+    await db.run('INSERT INTO t VALUES (2)');
+    await db.run('INSERT INTO t VALUES (3)');
 
     const prefix = `bsq:epoch:${vfs}:${databasePath(vfs, dbName)}:`;
     const published = (await heldNamesIn(window)).filter((name) =>

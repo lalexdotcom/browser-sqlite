@@ -28,7 +28,7 @@ import { scaled, sharedDatabase } from '../helpers';
  * **Client order is load-bearing, and a first attempt got it wrong.**
  * Constructing both clients together, before `dbA`'s `CREATE TABLE`
  * resolves, made a WRITE — not a read — fail with the transfer BUSY, which
- * `write()` does not retry. That was the same defect in the VFS, fixed by the
+ * a write is not retried. That was the same defect in the VFS, fixed by the
  * wa-sqlite patch on 2026-09-15 and pinned by `coopsync-handover.test.ts`.
  * This test opens `dbB` only after `dbA`'s first write settles, as a second
  * tab opening an already-running database would.
@@ -36,7 +36,7 @@ import { scaled, sharedDatabase } from '../helpers';
  * **Falsifier, verified 2026-09-14, with clients opened in that order:**
  * dropping the catch from `readWithRetry` in `src/client.ts` — so it just
  * awaits `onReadLease` once, with no retry — turned this red on Firefox 3-4
- * of 5 runs, always a `read()` rejecting with `BUSY`, `sqliteCode` 5.
+ * of 5 runs, always a read rejecting with `BUSY`, `sqliteCode` 5.
  *
  * **That falsifier is dead since the wa-sqlite patch of 2026-09-15.** The
  * same mutation left this test green 5 of 5 on Firefox: the VFS no longer
@@ -63,15 +63,15 @@ describe('OPFSCoopSyncVFS handle-transfer BUSY', () => {
     // worker, so the handle transfer this test chases now happens between
     // these two clients rather than between workers of one pool.
     const dbA = database.open();
-    await dbA.write('CREATE TABLE t (a INTEGER)');
+    await dbA.run('CREATE TABLE t (a INTEGER)');
     const dbB = database.open();
     const clients = [dbA, dbB];
     for (let round = 0; round < ROUNDS; round++) {
       const work = Array.from({ length: CONCURRENT }, (_, i) => {
         const db = clients[i % clients.length];
         return i % 3 === 0
-          ? db.write('INSERT INTO t (a) VALUES (?)', [round * CONCURRENT + i])
-          : db.read<{ n: number }>('SELECT count(*) AS n FROM t');
+          ? db.run('INSERT INTO t (a) VALUES (?)', [round * CONCURRENT + i])
+          : db.all<{ n: number }>('SELECT count(*) AS n FROM t');
       });
       // Falsifiability, verified by experiment (see header): drop the
       // catch from `readWithRetry` in client.ts so it just awaits

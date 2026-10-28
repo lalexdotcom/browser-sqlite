@@ -34,15 +34,15 @@ describe('the exclusive connection guard', () => {
 
     // A uses the database. Workers start lazily so the first query is the
     // choke point — the connection lock settles before or at this await.
-    await a.write('CREATE TABLE t (n)');
-    await a.write('INSERT INTO t VALUES (42)');
+    await a.run('CREATE TABLE t (n)');
+    await a.run('INSERT INTO t VALUES (42)');
 
     // B's first query must fail with BUSY, not pass. Timing: the lock guard
     // resolves with `ifAvailable: true` before the first `acquireInstrumented`
     // is awaited, so the error surfaces promptly.
     let error: unknown;
     try {
-      await b.read('SELECT n FROM t');
+      await b.all('SELECT n FROM t');
     } catch (e) {
       error = e;
     }
@@ -64,12 +64,12 @@ describe('the exclusive connection guard', () => {
     const a = db.open({ poolSize: 1 });
     const b = db.open({ poolSize: 1 });
 
-    await a.write('CREATE TABLE t (n)');
+    await a.run('CREATE TABLE t (n)');
 
     const start = Date.now();
     let error: unknown;
     try {
-      await b.read('SELECT 1');
+      await b.all('SELECT 1');
     } catch (e) {
       error = e;
     }
@@ -89,15 +89,15 @@ describe('the exclusive connection guard', () => {
   //
   // Falsifiable: remove `connRelease?.()` from `close()` in src/client.ts.
   // Without it the lock is never released, the second client always gets BUSY,
-  // and this test goes RED at the `await c.read(...)` assertion.
+  // and this test goes RED at the `await c.all(...)` assertion.
   // -------------------------------------------------------------------------
   it('allows a new client after the first is closed', {
     tags: ['requires:exclusive-connection'],
   }, async () => {
     const db = sharedDatabase();
     const a = db.open({ poolSize: 1 });
-    await a.write('CREATE TABLE t (n)');
-    await a.write('INSERT INTO t VALUES (99)');
+    await a.run('CREATE TABLE t (n)');
+    await a.run('INSERT INTO t VALUES (99)');
 
     // Close A — this must release the connection lock.
     await a.close();
@@ -105,7 +105,7 @@ describe('the exclusive connection guard', () => {
     // C opens after A is fully closed; it must succeed.
     const c = db.open({ poolSize: 1 });
 
-    const rows = await c.read<{ n: number }>('SELECT n FROM t');
+    const rows = await c.all<{ n: number }>('SELECT n FROM t');
     expect(rows).toHaveLength(1);
     expect(rows[0].n).toBe(99);
   });
@@ -152,9 +152,9 @@ describe('the exclusive connection guard', () => {
     const b = database.open(opts);
 
     // If an orphan holds the handles, this write fails with WORKER_CRASHED.
-    await b.write('CREATE TABLE t (n)');
-    await b.write('INSERT INTO t VALUES (1)');
-    const rows = await b.read<{ n: number }>('SELECT n FROM t');
+    await b.run('CREATE TABLE t (n)');
+    await b.run('INSERT INTO t VALUES (1)');
+    const rows = await b.all<{ n: number }>('SELECT n FROM t');
     expect(rows).toHaveLength(1);
     expect(rows[0].n).toBe(1);
   });
@@ -166,8 +166,8 @@ describe('the exclusive connection guard', () => {
     const a = db.open({ poolSize: 1 });
     const b = db.open({ poolSize: 1 });
 
-    await a.write('CREATE TABLE t (n)');
-    await b.write('INSERT INTO t VALUES (1)');
+    await a.run('CREATE TABLE t (n)');
+    await b.run('INSERT INTO t VALUES (1)');
 
     // Falsifiable: give the shared branch `ifAvailable: true` and one of these
     // two clients starts throwing DATABASE_IN_USE.
@@ -188,7 +188,7 @@ describe('the exclusive connection guard', () => {
     tags: ['excludes:shared-storage'],
   }, async () => {
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (n)');
+    await db.run('CREATE TABLE t (n)');
 
     const held = (await navigator.locks.query()).held ?? [];
     expect(held.some((lock) => (lock.name ?? '').startsWith('bsq:conn:'))).toBe(
@@ -210,11 +210,11 @@ describe('the exclusive connection guard', () => {
     const a = db.open({ poolSize: 1 });
     const b = db.open({ poolSize: 1 });
 
-    await a.write('CREATE TABLE t (n)');
-    await a.write('INSERT INTO t VALUES (7)');
+    await a.run('CREATE TABLE t (n)');
+    await a.run('INSERT INTO t VALUES (7)');
 
     // B must succeed on a VFS that supports multiple connections.
-    const rows = await b.read<{ n: number }>('SELECT n FROM t');
+    const rows = await b.all<{ n: number }>('SELECT n FROM t');
     expect(rows).toHaveLength(1);
     expect(rows[0].n).toBe(7);
   });

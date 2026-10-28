@@ -5,9 +5,14 @@ import {
   abandonRegistry,
   reclaim,
 } from './abandon';
-import type { SQLiteChunkOptions, SQLiteQueryOptions } from './api';
+import type {
+  SQLiteChunkOptions,
+  SQLiteQueryOptions,
+  SQLiteRunResult,
+} from './api';
 import type { QueryParams } from './binary';
 import type { PoolWorker } from './pool';
+import type { RefuseWrite } from './types/protocol';
 
 /**
  * Wires an AbortSignal into a promise that rejects the instant the signal
@@ -69,12 +74,80 @@ export const raceAbort = <T>(
 };
 
 /**
+ * The `affected` of a `stream()` or `chunk()`, settled once: by the worker's
+ * count, by the statement's error, or with 0 by an end that brought no count.
+ * Handled at creation, so a caller who never awaits it raises nothing.
+ */
+export type AffectedSlot = {
+  readonly promise: Promise<number>;
+  readonly settled: boolean;
+  resolve: (affected: number) => void;
+  reject: (error: unknown) => void;
+};
+
+export const affectedSlot = (): AffectedSlot => {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  promise.catch(() => {});
+  let settled = false;
+  return {
+    promise,
+    get settled() {
+      return settled;
+    },
+    resolve: (affected) => {
+      if (settled) return;
+      settled = true;
+      resolve(affected);
+    },
+    reject: (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    },
+  };
+};
+
+/**
+ * Settles `affected` with 0 once `gen` is closed by `return()` or `throw()`:
+ * an async generator closed before its first `next()` runs nothing, not even
+ * its `finally`, so nothing was written. A no-op once the slot is settled.
+ */
+export const settleOnClose = <G extends AsyncIterator<unknown>>(
+  gen: G,
+  affected: AffectedSlot,
+): G => {
+  const close = gen.return?.bind(gen);
+  const fail = gen.throw?.bind(gen);
+  const settled = <R>(pending: Promise<R>): Promise<R> =>
+    pending.finally(() => affected.resolve(0));
+  if (close)
+    Object.defineProperty(gen, 'return', {
+      value: (value?: unknown) => settled(close(value)),
+      configurable: true,
+      writable: true,
+    });
+  if (fail)
+    Object.defineProperty(gen, 'throw', {
+      value: (error?: unknown) => settled(fail(error)),
+      configurable: true,
+      writable: true,
+    });
+  return gen;
+};
+
+/**
  * `SQLiteChunkOptions` plus what only this library passes. `registry` is
  * TEST-ONLY and unsupported; it exists so the abandonment path can be driven
  * without a garbage collection.
  */
 export type InternalChunkOptions = SQLiteChunkOptions & {
   credits?: number;
+  /** Forwarded to the worker, which refuses a write with this code. */
+  refuseWrite?: RefuseWrite | undefined;
+  /** Forwarded to the worker: a write is stepped to its end before delivery. */
+  drainWrites?: boolean | undefined;
+  /** The worker's `affected`, before the first chunk (`PoolWorkerQueryOptions`). */
+  onAffected?: ((affected: number, drained: boolean) => void) | undefined;
   /** The owning layer's teardown, run if the generator is abandoned. */
   onAbandon?: (() => void) | undefined;
   /**
@@ -115,6 +188,9 @@ export const chunk = <
     signal,
     chunkSize,
     credits,
+    refuseWrite,
+    drainWrites,
+    onAffected,
     onAbandon,
     onTransport,
     registry = abandonRegistry,
@@ -122,6 +198,9 @@ export const chunk = <
   const iterator = worker.query<T>(sql, params, {
     chunkSize,
     credits,
+    ...(refuseWrite ? { refuseWrite } : {}),
+    ...(drainWrites ? { drainWrites } : {}),
+    ...(onAffected ? { onAffected } : {}),
   });
   onTransport?.(iterator);
   const state: AbandonState = { done: false };
@@ -222,7 +301,7 @@ export const readWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: QueryParams,
-  options?: SQLiteChunkOptions,
+  options?: SQLiteChunkOptions & { refuseWrite?: RefuseWrite | undefined },
 ): Promise<T[]> => {
   const result: T[] = [];
   for await (const rows of chunk<T>(worker, sql, params, options)) {
@@ -244,7 +323,7 @@ export const firstWorker = async <
   worker: PoolWorker,
   sql: string,
   params?: QueryParams,
-  options?: SQLiteQueryOptions,
+  options?: SQLiteQueryOptions & { refuseWrite?: RefuseWrite | undefined },
 ): Promise<T | undefined> => {
   for await (const rows of chunk<T>(worker, sql, params, {
     ...options,
@@ -259,21 +338,22 @@ export const firstWorker = async <
   return undefined;
 };
 
-export const writeWorker = async <
+/** Every row and the count of rows changed: the write path of `run()`. */
+export const runWorker = async <
   T extends Record<string, unknown> = Record<string, unknown>,
 >(
   worker: PoolWorker,
   sql: string,
   params?: QueryParams,
   options?: SQLiteQueryOptions,
-): Promise<{ result: T[]; affected: number }> => {
+): Promise<SQLiteRunResult<T>> => {
   const { signal } = options ?? {};
 
   // B9: addEventListener never fires for a signal that is already aborted.
   if (signal?.aborted) throw signal.reason;
 
   const iterator = worker.query<T>(sql, params);
-  const result: T[] = [];
+  const rows: T[] = [];
   let affected = 0;
   try {
     while (true) {
@@ -284,10 +364,10 @@ export const writeWorker = async <
         ? await raceAbort(signal, iterator.next())
         : await iterator.next();
       if (next.done) break;
-      // write() is the only caller that needs the affected count, which is why
-      // the T[] | number union stays private to this module.
+      // The write path is the only one that needs the affected count, which is
+      // why the T[] | number union stays private to this module.
       if (typeof next.value === 'number') affected = next.value;
-      else result.push(...next.value);
+      else rows.push(...next.value);
     }
   } finally {
     // Start the stop-and-drain, never await it. Same pattern as chunk(),
@@ -295,5 +375,5 @@ export const writeWorker = async <
     worker.interrupt(iterator);
     void iterator.return(undefined).catch(() => {});
   }
-  return { result, affected };
+  return { rows, affected };
 };

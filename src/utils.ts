@@ -1,3 +1,4 @@
+import { WRITING_PRAGMAS } from './classify';
 import type { SQLiteBuild } from './const/builds';
 import { folderOf, type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { SQLiteError } from './types/errors';
@@ -50,116 +51,8 @@ export const sqlParams = () => {
   };
 };
 
-/**
- * Every statement SQLite treats as a write, or that must be serialized through
- * the single writer worker. Matched anywhere in the string, not just at the
- * start: the worker executes `;`-separated statements, so a write hiding after
- * a semicolon must still route to the writer.
- */
-const WRITE_KEYWORDS =
-  /\b(INSERT|REPLACE|UPDATE|DELETE|CREATE|DROP|ALTER|VACUUM|ANALYZE|REINDEX|SAVEPOINT|RELEASE|BEGIN|COMMIT|ROLLBACK|ATTACH|DETACH|PRAGMA)\b/i;
-
-/**
- * Routing predicate: is this statement provably a read?
- *
- * Two conditions, both required. The statement must OPEN with a read keyword,
- * and it must contain no write keyword anywhere. The first condition alone is
- * not enough — the worker executes `;`-separated statements, so `SELECT 1;
- * DROP TABLE t` opens as a read and is not one. The second alone is not enough
- * either — it would admit any unrecognised statement as a read.
- *
- * The previous blocklist missed VACUUM, ALTER, ANALYZE, REINDEX, SAVEPOINT and
- * a manual BEGIN, so those ran on the read pool: a VACUUM could execute on an
- * arbitrary worker while the writer held an open transaction, bypassing
- * exclusivity one layer above the pool.
- *
- * Misclassification now fails toward the writer — correct, merely slower. A
- * read whose text merely mentions a write keyword (`SELECT 'INSERT'`, or
- * `EXPLAIN INSERT ...`, which never executes) is serialized needlessly. That
- * is the accepted price of never routing a write to the read pool.
- */
-/**
- * A statement that is nothing but a single PRAGMA lookup: no assignment, no
- * argument, nothing after it. Anchoring at `$` is what makes this safe for
- * free — `PRAGMA journal_mode; DROP TABLE t` does not match, and neither does
- * `PRAGMA journal_mode=WAL`, whose `=` breaks the match.
- */
-const READ_PRAGMA = /^\s*PRAGMA\s+(?:\w+\.)?(\w+)\s*;?\s*$/i;
-
-/**
- * The pragmas that write the database file, with a value or without one.
- * Measured on 2026-10-01 — each took a write lock where the others never did —
- * except `optimize` and `wal_checkpoint`, which write only when they find
- * work, per SQLite's pragma.c.
- */
-const WRITING_PRAGMAS = new Set([
-  'user_version',
-  'application_id',
-  'schema_version',
-  'auto_vacuum',
-  'incremental_vacuum',
-  'optimize',
-  'wal_checkpoint',
-]);
-
 const isWritingPragma = (name: string) =>
   WRITING_PRAGMAS.has(name.toLowerCase());
-
-/** Those of them that write with no value at all, so look like a lookup. */
-const BARE_WRITING_PRAGMAS = new Set([
-  'incremental_vacuum',
-  'optimize',
-  'wal_checkpoint',
-]);
-
-/**
- * The pragmas whose argument names what to inspect rather than a value to set.
- * Everywhere else `PRAGMA x(v)` is SQLite's other assignment syntax. Probed on
- * wa-sqlite's SQLite 3.53.0, whose `pragma_list` holds no other: each ran on a
- * read-only connection, where `user_version(5)` fails. Closed by meaning, not
- * by that probe — `cache_size(10)` passes it too, and changes the connection.
- */
-const INTROSPECTION_PRAGMAS = new Set([
-  'table_info',
-  'table_xinfo',
-  'table_list',
-  'index_info',
-  'index_xinfo',
-  'index_list',
-  'foreign_key_list',
-  'foreign_key_check',
-  'integrity_check',
-  'quick_check',
-]);
-
-/**
- * One such pragma with one argument — a name, quoted or bare, or an integer —
- * and nothing after it. The argument admits no `)` or `;` outside its quotes,
- * so the `$` anchor keeps a second statement out, as in `READ_PRAGMA`.
- */
-const INTROSPECTION_PRAGMA = new RegExp(
-  String.raw`^\s*PRAGMA\s+(?:\w+\.)?(\w+)\s*\(\s*(?:[\p{L}_][\p{L}\p{N}_$]*|[+-]?\d+|"(?:[^"]|"")*"|'(?:[^']|'')*'|\[[^\]]*\]|` +
-    '`(?:[^`]|``)*`' +
-    String.raw`)\s*\)\s*;?\s*$`,
-  'iu',
-);
-
-const isReadPragma = (sql: string) => {
-  const name = READ_PRAGMA.exec(sql)?.[1];
-  if (name !== undefined) return !BARE_WRITING_PRAGMAS.has(name.toLowerCase());
-  const inspected = INTROSPECTION_PRAGMA.exec(sql)?.[1];
-  return (
-    inspected !== undefined &&
-    INTROSPECTION_PRAGMAS.has(inspected.toLowerCase())
-  );
-};
-
-export const isReadQuery = (sql: string) =>
-  isReadPragma(sql) ||
-  (/^\s*(SELECT|EXPLAIN|VALUES|WITH)\b/i.test(sql) &&
-    !WRITE_KEYWORDS.test(sql));
-
-export const isWriteQuery = (sql: string) => !isReadQuery(sql);
 
 /**
  * Combines two abort signals into one that fires with the reason of whichever
@@ -199,6 +92,13 @@ export const mergeSignals = (
   };
 };
 
+/** The errors `withDeadline` minted: the only timeouts the library may explain. */
+const deadlineErrors = new WeakSet<object>();
+
+/** Whether this library's own deadline minted `error`, not a caller's signal. */
+export const isDeadlineError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && deadlineErrors.has(error);
+
 /**
  * The `timeout` option: a wall-clock budget in milliseconds, counted from the
  * call, `chunk()` and `stream()` included. Returns the
@@ -227,13 +127,13 @@ export const withDeadline = (
 
   const controller = new AbortController();
   const timer = setTimeout(() => {
-    controller.abort(
-      new SQLiteError(
-        'OPERATION_TIMEOUT',
-        `${method}() exceeded its timeout of ${budget} ms.`,
-        { timeout: budget },
-      ),
+    const expired = new SQLiteError(
+      'OPERATION_TIMEOUT',
+      `${method}() exceeded its timeout of ${budget} ms.`,
+      { timeout: budget },
     );
+    deadlineErrors.add(expired);
+    controller.abort(expired);
     // A generator never read never calls release(): once spent, leave nothing
     // on the caller's signal.
     release();
@@ -249,32 +149,13 @@ export const withDeadline = (
 };
 
 /**
- * Routing guard for the read-shaped methods (`read`, `chunk`, `stream`, `first`).
- * Throws before a lease is taken, so a rejected statement costs no pool capacity.
- *
- * A bare read pragma (`PRAGMA journal_mode`) and an introspection pragma with
- * its argument (`PRAGMA table_info(t)`) are accepted; a pragma that assigns
- * (`PRAGMA journal_mode=WAL`, `PRAGMA user_version(5)`), is followed by
- * anything else, or writes with no value (`PRAGMA optimize`) must go through
- * `write()`.
- */
-export const assertReadable = (sql: string, method: string): void => {
-  if (isReadQuery(sql)) return;
-  const keyword = sql.trim().split(/\s+/)[0]?.toUpperCase() ?? '';
-  throw new SQLiteError(
-    'NOT_A_READ_QUERY',
-    `${method}() only accepts statements that are provably reads; "${keyword}" must go through write(). ` +
-      `Note that a PRAGMA that assigns a value is a write; so is one that takes an argument, except the introspection pragmas (table_info, index_list, integrity_check…); and so are PRAGMA optimize, incremental_vacuum and wal_checkpoint.`,
-  );
-};
-
-/**
  * Quotes an SQL identifier so it can never be read as anything but a name.
  *
  * The library interpolates table, column and index names into generated SQL —
- * `bulkWrite`, `output` and their indexes. wa-sqlite's `statements()` executes
- * `;`-separated statements, so an unquoted name is a stacked-query injection
- * (B4). Quoting is what makes `t"; DROP TABLE users; --` one identifier.
+ * `bulkWrite`, `output` and their indexes. The worker refuses a string holding
+ * more than one statement, but an unquoted name could still change the one
+ * statement (B4). Quoting is what makes `t"; DROP TABLE users; --` one
+ * identifier.
  *
  * Note that quoting preserves case in `sqlite_master`; SQLite still resolves
  * names case-insensitively.

@@ -32,14 +32,14 @@ describe('an abandoned generator inside a transaction', {
     const records = interceptWorkers();
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write(SEED);
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run(SEED);
 
       await db.transaction(async (tx) => {
         // Written INSIDE the transaction, so the count below can tell a
         // COMMIT from a ROLLBACK. Reading only the seed would leave the two
         // outcomes indistinguishable, and this test is named for the commit.
-        await tx.write('INSERT INTO t (n) VALUES (99999)');
+        await tx.run('INSERT INTO t (n) VALUES (99999)');
         const rows = tx.chunk('SELECT n FROM t', [], { chunkSize: 10 });
         await rows.next();
         await sleep(0);
@@ -54,7 +54,7 @@ describe('an abandoned generator inside a transaction', {
 
       // The client still serves, and the transaction's own row landed — 2001,
       // not the 2000 a silent ROLLBACK would leave.
-      const rows = await db.read<{ n: number }>('SELECT count(*) AS n FROM t');
+      const rows = await db.all<{ n: number }>('SELECT count(*) AS n FROM t');
       expect(rows[0]?.n).toBe(2001);
     } finally {
       await db.close();
@@ -66,8 +66,8 @@ describe('an abandoned generator inside a transaction', {
   }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
-      await db.write('CREATE TABLE t (n INTEGER)');
-      await db.write(SEED);
+      await db.run('CREATE TABLE t (n INTEGER)');
+      await db.run(SEED);
       const seen = await db.transaction(async (tx) => {
         let count = 0;
         for await (const rows of tx.chunk<{ n: number }>('SELECT n FROM t')) {

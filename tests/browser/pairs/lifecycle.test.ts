@@ -17,13 +17,13 @@ describe('worker lifecycle — crash detection', () => {
   it('rejects the in-flight query when the worker reports an uncaught error', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     // Long enough to be in flight at the kill, short enough to end soon
     // after: on Safari ≤ 27.0.1 a killed sync worker runs its statement out
     // holding its OPFS files (WebKit 328618), and 20M kept them past the
     // file's storage wipe on Safari 27 (2026-10-23).
-    const running = db.read(longQuery(2_000_000));
+    const running = db.all(longQuery(2_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(
       new ErrorEvent('error', { message: 'simulated worker failure' }),
@@ -39,15 +39,15 @@ describe('worker lifecycle — crash detection', () => {
     if (webkit) return skip(webkit);
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     expect(records.length).toBe(1);
 
-    const running = db.read(longQuery(20_000_000));
+    const running = db.all(longQuery(20_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
 
-    const rows = await db.read<{ n: number }>('SELECT 1 AS n');
+    const rows = await db.all<{ n: number }>('SELECT 1 AS n');
     expect(rows[0]?.n).toBe(1);
     expect(records.length).toBe(2);
   });
@@ -62,10 +62,10 @@ describe('worker lifecycle — crash detection', () => {
     if (webkit) return skip(webkit);
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 1 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     for (const attempt of [0, 1]) {
-      const running = db.read(longQuery(20_000_000));
+      const running = db.all(longQuery(20_000_000));
       await sleep(100);
       records[attempt].worker.dispatchEvent(new ErrorEvent('error'));
       await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
@@ -82,7 +82,7 @@ describe('worker lifecycle — crash detection', () => {
         );
     }
 
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
     });
   });
@@ -119,11 +119,11 @@ describe('worker lifecycle — crash detection', () => {
   it('fails the client when the replacement never boots', async () => {
     const created = failWorkersFrom(1);
     const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 1 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     expect(created.length).toBe(1);
 
     // 2M, not 20M: in flight at the kill, over soon after — see the first test.
-    const running = db.read(longQuery(2_000_000));
+    const running = db.all(longQuery(2_000_000));
     await sleep(100);
     created[0].dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
@@ -131,7 +131,7 @@ describe('worker lifecycle — crash detection', () => {
     // The slot restarts into a worker that cannot load. The client must reach a
     // verdict rather than leave the pool empty and silent.
     const outcome = await Promise.race([
-      db.read('SELECT 1').then(
+      db.all('SELECT 1').then(
         () => 'resolved',
         (error: { code?: string }) => `rejected:${error.code}`,
       ),
@@ -153,14 +153,14 @@ describe('worker lifecycle — crash detection', () => {
     // the presence of some URL, never a literal path. The scheme is not
     // pinned either: a consumer bundle yields http(s), while a bundle of
     // source paths yields file:.
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
       message: expect.stringContaining('could not load its worker'),
     });
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       message: expect.stringContaining('Bundler Configuration'),
     });
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       message: expect.stringMatching(/\w+:\/\/\S+/),
     });
   });
@@ -172,14 +172,14 @@ describe('worker lifecycle — crash detection', () => {
   it('rejects the in-flight query on a deserialization failure, and keeps the worker', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1 });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     // Long enough to still be in flight after the sleep below, and no longer:
     // 20 000 000 iterations cost 30 s on Firefox — against a 30 s budget, which
     // the test lost three times out of three — for a margin of 300× over what
     // it needs. At 2 000 000 the query still runs for seconds on the slowest
     // engine measured, twenty times the sleep.
-    const running = db.read(longQuery(2_000_000));
+    const running = db.all(longQuery(2_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(new MessageEvent('messageerror'));
 
@@ -202,10 +202,10 @@ describe('worker lifecycle — bounds', () => {
   }, async () => {
     const db = sharedDatabase();
     const first = db.open({ poolSize: 1 });
-    await first.write('CREATE TABLE t (a)');
+    await first.run('CREATE TABLE t (a)');
 
     const second = db.open({ poolSize: 1 });
-    await expect(second.read('SELECT 1')).rejects.toMatchObject({
+    await expect(second.all('SELECT 1')).rejects.toMatchObject({
       code: 'DATABASE_IN_USE',
     });
 
@@ -229,10 +229,10 @@ describe('worker lifecycle — onWorkerLost callback', () => {
       maxWorkerRestarts: 0,
       onWorkerLost: ({ index }) => events.push(index),
     });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     // Kill worker 0 — budget is 0, so it goes directly to 'lost'.
-    const running = db.read(longQuery(20_000_000));
+    const running = db.all(longQuery(20_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
@@ -253,10 +253,10 @@ describe('worker lifecycle — onWorkerLost callback', () => {
       maxWorkerRestarts: 0,
       onWorkerLost: () => callOrder.push('callback'),
     });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     // 2M, not 20M: in flight at the kill, over soon after — see the first test.
-    const running = db.read(longQuery(2_000_000));
+    const running = db.all(longQuery(2_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(new ErrorEvent('error'));
 
@@ -280,17 +280,17 @@ describe('worker lifecycle — onWorkerLost callback', () => {
         throw new Error('callback exploded');
       },
     });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     // Kill worker 0 — callback throws, must be swallowed.
-    const running = db.read(longQuery(20_000_000));
+    const running = db.all(longQuery(20_000_000));
     await sleep(100);
     records[0].worker.dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
 
     // Worker 1 is still alive and can serve queries.
     await sleep(100);
-    const rows = await db.read<{ n: number }>('SELECT 1 AS n');
+    const rows = await db.all<{ n: number }>('SELECT 1 AS n');
     expect(rows[0]?.n).toBe(1);
   });
 });
@@ -421,7 +421,7 @@ describe('worker lifecycle — startup readiness gate', () => {
 
     // The gate opens when slot 1 retry (worker 2) settles.  After that the
     // client has one live worker (slot 1) and one permanent startup loss (slot 0).
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     // onWorkerLost must have been called for the slot that died during the retry.
     expect(lostIndices).toContain(0);
@@ -472,7 +472,7 @@ describe('worker lifecycle — startup readiness gate', () => {
     // The gate is now open with 0 workers.  A subsequent query must reject, not
     // block indefinitely.  The bound of 8 s converts a hang into a test failure.
     const outcome = await Promise.race([
-      db.read('SELECT 1').then(
+      db.all('SELECT 1').then(
         () => 'resolved' as const,
         (e: { code?: string }) => `rejected:${e.code ?? 'UNKNOWN'}` as const,
       ),
@@ -504,7 +504,7 @@ describe('worker lifecycle — startup readiness gate', () => {
 
     // Both workers fail to load; the client must reject and fire the callback
     // for each slot before doing so.
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
     });
     expect(lostIndices.sort()).toEqual([0, 1]);
@@ -528,7 +528,7 @@ describe('worker lifecycle — startup readiness gate', () => {
     });
 
     // Wait for startup to complete — both slots are now live.
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
     // No permanent losses occurred.
     expect(lostIndices).toEqual([]);
@@ -598,7 +598,7 @@ describe('worker lifecycle — startup readiness gate', () => {
     );
     interceptWorkers({ url: '/definitely-missing-worker.js' });
     const db = await createTestClient({ poolSize: 1 });
-    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+    await expect(db.all('SELECT 1')).rejects.toMatchObject({
       code: 'WORKER_CRASHED',
     });
     // unhandledrejection is dispatched after the microtask checkpoint.

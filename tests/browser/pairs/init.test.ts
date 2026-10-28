@@ -5,7 +5,7 @@ import { createTestClient, removeDatabaseFiles, TEST_TARGET } from '../helpers';
  * INT-02: createSQLiteClient initializes and workers reach READY
  *
  * Strategy: createSQLiteClient is synchronous but workers initialize
- * asynchronously. The first query (`db.read('SELECT 1')`) is queued
+ * asynchronously. The first query (`db.all('SELECT 1')`) is queued
  * until a worker is READY — if it fails, the pool is not initialized.
  * No source code changes required (no `ready` property exposed).
  */
@@ -14,7 +14,7 @@ describe('createSQLiteClient (INT-02)', () => {
     const db = await createTestClient();
 
     // If workers are not READY, this query will reject or timeout (30s)
-    const rows = await db.read<{ value: number }>('SELECT 1 AS value');
+    const rows = await db.all<{ value: number }>('SELECT 1 AS value');
 
     expect(rows).toHaveLength(1);
     expect(rows[0].value).toBe(1);
@@ -43,7 +43,7 @@ describe('createSQLiteClient (INT-02)', () => {
         build: TEST_TARGET.build,
         poolSize: 1,
       });
-      const rows = await db.read<{ n: number }>('SELECT 42 AS n');
+      const rows = await db.all<{ n: number }>('SELECT 42 AS n');
       expect(rows[0].n).toBe(42);
       db.close();
     } finally {
@@ -70,7 +70,7 @@ describe('createSQLiteClient (INT-02)', () => {
       poolSize: 1,
     });
 
-    const result = await db.read<{ cache_size: number }>('PRAGMA cache_size');
+    const result = await db.all<{ cache_size: number }>('PRAGMA cache_size');
     const [row] = result;
     expect(row?.cache_size).toBe(-4000);
 
@@ -80,11 +80,11 @@ describe('createSQLiteClient (INT-02)', () => {
   it('returns the same result on multiple consecutive calls', async () => {
     const db = await createTestClient();
 
-    await db.write('CREATE TABLE init_test (id INTEGER PRIMARY KEY)');
-    await db.write('INSERT INTO init_test VALUES (1)');
-    await db.write('INSERT INTO init_test VALUES (2)');
+    await db.run('CREATE TABLE init_test (id INTEGER PRIMARY KEY)');
+    await db.run('INSERT INTO init_test VALUES (1)');
+    await db.run('INSERT INTO init_test VALUES (2)');
 
-    const rows = await db.read<{ id: number }>(
+    const rows = await db.all<{ id: number }>(
       'SELECT id FROM init_test ORDER BY id',
     );
     expect(rows).toHaveLength(2);

@@ -38,8 +38,8 @@ describe('an abandoned generator is recovered at collection', () => {
       const gc = forceGC;
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
-        await db.write(SEED);
+        await db.run('CREATE TABLE t (n INTEGER)');
+        await db.run(SEED);
 
         await (async () => {
           const rows = db.chunk('SELECT n FROM t', [], { chunkSize: 10 });
@@ -53,7 +53,7 @@ describe('an abandoned generator is recovered at collection', () => {
         for (let round = 0; round < 10 && !served; round++) {
           gc();
           await sleep(100);
-          const read = db.read('SELECT 1 AS ok').then(() => true);
+          const read = db.all('SELECT 1 AS ok').then(() => true);
           read.catch(() => {});
           served = await Promise.race([read, sleep(200).then(() => false)]);
         }
@@ -85,8 +85,8 @@ describe('an abandoned generator is recovered at collection', () => {
       const controller = new AbortController();
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
-        await db.write(SEED);
+        await db.run('CREATE TABLE t (n INTEGER)');
+        await db.run(SEED);
 
         await (async () => {
           const rows = db.chunk('SELECT n FROM t', [], {
@@ -101,7 +101,7 @@ describe('an abandoned generator is recovered at collection', () => {
         for (let round = 0; round < 10 && !served; round++) {
           gc();
           await sleep(100);
-          const read = db.read('SELECT 1 AS ok').then(() => true);
+          const read = db.all('SELECT 1 AS ok').then(() => true);
           read.catch(() => {});
           served = await Promise.race([read, sleep(200).then(() => false)]);
         }
@@ -124,8 +124,8 @@ describe('an abandoned generator is recovered at collection', () => {
       const gc = forceGC;
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
-        await db.write(SEED);
+        await db.run('CREATE TABLE t (n INTEGER)');
+        await db.run(SEED);
 
         await (async () => {
           const rows = db.stream('SELECT n FROM t', [], { chunkSize: 10 });
@@ -139,7 +139,7 @@ describe('an abandoned generator is recovered at collection', () => {
         for (let round = 0; round < 10 && !served; round++) {
           gc();
           await sleep(100);
-          const read = db.read('SELECT 1 AS ok').then(() => true);
+          const read = db.all('SELECT 1 AS ok').then(() => true);
           read.catch(() => {});
           served = await Promise.race([read, sleep(200).then(() => false)]);
         }
@@ -171,8 +171,8 @@ describe('an abandoned generator is recovered at collection', () => {
       const controller = new AbortController();
       const db = await createTestClient({ poolSize: 1 });
       try {
-        await db.write('CREATE TABLE t (n INTEGER)');
-        await db.write(SEED);
+        await db.run('CREATE TABLE t (n INTEGER)');
+        await db.run(SEED);
 
         await (async () => {
           const rows = db.stream('SELECT n FROM t', [], {
@@ -187,7 +187,7 @@ describe('an abandoned generator is recovered at collection', () => {
         for (let round = 0; round < 10 && !served; round++) {
           gc();
           await sleep(100);
-          const read = db.read('SELECT 1 AS ok').then(() => true);
+          const read = db.all('SELECT 1 AS ok').then(() => true);
           read.catch(() => {});
           served = await Promise.race([read, sleep(200).then(() => false)]);
         }

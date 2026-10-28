@@ -31,13 +31,13 @@ describe('stepping on every build', {
         // `poolSize: 1`: a memory VFS's pages live in the worker that wrote them.
         const db = await createTestClient({ poolSize: 1 }, { vfs, build });
         try {
-          await db.write('CREATE TABLE w (a INTEGER, b INTEGER)');
-          await db.write(
+          await db.run('CREATE TABLE w (a INTEGER, b INTEGER)');
+          await db.run(
             `INSERT INTO w WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < ${ROWS}) SELECT i, i * 7 FROM c`,
           );
           const total = (ROWS * (ROWS + 1)) / 2;
           expect(
-            await db.read(
+            await db.all(
               'SELECT count(*) AS n, sum(a) AS sa, sum(b) AS sb FROM w',
             ),
           ).toEqual([{ n: ROWS, sa: total, sb: total * 7 }]);
@@ -73,10 +73,10 @@ describe('a checkpoint on the write-ahead VFS', () => {
     tags: ['vfs:OPFSWriteAheadVFS'],
   }, async () => {
     const db = await createTestClient({ poolSize: 1 }, TEST_TARGET);
-    await db.write('CREATE TABLE k (a INTEGER)');
-    await db.write('INSERT INTO k VALUES (1), (2), (3)');
-    await db.write('PRAGMA wal_checkpoint');
-    expect(await db.read('SELECT a FROM k ORDER BY a')).toEqual([
+    await db.run('CREATE TABLE k (a INTEGER)');
+    await db.run('INSERT INTO k VALUES (1), (2), (3)');
+    await db.run('PRAGMA wal_checkpoint');
+    expect(await db.all('SELECT a FROM k ORDER BY a')).toEqual([
       { a: 1 },
       { a: 2 },
       { a: 3 },

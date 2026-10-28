@@ -22,9 +22,9 @@ const failedClient = async () => {
     await db.close().catch(() => {});
     await deleteDatabase(name, pair).catch(() => {});
   });
-  await db.write('CREATE TABLE t (a)');
+  await db.run('CREATE TABLE t (a)');
   records[0]?.worker.dispatchEvent(new ErrorEvent('error'));
-  await expect(db.read('SELECT 1')).rejects.toMatchObject({
+  await expect(db.all('SELECT 1')).rejects.toMatchObject({
     code: 'WORKER_CRASHED',
   });
   return { name, options, pair };
@@ -50,7 +50,7 @@ describe('a client that failed', () => {
 
     const next = createSQLiteClient(name, options);
     onTestFinished(() => next.close().catch(() => {}));
-    const rows = await next.read<{ n: number }>(
+    const rows = await next.all<{ n: number }>(
       'SELECT count(*) AS n FROM sqlite_master',
     );
     expect(rows[0]?.n).toBe(1);
@@ -76,7 +76,7 @@ describe('a client that failed', () => {
     // longer depends on which tests ran before it in this page.
     const warmName = `bsq-test-${crypto.randomUUID()}`;
     const warm = createSQLiteClient(warmName, pair);
-    await warm.read('SELECT 1');
+    await warm.all('SELECT 1');
     await warm.close();
     onTestFinished(() => deleteDatabase(warmName, pair).catch(() => {}));
 

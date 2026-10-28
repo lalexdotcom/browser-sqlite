@@ -81,9 +81,26 @@ export type SQLiteChunkOptions = Interruptible<{
   chunkSize?: number;
 }>;
 
-export type SQLiteWriteResult<T extends Record<string, unknown>> = {
-  result: T[];
-  affected: number;
+/**
+ * What `run()` returns: every row the statement produced, a `RETURNING`'s
+ * included, and the rows it changed — 0 for a read.
+ */
+export type SQLiteRunResult<T> = { rows: T[]; affected: number };
+
+/**
+ * What `stream()` returns: its rows, and `affected`, the rows the statement
+ * changed — 0 for a read. A write is stepped to its end before its first row
+ * is delivered, so `affected` resolves before that row; it rejects with the
+ * statement's error. The statement runs from the first `next()`: a stream
+ * never iterated settles nothing.
+ */
+export type SQLiteStream<T> = AsyncGenerator<T, void, unknown> & {
+  readonly affected: Promise<number>;
+};
+
+/** What `chunk()` returns: `SQLiteStream`'s `affected`, on chunks of rows. */
+export type SQLiteChunkStream<T> = AsyncGenerator<T[], void, unknown> & {
+  readonly affected: Promise<number>;
 };
 
 /**
@@ -205,8 +222,8 @@ export type SQLiteOutputWriter<SCHEMA extends Schema> = {
  * `chunk`. A method added to one is now added to both by construction.
  *
  * @remarks
- * **The row type parameter is a claim, not a check.** `read<T>`, `first<T>`,
- * `chunk<T>` and `stream<T>` cast SQLite's output to `T` and validate nothing:
+ * **The row type parameter is a claim, not a check.** `run<T>`, `all<T>`,
+ * `first<T>`, `chunk<T>` and `stream<T>` cast SQLite's output to `T` and validate nothing:
  * a column that is missing, renamed or of another type reaches you typed as if
  * it were not. SQLite is dynamically typed and a query's shape is only known at
  * runtime, so the alternative would be a schema the caller declares twice.
@@ -215,61 +232,70 @@ export type SQLiteOutputWriter<SCHEMA extends Schema> = {
  */
 export type SQLiteQueryAPI = {
   /**
-   * Executes a SELECT query and returns all matching rows as an array.
+   * Runs any single statement and returns its rows and the number of rows it
+   * changed.
    *
-   * Read queries are dispatched to any available worker in the pool,
-   * enabling concurrent execution across multiple readers.
+   * SQLite, not the text, says whether the statement reads or writes: the
+   * first call of a SQL text asks a worker to prepare it, and the answer is
+   * kept for the client's life. A read then runs on any free worker, a write
+   * through the single writer.
    *
-   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
+   * In a transaction both run on its connection, and SQLite is asked only
+   * for a statement carrying its own `signal` or `timeout`: a write among
+   * those runs inside a savepoint, so that abandoning it alone undoes it. A
+   * read-only transaction never asks: it refuses every write.
    *
-   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
-   * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`chunkSize`, `signal`).
-   * @returns Promise resolving to an array of typed rows (`T[]`). Returns `[]` for empty results.
-   */
-  read: {
-    <T extends Record<string, unknown>>(
-      query: SQLQuery,
-      options?: SQLiteChunkOptions,
-    ): Promise<T[]>;
-    <T extends Record<string, unknown>>(
-      sql: string,
-      params?: unknown[],
-      options?: SQLiteChunkOptions,
-    ): Promise<T[]>;
-  };
-
-  /**
-   * Executes a DML or DDL statement (INSERT, UPDATE, DELETE, CREATE, DROP, etc.)
-   * and returns both any result rows and the number of affected rows.
-   *
-   * Write queries are serialized through a single dedicated writer worker.
-   * Concurrent writes queue behind each other — only one write executes at a time.
+   * A string holding more than one statement is refused with
+   * `MULTIPLE_STATEMENTS`, before anything runs. `timeout` counts from the
+   * call, so it covers the wait for that answer.
    *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *
-   * @param sql - SQL statement. Any statement not classified as a read by `isReadQuery`.
+   * @param sql - One SQL statement, read or write.
    * @param params - Positional parameters bound to `?` placeholders.
-   * @param options - Optional query options (`signal`).
-   * @returns Promise resolving to `{ result: T[], affected: number }` where
-   *   `affected` is the SQLite `changes()` count for the statement, 0 for one
-   *   that changes nothing.
+   * @param options - Optional query options (`signal`, `timeout`).
+   * @returns Promise resolving to `{ rows, affected }`: every row produced,
+   *   a `RETURNING`'s included, and the rows changed — 0 for a read.
    */
-  write: {
+  run: {
     <T extends Record<string, unknown>>(
       query: SQLQuery,
       options?: SQLiteQueryOptions,
-    ): Promise<SQLiteWriteResult<T>>;
+    ): Promise<SQLiteRunResult<T>>;
     <T extends Record<string, unknown>>(
       sql: string,
       params?: unknown[],
       options?: SQLiteQueryOptions,
-    ): Promise<SQLiteWriteResult<T>>;
+    ): Promise<SQLiteRunResult<T>>;
   };
 
   /**
-   * Executes a query and yields result rows in chunks via an async generator.
-   * Memory-efficient for large result sets — rows are not buffered in full.
+   * Runs any single statement and returns its rows: `run()`'s `rows`. A write
+   * is run too — `all('DELETE … RETURNING id')` deletes and returns the ids.
+   *
+   * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
+   *
+   * @param sql - One SQL statement, read or write.
+   * @param params - Positional parameters bound to `?` placeholders.
+   * @param options - Optional query options (`signal`, `timeout`).
+   * @returns Promise resolving to every row the statement produced.
+   */
+  all: {
+    <T extends Record<string, unknown>>(
+      query: SQLQuery,
+      options?: SQLiteQueryOptions,
+    ): Promise<T[]>;
+    <T extends Record<string, unknown>>(
+      sql: string,
+      params?: unknown[],
+      options?: SQLiteQueryOptions,
+    ): Promise<T[]>;
+  };
+
+  /**
+   * Executes any single statement and yields its rows in chunks via an async
+   * generator. Memory-efficient for large result sets — rows are not buffered
+   * in full.
    *
    * @remarks
    * **Worker held for full generator lifetime.** A pool worker is acquired on
@@ -277,61 +303,71 @@ export type SQLiteQueryAPI = {
    * exhausted or the caller uses `break`. Failing to exhaust the generator
    * starves the pool. Always use `for await...of` to completion or `break` to exit.
    *
+   * **A write is completed before its first chunk.** The worker steps it to
+   * its end, keeping its rows, then delivers them: the write lock is free and
+   * `affected` resolved before the first chunk arrives. Abandoning the
+   * generator before that rolls the write back; after it, the write stays.
+   * A write is never retried.
+   *
    * **Arguments are validated at the call.** An invalid query, a params array
-   * given with a query built by `sql`, a write statement (`NOT_A_READ_QUERY`)
-   * and an unbindable param throw a `SQLiteError` from `chunk()` itself, before
-   * any generator exists. The `timeout` timer starts at the call too; the worker
-   * acquisition at the first `next()`.
+   * given with a query built by `sql` and an unbindable param throw a
+   * `SQLiteError` from `chunk()` itself, before any generator exists. The
+   * `timeout` timer starts at the call too; the worker acquisition at the first
+   * `next()`.
    *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *
-   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
+   * @param sql - SQL query string: a single statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional options including `chunkSize` (default `500`),
    *   `signal` (AbortSignal to cancel).
-   * @returns AsyncGenerator yielding `T[]` chunks of at most `chunkSize` rows.
+   * @returns AsyncGenerator yielding `T[]` chunks of at most `chunkSize` rows,
+   *   carrying `affected`: the rows the statement changed, 0 for a read.
    */
   chunk: {
     <T extends Record<string, unknown>>(
       query: SQLQuery,
       options?: SQLiteChunkOptions,
-    ): AsyncGenerator<T[]>;
+    ): SQLiteChunkStream<T>;
     <T extends Record<string, unknown>>(
       sql: string,
       params?: unknown[],
       options?: SQLiteChunkOptions,
-    ): AsyncGenerator<T[]>;
+    ): SQLiteChunkStream<T>;
   };
 
   /**
-   * Executes a query and yields individual result rows via an async generator.
-   * Flattens chunk boundaries — each iteration yields one `T` row, not a chunk.
-   * Use `chunk()` when you need the rows grouped by chunk.
+   * Executes any single statement and yields its rows one by one via an async
+   * generator. Flattens chunk boundaries — each iteration yields one `T` row,
+   * not a chunk. Use `chunk()` when you need the rows grouped by chunk.
    *
    * @remarks
+   * **A write is completed before its first row**, as for `chunk()`.
+   *
    * **Arguments are validated at the call.** An invalid query, a params array
-   * given with a query built by `sql`, a write statement (`NOT_A_READ_QUERY`)
-   * and an unbindable param throw a `SQLiteError` from `stream()` itself, before
-   * any generator exists. The `timeout` timer starts at the call too; the worker
-   * acquisition at the first `next()`.
+   * given with a query built by `sql` and an unbindable param throw a
+   * `SQLiteError` from `stream()` itself, before any generator exists. The
+   * `timeout` timer starts at the call too; the worker acquisition at the first
+   * `next()`.
    *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *
-   * @param sql - SQL query string. Must be a SELECT (or equivalent read) statement.
+   * @param sql - SQL query string: a single statement.
    * @param params - Positional parameters bound to `?` placeholders.
    * @param options - Optional query options (`chunkSize`, `signal`).
-   * @returns AsyncGenerator yielding individual rows of type `T`.
+   * @returns AsyncGenerator yielding individual rows of type `T`, carrying
+   *   `affected`: the rows the statement changed, 0 for a read.
    */
   stream: {
     <T extends Record<string, unknown>>(
       query: SQLQuery,
       options?: SQLiteChunkOptions,
-    ): AsyncGenerator<T>;
+    ): SQLiteStream<T>;
     <T extends Record<string, unknown>>(
       sql: string,
       params?: unknown[],
       options?: SQLiteChunkOptions,
-    ): AsyncGenerator<T>;
+    ): SQLiteStream<T>;
   };
 
   /**
@@ -341,6 +377,9 @@ export type SQLiteQueryAPI = {
    * row. Because the worker runs in a separate thread it may race ahead between
    * the break and the stop signal, so early termination is best-effort on small
    * result sets. A hard bound will arrive with back-pressure in a future wave.
+   *
+   * It is the only method that refuses a write, with `NOT_A_READ_QUERY`: SQLite
+   * says the statement writes, and nothing has run.
    *
    * Also takes a {@link SQLQuery} built by `sql`, followed by the options.
    *
@@ -428,8 +467,8 @@ export type SQLiteQueryAPI = {
 export type SQLiteDB = SQLiteQueryAPI & {
   /**
    * Executes a callback within a SQLite transaction, providing a scoped
-   * `SQLiteTransactionDB` with `read`, `write`, `chunk`, `stream`, `first`,
-   * `bulkWrite`, `output`, `commit`, and `rollback` methods.
+   * `SQLiteTransactionDB` with `run`, `all`, `chunk`,
+   * `stream`, `first`, `bulkWrite`, `output`, `commit`, and `rollback` methods.
    *
    * The worker is held exclusively for the transaction's duration.
    * On callback success: auto-commits if `autoCommit` is `true` (default).

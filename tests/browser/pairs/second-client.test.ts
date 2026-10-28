@@ -109,7 +109,7 @@ describe('a client whose worker 0 is lost before it answers the probe', () => {
       await deleteDatabase(file, { vfs, build }).catch(() => {});
     });
     const outcome = await Promise.race([
-      db.read('SELECT 1').then(
+      db.all('SELECT 1').then(
         () => 'resolved',
         (e: unknown) => e,
       ),
@@ -128,8 +128,8 @@ const setUp = async (shape: 'together' | 'after') => {
   const { file, open, losses } = oneDatabase();
   const a = open('A');
   let b = shape === 'together' ? open('B') : undefined;
-  await a.write('CREATE TABLE t (n)');
-  await a.write('INSERT INTO t VALUES (1)');
+  await a.run('CREATE TABLE t (n)');
+  await a.run('INSERT INTO t VALUES (1)');
   b ??= open('B');
   return { file, open, losses, a, b };
 };
@@ -140,10 +140,10 @@ const setUp = async (shape: 'together' | 'after') => {
 const sharesTheDatabase = (shape: 'together' | 'after') => async () => {
   const { losses, a, b } = await setUp(shape);
 
-  expect(values(await b.read<{ n: number }>('SELECT n FROM t'))).toEqual([1]);
-  await b.write('INSERT INTO t VALUES (2)');
+  expect(values(await b.all<{ n: number }>('SELECT n FROM t'))).toEqual([1]);
+  await b.run('INSERT INTO t VALUES (2)');
   expect(
-    values(await a.read<{ n: number }>('SELECT n FROM t ORDER BY n')),
+    values(await a.all<{ n: number }>('SELECT n FROM t ORDER BY n')),
   ).toEqual([1, 2]);
   // A suite that proves a VFS works proves how many workers it worked
   // with (mem:lessons, 2026-09-13).
@@ -155,7 +155,7 @@ const isRefused = (shape: 'together' | 'after') => async () => {
   const { file, open, losses, a, b } = await setUp(shape);
 
   const started = performance.now();
-  const refusal = await b.read('SELECT 1').then(
+  const refusal = await b.all('SELECT 1').then(
     () => undefined,
     (e: unknown) => e,
   );
@@ -181,9 +181,9 @@ const isRefused = (shape: 'together' | 'after') => async () => {
   });
   expect(performance.now() - started).toBeLessThan(REFUSED_WITHIN);
   // The first client is untouched by the refusal.
-  await a.write('INSERT INTO t VALUES (2)');
+  await a.run('INSERT INTO t VALUES (2)');
   expect(
-    values(await a.read<{ n: number }>('SELECT n FROM t ORDER BY n')),
+    values(await a.all<{ n: number }>('SELECT n FROM t ORDER BY n')),
   ).toEqual([1, 2]);
   // The lock that refused B is the one deleteDatabase reads (spec §3.3).
   await expect(deleteDatabase(file, { vfs, build })).rejects.toMatchObject({
@@ -194,7 +194,7 @@ const isRefused = (shape: 'together' | 'after') => async () => {
   // first is gone.
   const c = open('C');
   expect(
-    values(await c.read<{ n: number }>('SELECT n FROM t ORDER BY n')),
+    values(await c.all<{ n: number }>('SELECT n FROM t ORDER BY n')),
   ).toEqual([1, 2]);
   expect(losses).toEqual([]);
 };
@@ -202,12 +202,12 @@ const isRefused = (shape: 'together' | 'after') => async () => {
 const getsItsOwnDatabase = (shape: 'together' | 'after') => async () => {
   const { losses, a, b } = await setUp(shape);
 
-  await expect(b.read('SELECT n FROM t')).rejects.toMatchObject({
+  await expect(b.all('SELECT n FROM t')).rejects.toMatchObject({
     code: 'STATEMENT_FAILED',
   });
-  await b.write('CREATE TABLE t (n)');
-  await b.write('INSERT INTO t VALUES (9)');
-  expect(values(await a.read<{ n: number }>('SELECT n FROM t'))).toEqual([1]);
+  await b.run('CREATE TABLE t (n)');
+  await b.run('INSERT INTO t VALUES (9)');
+  expect(values(await a.all<{ n: number }>('SELECT n FROM t'))).toEqual([1]);
   expect(losses).toEqual([]);
 };
 
@@ -292,7 +292,7 @@ describe('a client closed before worker 0 has answered', () => {
     );
     expect(held).toEqual([]);
     const b = createSQLiteClient(file, { vfs, build });
-    await b.write('CREATE TABLE t (n)');
+    await b.run('CREATE TABLE t (n)');
     await b.close();
   });
 });

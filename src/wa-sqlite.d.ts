@@ -51,16 +51,17 @@ type WASQLiteModule = {
    * stale from an earlier write (spec 2026-10-01, §6.1).
    */
   _sqlite3_total_changes: (db: number) => number;
+  /**
+   * `sqlite3_stmt_readonly` and `sqlite3_stmt_isexplain`. Exported by all three
+   * builds and unwrapped by the JS façade, like `_sqlite3_stmt_status`. Both
+   * answer from the prepared statement and run nothing.
+   */
+  _sqlite3_stmt_readonly: (stmt: number) => number;
+  _sqlite3_stmt_isexplain: (stmt: number) => number;
   /** `sqlite3_free`: releases what `bindBlock` (`src/worker/binary.ts`) allocated. */
   _sqlite3_free: (ptr: number) => void;
   /** `sqlite3_malloc`: the allocation `bindBlock` copies a params block into. */
   _sqlite3_malloc: (bytes: number) => number;
-  /**
-   * `sqlite3_bind_parameter_count` / `_name`: `anonymousParams`
-   * (`src/worker/binary.ts`) reads the name as a pointer, 0 for an anonymous `?`.
-   */
-  _sqlite3_bind_parameter_count: (stmt: number) => number;
-  _sqlite3_bind_parameter_name: (stmt: number, index: number) => number;
   /** The `sqlite3_bind_*` entry points `bindBlock` calls on pointers into its allocation. */
   _sqlite3_bind_null: (stmt: number, index: number) => number;
   _sqlite3_bind_int: (stmt: number, index: number, value: number) => number;

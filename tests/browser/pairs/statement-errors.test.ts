@@ -79,7 +79,7 @@ describe('a failed statement carries SQLite codes', {
   // src/worker/worker.ts a no-op — sqliteExtendedCode is undefined. (Dropping
   // only the step stamp in `run` changes nothing: the outer catches stamp the
   // same value.)
-  it('a constraint violation through write() carries its codes, on every build', async ({
+  it('a constraint violation through run() carries its codes, on every build', async ({
     task,
   }) => {
     const { vfs } = standalonePair(task.tags ?? []);
@@ -92,8 +92,8 @@ describe('a failed statement carries SQLite codes', {
       async ({ build, c }) => {
         const db = await memoryClient(vfs, build, { foreign_keys: 'ON' });
         try {
-          for (const sql of c.setup) await db.write(sql);
-          const error = await db.write(c.failing).catch((e) => e);
+          for (const sql of c.setup) await db.run(sql);
+          const error = await db.run(c.failing).catch((e) => e);
           expect(error).toBeInstanceOf(SQLiteError);
           expect(error).toMatchObject({
             code: 'STATEMENT_FAILED',
@@ -116,7 +116,7 @@ describe('a failed statement carries SQLite codes', {
   // which stamps first — the outer stamp would read the same value there
   // (`??=`), so this falsifies only the removal of BOTH prepare-level
   // stamps. The test below is what falsifies the outer one alone.
-  it('a missing collation through read(), the prepare path, on every build', async ({
+  it('a missing collation through all(), the prepare path, on every build', async ({
     task,
   }) => {
     const { vfs } = standalonePair(task.tags ?? []);
@@ -127,7 +127,7 @@ describe('a failed statement carries SQLite codes', {
         const db = await memoryClient(vfs, build);
         try {
           const error = await db
-            .read("SELECT 'a' = 'b' COLLATE nosuch")
+            .all("SELECT 'a' = 'b' COLLATE nosuch")
             .catch((e) => e);
           expect(error).toMatchObject({
             code: 'STATEMENT_FAILED',
@@ -135,40 +135,6 @@ describe('a failed statement carries SQLite codes', {
             sqliteExtendedCode: SQLITE_EXTENDED_CODES.ERROR_MISSING_COLLSEQ,
           });
           expect(error.message).toMatch(/no such collation sequence: nosuch/);
-        } finally {
-          await db.close();
-        }
-      },
-    );
-  });
-
-  // The uncacheable branch. A multi-statement string's first run takes the
-  // fresh branch and marks the string uncacheable; its second run prepares
-  // through wa-sqlite's own statements() generator, where only query's outer
-  // catch stamps. Falsifiable: drop that outer stamp — the second run's
-  // sqliteExtendedCode is undefined. The fresh branch's own stamp (first run)
-  // has no falsifier: nothing runs between that failure and the outer catch,
-  // which would read the same value.
-  it("a later statement's prepare failure, fresh then uncacheable, on every build", async ({
-    task,
-  }) => {
-    const { vfs } = standalonePair(task.tags ?? []);
-    await forEachCase(
-      buildsHere(vfs),
-      (build) => build,
-      async (build) => {
-        const db = await memoryClient(vfs, build);
-        try {
-          const sql = "SELECT 1; SELECT 'a' = 'b' COLLATE nosuch";
-          const expected = {
-            code: 'STATEMENT_FAILED',
-            sqliteCode: SQLITE_CODES.ERROR,
-            sqliteExtendedCode: SQLITE_EXTENDED_CODES.ERROR_MISSING_COLLSEQ,
-          };
-          const fresh = await db.read(sql).catch((e) => e);
-          expect(fresh).toMatchObject(expected);
-          const uncacheable = await db.read(sql).catch((e) => e);
-          expect(uncacheable).toMatchObject(expected);
         } finally {
           await db.close();
         }
@@ -187,7 +153,7 @@ describe('a failed statement carries SQLite codes', {
       async (build) => {
         const db = await memoryClient(vfs, build);
         try {
-          const error = await db.read('SELECT * FROM WHERE').catch((e) => e);
+          const error = await db.all('SELECT * FROM WHERE').catch((e) => e);
           expect(error).toMatchObject({
             code: 'STATEMENT_FAILED',
             sqliteCode: SQLITE_CODES.ERROR,
@@ -212,17 +178,17 @@ describe('a failed statement carries SQLite codes', {
       async (build) => {
         const db = await memoryClient(vfs, build);
         try {
-          await db.write('CREATE TABLE t (a INTEGER)');
-          await db.write('CREATE TABLE big (x TEXT)');
+          await db.run('CREATE TABLE t (a INTEGER)');
+          await db.run('CREATE TABLE big (x TEXT)');
           const pages =
-            (await db.read<{ page_count: number }>('PRAGMA page_count'))[0]
+            (await db.all<{ page_count: number }>('PRAGMA page_count'))[0]
               ?.page_count ?? 0;
-          await db.write(`PRAGMA max_page_count = ${pages + 3}`);
+          await db.run(`PRAGMA max_page_count = ${pages + 3}`);
           let caught: unknown;
           await db.transaction(async (tx) => {
-            await tx.write('INSERT INTO t VALUES (1)');
-            caught = await tx.write(FILL_BIG).catch((e) => e);
-            await tx.write('INSERT INTO t VALUES (2)');
+            await tx.run('INSERT INTO t VALUES (1)');
+            caught = await tx.run(FILL_BIG).catch((e) => e);
+            await tx.run('INSERT INTO t VALUES (2)');
           });
           expect(caught).toMatchObject({
             code: 'STATEMENT_FAILED',
@@ -232,7 +198,7 @@ describe('a failed statement carries SQLite codes', {
           expect(
             (caught as { sqliteExtendedCode?: number }).sqliteExtendedCode,
           ).toBeUndefined();
-          expect(await db.read('SELECT a FROM t ORDER BY a')).toEqual([
+          expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
             { a: 1 },
             { a: 2 },
           ]);
@@ -256,7 +222,7 @@ describe('bulkWrite', {
     const { vfs, build } = standalonePair(task.tags ?? []);
     const db = await memoryClient(vfs, build);
     try {
-      await db.write('CREATE TABLE k (k INTEGER UNIQUE)');
+      await db.run('CREATE TABLE k (k INTEGER UNIQUE)');
       const bulk = db.bulkWrite('k', ['k']);
       bulk.enqueue({ k: 1 });
       bulk.enqueue({ k: 1 });
@@ -317,7 +283,7 @@ describe('a file that is not a database', {
       await db.close();
       await remove();
     });
-    const error = await db.read('SELECT 1').catch((e) => e);
+    const error = await db.all('SELECT 1').catch((e) => e);
     expect(error).toMatchObject({
       code: 'WORKER_CRASHED',
       sqliteCode: SQLITE_CODES.NOTADB,
@@ -340,7 +306,7 @@ describe('a file that is not a database', {
       await remove();
     });
     const error = await db
-      .read('SELECT name FROM sqlite_schema')
+      .all('SELECT name FROM sqlite_schema')
       .catch((e) => e);
     expect(error).toMatchObject({
       code: 'STATEMENT_FAILED',

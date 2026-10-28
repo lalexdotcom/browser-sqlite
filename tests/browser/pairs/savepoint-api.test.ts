@@ -9,14 +9,14 @@ import { createTestClient, scaled } from '../helpers';
 
 const setUp = async () => {
   const db = await createTestClient({ poolSize: 1 });
-  await db.write('CREATE TABLE t (a INTEGER UNIQUE)');
+  await db.run('CREATE TABLE t (a INTEGER UNIQUE)');
   return db;
 };
 
 type Db = Awaited<ReturnType<typeof setUp>>;
 
 const rowsOf = async (db: Db) =>
-  (await db.read<{ a: number }>('SELECT a FROM t ORDER BY a')).map((r) => r.a);
+  (await db.all<{ a: number }>('SELECT a FROM t ORDER BY a')).map((r) => r.a);
 
 /** One INSERT whose single step() runs long enough for a 30 ms timeout to land inside it. */
 const BIG_INSERT =
@@ -29,13 +29,13 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
     const db = await setUp();
     try {
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
         const parent = await tx.savepoint();
-        await tx.write('INSERT INTO t VALUES (2)');
+        await tx.run('INSERT INTO t VALUES (2)');
         const child = await tx.savepoint();
-        await tx.write('INSERT INTO t VALUES (3)');
+        await tx.run('INSERT INTO t VALUES (3)');
         await parent.rollback();
-        await tx.write('INSERT INTO t VALUES (4)');
+        await tx.run('INSERT INTO t VALUES (4)');
         await expect(child.release()).rejects.toMatchObject({
           code: 'SAVEPOINT_CLOSED',
         });
@@ -53,11 +53,11 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
     try {
       await db.transaction(async (tx) => {
         const sp = await tx.savepoint('retry');
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
         await sp.rollback({ release: false });
-        await tx.write('INSERT INTO t VALUES (2)');
+        await tx.run('INSERT INTO t VALUES (2)');
         await sp.rollback({ release: false });
-        await tx.write('INSERT INTO t VALUES (3)');
+        await tx.run('INSERT INTO t VALUES (3)');
         await sp.release();
       });
       expect(await rowsOf(db)).toEqual([3]);
@@ -69,13 +69,13 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
   it('keeps the items whose savepoint was released and none of the others (B3)', async () => {
     const db = await setUp();
     try {
-      await db.write('INSERT INTO t VALUES (20)');
+      await db.run('INSERT INTO t VALUES (20)');
       await db.transaction(async (tx) => {
         for (const a of [1, 2, 3]) {
           const sp = await tx.savepoint();
           try {
-            await tx.write('INSERT INTO t VALUES (?)', [a]);
-            await tx.write('INSERT INTO t VALUES (?)', [a * 10]);
+            await tx.run('INSERT INTO t VALUES (?)', [a]);
+            await tx.run('INSERT INTO t VALUES (?)', [a * 10]);
             await sp.release();
           } catch {
             await sp.rollback();
@@ -96,17 +96,17 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
     async () => {
       const db = await setUp();
       try {
-        await db.write('CREATE TABLE big (x INTEGER)');
+        await db.run('CREATE TABLE big (x INTEGER)');
         await db.transaction(async (tx) => {
           const sp = await tx.savepoint('u');
-          await tx.write('INSERT INTO t VALUES (1)');
-          await tx.write(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          await tx.run('INSERT INTO t VALUES (1)');
+          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
           await sp.rollback();
-          await tx.write('INSERT INTO t VALUES (3)');
+          await tx.run('INSERT INTO t VALUES (3)');
         });
         expect(await rowsOf(db)).toEqual([3]);
         expect(
-          (await db.read<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n,
+          (await db.all<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n,
         ).toBe(0);
       } finally {
         await db.close();
@@ -121,7 +121,7 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
   it('closes every handle when the connection leaves the transaction (B5, E16)', async () => {
     const db = await setUp();
     try {
-      await db.write('INSERT INTO t VALUES (1)');
+      await db.run('INSERT INTO t VALUES (1)');
       let inner: Promise<unknown> | undefined;
       let releaseError: unknown;
       const outcome = await db
@@ -129,7 +129,7 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
           inner = (async () => {
             const sp = await tx.savepoint();
             await tx
-              .write('INSERT OR ROLLBACK INTO t VALUES (1)')
+              .run('INSERT OR ROLLBACK INTO t VALUES (1)')
               .catch(() => {});
             releaseError = await sp.release().catch((e) => e);
           })();
@@ -150,8 +150,8 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
   it('undoes an output() closed inside the savepoint it rolls back (B6)', async () => {
     const db = await setUp();
     try {
-      await db.write('CREATE TABLE report (id INTEGER)');
-      await db.write('INSERT INTO report VALUES (1)');
+      await db.run('CREATE TABLE report (id INTEGER)');
+      await db.run('INSERT INTO report VALUES (1)');
       await db.transaction(async (tx) => {
         const sp = await tx.savepoint();
         const out = tx.output('report', { id: 'INTEGER' });
@@ -159,9 +159,9 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
         await out.close();
         await sp.rollback();
       });
-      expect(await db.read('SELECT id FROM report')).toEqual([{ id: 1 }]);
+      expect(await db.all('SELECT id FROM report')).toEqual([{ id: 1 }]);
       expect(
-        await db.read(
+        await db.all(
           "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'",
         ),
       ).toEqual([]);
@@ -178,7 +178,7 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
       await db.transaction(async (tx) => {
         for (const name of ['a"b', 'my point', 'étape']) {
           const sp: SQLiteSavepoint = await tx.savepoint(name);
-          await tx.write('INSERT INTO t VALUES (?)', [names.length]);
+          await tx.run('INSERT INTO t VALUES (?)', [names.length]);
           await sp.rollback();
           names.push(sp.name);
         }

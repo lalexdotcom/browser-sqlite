@@ -15,7 +15,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
-| `sqlite-routing` | One `run()` routed by SQLite's own read/write diagnosis, to stream a write's `RETURNING`; holds the `sqlite3_stmt_readonly` entry | OPEN — designed in outline by the user; large and breaking, after the small workstreams (2026-10-26) |
+| `tx-abort-race-window` | An abort fired during a savepointed statement's post is missed (`makeAbortRace` never tests `aborted`) | OPEN — narrow window, predates the routing branch |
 | `named-params` | Params as an object, bound by name | OPEN — not designed |
 | `bulkwrite-types` | More `types` values for `bulkWrite()` | OPEN — not designed |
 | `jspi-before-sync` | `jspi` before `sync` in the build order | OPEN — to examine; measurements owed |
@@ -67,6 +67,7 @@ been work on nothing.
 |---|---|---|
 | `timeout-start` | When a call's `timeout` starts counting (call vs first `next()`) | CLOSED — 2026-10-26, `fix/timeout-from-call`, merged: from the call everywhere |
 | `tx-validation` | `tx.read()`/`tx.write()`/`tx.first()` threw on a bad argument | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged |
+| `sqlite-routing` | One `run()` routed by SQLite's own read/write diagnosis, to stream a write's `RETURNING`; holds the `sqlite3_stmt_readonly` entry | CLOSED — 2026-10-28, `feat/sqlite-routing` merged; its parked ideas stay in the entry |
 | `tx-read-methods-write` | Read methods that wrote inside a transaction | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged |
 | `worker-js-exception` | A worker's JS exception with no `SQLiteError` code | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged, `WORKER_ERROR` |
 | `close-test-falsifier` | `close.test.ts`'s refuted falsifier | CLOSED — 2026-10-26, `test/close-queued-promptly` |

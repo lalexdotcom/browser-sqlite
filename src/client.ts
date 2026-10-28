@@ -1,4 +1,11 @@
-import type { SQLiteChunkOptions, SQLiteDB, SQLiteQueryOptions } from './api';
+import type {
+  SQLiteChunkOptions,
+  SQLiteChunkStream,
+  SQLiteDB,
+  SQLiteQueryOptions,
+  SQLiteRunResult,
+  SQLiteStream,
+} from './api';
 import { prepareParams, type QueryParams } from './binary';
 import { createBulk } from './bulk';
 import {
@@ -7,12 +14,13 @@ import {
   detectFeatures,
   missingFeature,
 } from './capabilities';
+import type { StatementKind } from './classify';
 import type { SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug, type RequestDebugHandle } from './debug';
-import { advanceSeen, barrierSqlFor, epochsFor } from './epochs';
-import { flatten } from './flatten';
+import { advanceSeen, BARRIER_SQL, barrierSqlFor, epochsFor } from './epochs';
+import { carryAffected, flatten } from './flatten';
 import {
   type ClientInspection,
   type DatabaseInspection,
@@ -29,11 +37,15 @@ import {
 import { createLogger } from './logger';
 import { createPoolWorker, type PoolWorker } from './pool';
 import {
+  type AffectedSlot,
+  affectedSlot,
   chunk as chunkWorker,
   firstWorker,
   makeAbortRace,
+  raceAbort,
   readWorker,
-  writeWorker,
+  runWorker,
+  settleOnClose,
 } from './queries';
 import {
   createScheduler,
@@ -42,13 +54,14 @@ import {
 } from './scheduler';
 import { queryArgs, type SQLQuery } from './sql';
 import { createSupervisor } from './supervisor';
-import { createTransaction } from './transaction';
+import { createTransaction, exposeTransaction } from './transaction';
 import { SQLiteError } from './types/errors';
+import type { Verdict } from './types/protocol';
 import {
   assertPragmasAllowed,
-  assertReadable,
   assertStatementAllowed,
   databaseFiles,
+  isDeadlineError,
   mergeSignals,
   randomId,
   renderPragmas,
@@ -58,6 +71,7 @@ import {
   splitPragmas,
   withDeadline,
 } from './utils';
+import { askVerdict, createVerdictMemo, RoutedAsRead } from './verdicts';
 
 /**
  * SQLite client for browser environments using a pool of Web Workers.
@@ -77,6 +91,15 @@ const DEFAULT_POOL_SIZE = 2;
  * is one options line, not a move.
  */
 const DEFAULT_STATEMENT_CACHE_SIZE = 32;
+
+/**
+ * Verdicts kept per client, least recently used out first (spec 2026-10-26,
+ * § Routing by verdict). A hit spares a worker round trip and a prepare.
+ */
+const VERDICT_MEMO_ENTRIES = 256;
+
+/** A SQL text longer than this, in characters, is not memoised: it bounds the memo's bytes. */
+const VERDICT_MEMO_MAX_LENGTH = 4096;
 
 /**
  * Bytes retained per worker, `SQLITE_STMTSTATUS_MEMUSED`. Not a consumer
@@ -342,7 +365,7 @@ const exclusivityProbes = new Map<
  * @param clientOptions - Pool and VFS configuration. Required: `vfs` has no
  *   default, because a VFS decides where the database is written.
  *   See {@link CreateSQLiteClientOptions} for field defaults.
- * @returns A {@link SQLiteDB} object providing `read`, `write`, `chunk`,
+ * @returns A {@link SQLiteDB} object providing `run`, `all`, `chunk`,
  *   `stream`, `first`, `transaction`, `bulkWrite`, `output`, and `close` methods.
  *
  * @throws {SQLiteError} With code `INVALID_OPTION` when `build` is not one of
@@ -363,7 +386,7 @@ const exclusivityProbes = new Map<
  *   pragmas: { journal_mode: 'WAL', synchronous: 'NORMAL' },
  * });
  *
- * const users = await db.read<{ id: number; name: string }>(
+ * const users = await db.all<{ id: number; name: string }>(
  *   'SELECT id, name FROM users WHERE active = ?',
  *   [1],
  * );
@@ -468,6 +491,8 @@ export const createSQLiteClient = (
   const { connection: connectionPragmas, database: databasePragmas } =
     splitPragmas(pragmas);
   const barrierSql = barrierSqlFor(vfs, pragmas);
+  // Only the form bracketed by the catch-up pragma holds several statements.
+  const barrierIsMulti = barrierSql !== BARRIER_SQL;
 
   // Fail at construction, not inside the first unrelated query. The merged set
   // is what gets validated: a bad default would otherwise reach a worker.
@@ -860,7 +885,7 @@ export const createSQLiteClient = (
   const applyBarrier = async (worker: PoolWorker) => {
     // The origin can only ever RAISE the target. That is what lets the local
     // cell stay synchronous — `epochs.bump()` is posted in the write path's
-    // finally, and a read chained after write() must see it without awaiting
+    // finally, and a read chained after a write must see it without awaiting
     // anything. `query()` is async and could never live there.
     const origin = await epochs.originMax();
     epochs.raiseTo(origin);
@@ -875,6 +900,7 @@ export const createSQLiteClient = (
     const barrierIter = worker.query(barrierSql, undefined, {
       noServed: true,
       internal: true,
+      ...(barrierIsMulti ? { multi: true } : {}),
     });
     while (!(await barrierIter.next()).done) {
       /* discard rows */
@@ -902,20 +928,32 @@ export const createSQLiteClient = (
    * Turns a bare `OPERATION_TIMEOUT` spent on the write lock into one that says
    * who was holding it.
    *
-   * ONLY the deadline this library minted is enriched. A caller who supplied a
-   * `signal` owns its rejection value and gets it back verbatim — that is lot
-   * 10's ownership rule, and widening this would weaken it.
+   * ONLY the deadline this library minted is enriched (`isDeadlineError`). A
+   * caller who supplied a `signal` owns its rejection value and gets it back
+   * verbatim, whatever it is — that is lot 10's ownership rule.
+   *
+   * `whenFree: 'silent'` is for a wait whose kind of statement is not known: a
+   * free write lock then says nothing about what the caller waited for, so the
+   * timeout is returned as it is.
    *
    * One `locks.query()`, on the failure path only. If the snapshot cannot be
    * taken the original error is returned untouched: the cause is a courtesy and
    * must never replace the timeout the caller needs to see.
    */
-  const explainWriteLockTimeout = async (error: unknown): Promise<unknown> => {
-    if (!(error instanceof SQLiteError) || error.code !== 'OPERATION_TIMEOUT')
+  const explainWriteLockTimeout = async (
+    error: unknown,
+    whenFree: 'say' | 'silent' = 'say',
+  ): Promise<unknown> => {
+    if (
+      !isDeadlineError(error) ||
+      !(error instanceof SQLiteError) ||
+      error.code !== 'OPERATION_TIMEOUT'
+    )
       return error;
     let cause: string;
     try {
       const inspection = await inspectWith(locks, logicalFile, vfs, markerName);
+      if (whenFree === 'silent' && inspection.write.tab === null) return error;
       cause = writeLockCause(inspection.write);
     } catch {
       return error;
@@ -1011,7 +1049,7 @@ export const createSQLiteClient = (
       request.acquired(lease.worker.index);
       const lent = lease;
       lease = {
-        worker: lent.worker,
+        ...lent,
         release: () => {
           request.released();
           lent.release();
@@ -1060,19 +1098,25 @@ export const createSQLiteClient = (
       throw error;
     }
 
-    if (!releaseWrite) return lease;
+    const unlock = releaseWrite;
+    if (!unlock) return { ...lease, releaseWriteLock: () => {} };
 
     // The write lock outlives the worker: it is released once the lease is
     // released AND the epoch this write published has been taken, so no other
-    // tab can acquire the lock, run its query(), and miss our marker.
+    // tab can acquire the lock, run its query(), and miss our marker. A
+    // streamed write releases it earlier, once complete (`releaseWriteLock`).
     let handedBack = false;
+    const releaseWriteLock = () => {
+      if (handedBack) return;
+      handedBack = true;
+      void publishing.then(unlock, unlock);
+    };
     return {
       ...lease,
+      releaseWriteLock,
       release: () => {
         lease.release();
-        if (handedBack) return;
-        handedBack = true;
-        void publishing.then(releaseWrite, releaseWrite);
+        releaseWriteLock();
       },
     };
   };
@@ -1168,7 +1212,7 @@ export const createSQLiteClient = (
    * `mergeSignals` put on the caller's own signal — is owned one level up, by
    * the `try/finally` each public read method wraps around its call to this.
    * So an acquisition that throws still clears the timer; it is just not this
-   * function that does it. `write()` had the same shape and got it wrong once,
+   * function that does it. The write path had the same shape and got it wrong once,
    * releasing the deadline only on paths that reached its inner `finally`.
    */
   const onReadLease = async <R>(
@@ -1220,37 +1264,95 @@ export const createSQLiteClient = (
    * The same retry for the streaming reads, with the one restriction that
    * makes it safe: **only before a single row has been delivered.** Once the
    * consumer has seen a chunk, re-running the query would repeat rows, so a
-   * `BUSY` after that point is raised like any other error. `read()` and
-   * `first()` buffer, so they never meet this case.
+   * `BUSY` after that point is raised like any other error. `run()`, `all()`
+   * and `first()` buffer, so they never meet this case. **A write is never
+   * retried.**
+   *
+   * A write runs under the write lock, and the worker completes it before its
+   * first chunk: at its `affected` the epoch is bumped, the write lock
+   * released and the designation given up, while the lease stays until the
+   * delivery ends or is abandoned. A write that never completes keeps the
+   * lock until the worker is idle, as `run()`'s does.
+   *
+   * A read the worker refuses as a write (`RoutedAsRead`) is sent again as a
+   * write, with `onMisrouted` told, under the same `signal`.
    */
   const streamWithRetry = async function* <Y>(
+    routed: StatementKind,
     signal: AbortSignal | undefined,
     body: (
       worker: PoolWorker,
       onAbandon: () => void,
+      onAffected: (affected: number, drained: boolean) => void,
+      kind: StatementKind,
     ) => AsyncGenerator<Y, void, unknown>,
+    onAffected: (affected: number) => void,
+    onMisrouted: () => void,
   ): AsyncGenerator<Y, void, unknown> {
+    let kind = routed;
     for (let attempt = 1; ; attempt++) {
       let delivered = false;
-      const lease = await acquireInstrumented('read', signal);
+      // A read's count waits for its first chunk: a write refused at its
+      // first step is sent again, and its count is the one owed.
+      let early: number | undefined;
+      const lease = await acquireInstrumented(kind, signal);
+      // Owed once by a write, complete or not: a failed write bumps too, as
+      // `runOnWriter` does.
+      let publication: Promise<unknown> | undefined;
+      const publish = (): Promise<unknown> | undefined => {
+        if (kind === 'write') publication ??= afterWrite(lease.worker);
+        return publication;
+      };
       // The lease returns when the worker confirms it is idle, not when the
       // caller leaves: a worker still inside step() must not be re-lent. This
       // is the same teardown the finally below runs, and it is idempotent, so
       // an abandoned generator reaching it first costs nothing.
       const giveBack = () => {
+        publish();
         void lease.worker.quiesce().then(
           () => lease.release(),
           () => lease.release(),
         );
       };
+      // A complete write's `affected`, settled once its epoch is published;
+      // its first row waits for it.
+      let announced: Promise<void> | undefined;
+      const affected = (count: number, drained: boolean) => {
+        if (drained && kind === 'write') {
+          // Complete: the epoch first, so the lock waits for its publication.
+          const published = publish() ?? Promise.resolve();
+          lease.releaseWriteLock();
+          lease.demote();
+          // As `run()` resolves: after the publication, so a caller reading
+          // the held lock names then sees the new marker alone.
+          announced = published.then(() => onAffected(count));
+          return;
+        }
+        if (kind === 'read') early = count;
+        else onAffected(count);
+      };
       try {
-        for await (const item of body(lease.worker, giveBack)) {
+        for await (const item of body(lease.worker, giveBack, affected, kind)) {
+          if (announced) {
+            await announced;
+            announced = undefined;
+          }
+          if (early !== undefined) {
+            onAffected(early);
+            early = undefined;
+          }
           delivered = true;
           yield item;
         }
         return;
       } catch (error) {
+        if (kind === 'read' && !delivered && error instanceof RoutedAsRead) {
+          onMisrouted();
+          kind = 'write';
+          continue;
+        }
         if (
+          kind === 'write' ||
           delivered ||
           attempt > 1 ||
           !isRetryableBusy(error) ||
@@ -1260,34 +1362,156 @@ export const createSQLiteClient = (
         }
       } finally {
         giveBack();
+        // A write without rows, or one whose delivery ended early, still
+        // settles its count before the caller's end does.
+        if (announced) await announced;
+      }
+    }
+  };
+
+  const verdicts = createVerdictMemo({
+    maxEntries: VERDICT_MEMO_ENTRIES,
+    maxLength: VERDICT_MEMO_MAX_LENGTH,
+  });
+
+  /**
+   * A verdict in flight, with the callers still waiting on it. The last one to
+   * give up cancels the request, so an abandoned verdict leaves nothing queued.
+   */
+  type Asking = Promise<Verdict> & {
+    waiters: number;
+    settled: boolean;
+    cancel: AbortController;
+  };
+
+  const verdictDeps = {
+    acquire: (signal: AbortSignal, free: boolean) =>
+      scheduler.acquire('verdict', signal, { free }),
+    applyBarrier,
+  };
+
+  const kindOf = (verdict: Verdict): StatementKind => {
+    if (verdict !== 'refused') return verdict;
+    throw new SQLiteError(
+      'MULTIPLE_STATEMENTS',
+      'Only one statement per call; this string holds more.',
+    );
+  };
+
+  /**
+   * A read verdict the worker refused (`RoutedAsRead`): the schema changed
+   * under it. From now on the text goes to the writer.
+   */
+  const misrouted = (sql: string) => {
+    verdicts.set(sql, 'write');
+  };
+
+  /**
+   * Whether `sql` reads or writes, as a worker said: from the memo, joining a
+   * verdict already in flight for the same text, or asked now. A verdict the
+   * memo holds is returned as it is, so a caller that branches on it joins its
+   * queue in the same tick; only a wait returns a promise. `signal` ends this
+   * caller's wait; the request itself ends once every caller has left. A cold
+   * verdict can wait on the file lock inside its prepare, so a deadline this
+   * library minted is explained as the write lock's wait is: it names who was
+   * holding.
+   */
+  const kindFor = (
+    sql: string,
+    signal?: AbortSignal,
+  ): StatementKind | Promise<StatementKind> => {
+    signal?.throwIfAborted();
+    let known = verdicts.get(sql);
+    if (known === undefined) {
+      const cancel = new AbortController();
+      const asked: Asking = Object.assign(
+        askVerdict(sql, cancel.signal, verdictDeps),
+        { waiters: 0, settled: false, cancel },
+      );
+      verdicts.set(sql, asked);
+      // Registered before any caller's wait, so `settled` is set first. An
+      // error is not memoised.
+      asked.then(
+        (verdict) => {
+          asked.settled = true;
+          if (verdicts.get(sql) === asked) verdicts.set(sql, verdict);
+        },
+        () => {
+          asked.settled = true;
+          if (verdicts.get(sql) === asked) verdicts.delete(sql);
+        },
+      );
+      known = asked;
+    }
+    if (typeof known === 'string') return kindOf(known);
+    // Every promise in the memo is one this function stored, with its state.
+    return waitForKind(sql, known as Asking, signal).catch(
+      async (error: unknown) => {
+        throw await explainWriteLockTimeout(error, 'silent');
+      },
+    );
+  };
+
+  /**
+   * One caller's wait on a verdict in flight. It leaves the request, and
+   * cancels it if it was the last, before any explanation is looked up.
+   */
+  const waitForKind = async (
+    sql: string,
+    asked: Asking,
+    signal: AbortSignal | undefined,
+  ): Promise<StatementKind> => {
+    asked.waiters += 1;
+    try {
+      return kindOf(await (signal ? raceAbort(signal, asked) : asked));
+    } finally {
+      asked.waiters -= 1;
+      if (asked.waiters === 0 && !asked.settled) {
+        asked.cancel.abort(signal?.reason);
+        if (verdicts.get(sql) === asked) verdicts.delete(sql);
       }
     }
   };
 
   /**
-   * Executes a read query and returns all results.
-   * Automatically acquires and releases a worker from the pool.
-   *
-   * @remarks
-   * **Read-your-own-writes is guaranteed within the tab.** Any read issued after a
-   * write resolves — from that client or from any other client in the same tab on
-   * the same database — observes it, regardless of pool size. It is not guaranteed
-   * across tabs.
+   * `kindFor` for a transaction: a memoised `write` or `refused`, or else a
+   * verdict from `worker` itself — the transaction's, idle at its statement's
+   * turn — kept in the memo. A memoised `read` is asked again: a savepoint is
+   * decided on it, and the transaction's own schema changes can make it a
+   * write. A verdict in flight elsewhere is not joined: it may be waiting for
+   * this very worker, which is not offered until the statement settles.
+   * `signal` ends the caller's wait, not the verdict.
    */
-  const read = async <
-    T extends Record<string, unknown> = Record<string, unknown>,
-  >(
-    input: string | SQLQuery,
-    second?: unknown,
-    third?: SQLiteChunkOptions,
-  ) => {
-    const { sql, params, options } = queryArgs(input, second, third);
-    assertReadable(sql, 'read');
-    const bound = prepareParams(params);
-    const { signal, release } = withDeadline(options, 'read');
+  const kindOnWorker = async (
+    worker: PoolWorker,
+    sql: string,
+    signal?: AbortSignal,
+  ): Promise<StatementKind> => {
+    signal?.throwIfAborted();
+    const known = verdicts.get(sql);
+    if (typeof known === 'string' && known !== 'read') return kindOf(known);
+    const asked = worker.verdict(sql);
+    asked.then(
+      (verdict) => {
+        if (typeof verdicts.get(sql) !== 'string') verdicts.set(sql, verdict);
+      },
+      () => {
+        // Not memoised; the caller has the rejection, or has left.
+      },
+    );
+    return kindOf(await (signal ? raceAbort(signal, asked) : asked));
+  };
+
+  /**
+   * A read the library knows to be one, on any free worker: no verdict is
+   * asked. It is the library's own path (the staging sweep of `bulkWrite` and
+   * `output`), never a caller's.
+   */
+  const readDirect = async (sql: string) => {
+    const { signal, release } = withDeadline(undefined, 'read');
     try {
       return await readWithRetry(signal, (worker) =>
-        readWorker<T>(worker, sql, bound, { ...options, signal }),
+        readWorker(worker, sql, undefined, { signal }),
       );
     } finally {
       release();
@@ -1296,9 +1520,11 @@ export const createSQLiteClient = (
 
   /**
    * The body of `chunk()` and `stream()`, after their arguments were validated
-   * and their deadline started at the call: the worker is acquired at the first
-   * `next()`, the retry and the lease are `streamWithRetry`'s. A generator never
-   * read never gets here; its timer, once spent, releases itself.
+   * and their deadline started at the call: the verdict is asked and the worker
+   * acquired at the first `next()`, the retry and the lease are
+   * `streamWithRetry`'s. A generator never read never gets here; its timer,
+   * once spent, releases itself. `affected` is settled here, at the latest
+   * when the statement ends.
    */
   const chunkRows = async function* <
     T extends Record<string, unknown> = Record<string, unknown>,
@@ -1307,68 +1533,148 @@ export const createSQLiteClient = (
     bound: QueryParams | undefined,
     options: SQLiteChunkOptions | undefined,
     deadline: ReturnType<typeof withDeadline>,
+    affected: AffectedSlot,
   ): AsyncGenerator<T[], void, unknown> {
     const { signal, release } = deadline;
     try {
-      yield* streamWithRetry(signal, (worker, onAbandon) =>
-        chunkWorker<T>(worker, sql, bound, {
-          ...options,
-          signal,
-          onAbandon: () => {
-            onAbandon();
-            release();
-          },
-        }),
+      const known = kindFor(sql, signal);
+      const kind = typeof known === 'string' ? known : await known;
+      yield* streamWithRetry(
+        kind,
+        signal,
+        (worker, onAbandon, onAffected, routed) =>
+          chunkWorker<T>(worker, sql, bound, {
+            ...options,
+            signal,
+            drainWrites: true,
+            ...(routed === 'read'
+              ? { refuseWrite: 'ROUTED_AS_READ' as const }
+              : {}),
+            onAffected,
+            onAbandon: () => {
+              onAbandon();
+              release();
+            },
+          }),
+        affected.resolve,
+        () => misrouted(sql),
       );
+      // Ended without a count: nothing ran.
+      affected.resolve(0);
+    } catch (error) {
+      affected.reject(error);
+      throw error;
     } finally {
       release();
     }
   };
 
   /**
-   * Executes a query and yields result rows in chunks.
-   * The single abort-aware primitive — all other read paths derive from this.
+   * Executes any single statement and yields its rows in chunks. A write is
+   * completed in the worker before its first chunk is delivered.
    *
    * @remarks
-   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * **Worker freshness.** See the `run()` remarks — read-your-own-writes is
    * guaranteed within the tab, not across tabs.
    */
   const chunk = <T extends Record<string, unknown> = Record<string, unknown>>(
     input: string | SQLQuery,
     second?: unknown,
     third?: SQLiteChunkOptions,
-  ): AsyncGenerator<T[], void, unknown> => {
+  ): SQLiteChunkStream<T> => {
     const { sql, params, options } = queryArgs(input, second, third);
-    assertReadable(sql, 'chunk');
+    assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
-    return chunkRows<T>(sql, bound, options, withDeadline(options, 'chunk'));
+    const affected = affectedSlot();
+    return carryAffected(
+      settleOnClose(
+        chunkRows<T>(
+          sql,
+          bound,
+          options,
+          withDeadline(options, 'chunk'),
+          affected,
+        ),
+        affected,
+      ),
+      affected.promise,
+    );
   };
 
   /**
-   * Executes a query and streams individual rows (flattened from chunks).
+   * Executes any single statement and streams its rows one by one (flattened
+   * from chunks). A write is completed in the worker before its first row.
    *
    * @remarks
-   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * **Worker freshness.** See the `run()` remarks — read-your-own-writes is
    * guaranteed within the tab, not across tabs.
    */
   const stream = <T extends Record<string, unknown> = Record<string, unknown>>(
     input: string | SQLQuery,
     second?: unknown,
     third?: SQLiteChunkOptions,
-  ): AsyncGenerator<T, void, unknown> => {
+  ): SQLiteStream<T> => {
     const { sql, params, options } = queryArgs(input, second, third);
-    assertReadable(sql, 'stream');
+    assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
-    return flatten(
-      chunkRows<T>(sql, bound, options, withDeadline(options, 'stream')),
+    const affected = affectedSlot();
+    return settleOnClose(
+      flatten(
+        chunkRows<T>(
+          sql,
+          bound,
+          options,
+          withDeadline(options, 'stream'),
+          affected,
+        ),
+        { affected: affected.promise },
+      ),
+      affected,
     );
   };
 
   /**
-   * Executes a write query and returns results with affected row count.
-   * Automatically acquires and releases a worker from the pool.
+   * One statement through the writer, under the write lock: its rows and the
+   * rows it changed. Owns the lease, never the caller's deadline.
    */
-  const write = async <
+  const runOnWriter = async <T extends Record<string, unknown>>(
+    sql: string,
+    bound: QueryParams | undefined,
+    options: SQLiteQueryOptions | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<SQLiteRunResult<T>> => {
+    const lease = await acquireInstrumented('write', signal);
+    try {
+      return await runWorker<T>(lease.worker, sql, bound, {
+        ...options,
+        signal,
+      });
+    } finally {
+      // Before the await: afterWrite bumps the epoch synchronously so that a
+      // read chained after the write sees the new epoch and runs the barrier.
+      // In `finally`, so a failed write bumps too: that costs a barrier
+      // statement, never a wrong read.
+      // Wait for the marker transition (new epoch acquired, previous released)
+      // before the write resolves. A caller that queries held lock names
+      // immediately after it must see exactly one marker — the new one.
+      await afterWrite(lease.worker);
+      // The lease returns when the worker confirms it is idle, not when the
+      // caller leaves: a worker still inside step() must not be re-lent, and
+      // the caller must not wait for it.
+      void lease.worker.quiesce().then(
+        () => lease.release(),
+        () => lease.release(),
+      );
+    }
+  };
+
+  /**
+   * Executes a write and returns its rows and the rows it changed. Acquires
+   * and releases the writer. No verdict is asked: this is the library's own
+   * write path (the staging and swap statements of `bulkWrite` and `output`),
+   * never a caller's.
+   */
+  const writeDirect = async <
     T extends Record<string, unknown> = Record<string, unknown>,
   >(
     input: string | SQLQuery,
@@ -1380,40 +1686,83 @@ export const createSQLiteClient = (
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'write');
     try {
-      const lease = await acquireInstrumented('write', signal);
-      try {
-        return await writeWorker<T>(lease.worker, sql, bound, {
-          ...options,
-          signal,
-        });
-      } finally {
-        // Before the await: afterWrite bumps the epoch synchronously so that a
-        // read chained after write() sees the new epoch and runs the barrier. In
-        // `finally`, so a failed write bumps too: that costs a barrier statement,
-        // never a wrong read.
-        // Wait for the marker transition (new epoch acquired, previous released)
-        // before write() resolves. A caller that queries held lock names
-        // immediately after write() must see exactly one marker — the new one.
-        await afterWrite(lease.worker);
-        // The lease returns when the worker confirms it is idle, not when the
-        // caller leaves: a worker still inside step() must not be re-lent, and
-        // the caller must not wait for it.
-        void lease.worker.quiesce().then(
-          () => lease.release(),
-          () => lease.release(),
-        );
-      }
+      return await runOnWriter<T>(sql, bound, options, signal);
     } finally {
       release();
     }
   };
 
   /**
+   * Any single statement, sent where its verdict says: a read to the read
+   * path, a write through the writer. The deadline starts at the call, so it
+   * covers the wait for the verdict too.
+   */
+  const runStatement = async <T extends Record<string, unknown>>(
+    method: 'run' | 'all',
+    input: string | SQLQuery,
+    second: unknown,
+    third: SQLiteQueryOptions | undefined,
+  ): Promise<SQLiteRunResult<T>> => {
+    const { sql, params, options } = queryArgs(input, second, third);
+    assertStatementAllowed(vfs, sql);
+    const bound = prepareParams(params);
+    const { signal, release } = withDeadline(options, method);
+    try {
+      // Not awaited when the verdict is known: the statement then joins its
+      // queue in this tick.
+      const known = kindFor(sql, signal);
+      const kind = typeof known === 'string' ? known : await known;
+      if (kind === 'read') {
+        try {
+          const rows = await readWithRetry(signal, (worker) =>
+            readWorker<T>(worker, sql, bound, {
+              ...options,
+              signal,
+              refuseWrite: 'ROUTED_AS_READ',
+            }),
+          );
+          return { rows, affected: 0 };
+        } catch (error) {
+          if (!(error instanceof RoutedAsRead)) throw error;
+          misrouted(sql);
+        }
+      }
+      return await runOnWriter<T>(sql, bound, options, signal);
+    } finally {
+      release();
+    }
+  };
+
+  /**
+   * Runs any single statement and returns its rows and the rows it changed.
+   *
+   * @remarks
+   * **Read-your-own-writes is guaranteed within the tab.** Any read issued
+   * after a write resolves — from that client or from any other client in the
+   * same tab on the same database — observes it, regardless of pool size. It
+   * is not guaranteed across tabs.
+   */
+  const run = <T extends Record<string, unknown> = Record<string, unknown>>(
+    input: string | SQLQuery,
+    second?: unknown,
+    third?: SQLiteQueryOptions,
+  ) => runStatement<T>('run', input, second, third);
+
+  /** `run()`'s rows: any single statement, a write's `RETURNING` included. */
+  const all = async <
+    T extends Record<string, unknown> = Record<string, unknown>,
+  >(
+    input: string | SQLQuery,
+    second?: unknown,
+    third?: SQLiteQueryOptions,
+  ) => (await runStatement<T>('all', input, second, third)).rows;
+
+  /**
    * Executes a query and returns only the first row.
    * Breaks after the first chunk — no internal AbortController needed.
    *
    * @remarks
-   * **Worker freshness.** See the `read()` remarks — read-your-own-writes is
+   * **Worker freshness.** See the `run()` remarks — read-your-own-writes is
    * guaranteed within the tab, not across tabs.
    */
   const first = async <
@@ -1424,12 +1773,18 @@ export const createSQLiteClient = (
     third?: SQLiteQueryOptions,
   ) => {
     const { sql, params, options } = queryArgs(input, second, third);
-    assertReadable(sql, 'first');
+    assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'first');
     try {
+      // The worker refuses a write before it steps: SQLite, not the text,
+      // says whether this statement writes.
       return await readWithRetry(signal, (worker) =>
-        firstWorker<T>(worker, sql, bound, { ...options, signal }),
+        firstWorker<T>(worker, sql, bound, {
+          ...options,
+          signal,
+          refuseWrite: 'NOT_A_READ_QUERY',
+        }),
       );
     } finally {
       release();
@@ -1443,8 +1798,12 @@ export const createSQLiteClient = (
     logger,
   });
 
-  const transaction = createTransaction({
-    scheduler: { ...scheduler, acquire: acquireInstrumented },
+  const runTransaction = createTransaction({
+    scheduler: { acquire: acquireInstrumented },
+    offer: (worker) => {
+      scheduler.offer(worker);
+    },
+    kindOf: kindOnWorker,
     afterWrite,
     // Wrapped, not passed by reference: handleDeath is declared further down
     // and would be in its temporal dead zone here.
@@ -1455,7 +1814,14 @@ export const createSQLiteClient = (
     logger,
   });
 
-  const { bulkWrite, output } = bulkFor({ read, write, transaction });
+  const transaction = exposeTransaction(runTransaction);
+
+  const { bulkWrite, output } = bulkFor({
+    read: readDirect,
+    writeDirect,
+    transaction: (fn, options) =>
+      runTransaction((_db, internals) => fn(internals), options),
+  });
 
   /** Bounds any settlement that depends on a worker answering. */
   const bounded = async (promise: Promise<unknown>, ms: number) => {
@@ -1898,9 +2264,9 @@ export const createSQLiteClient = (
 
   // Return the public API
   const api = {
+    run,
+    all,
     chunk,
-    read,
-    write,
     stream,
     first,
     transaction,

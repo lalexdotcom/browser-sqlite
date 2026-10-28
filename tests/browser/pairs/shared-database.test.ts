@@ -16,10 +16,10 @@ describe('sharedDatabase', () => {
     // Falsifiable: give `open` a fresh name per call and B sees no table.
     const db = sharedDatabase();
     const a = db.open({ poolSize: 1 });
-    await a.write('CREATE TABLE t (x)');
-    await a.write('INSERT INTO t VALUES (7)');
+    await a.run('CREATE TABLE t (x)');
+    await a.run('INSERT INTO t VALUES (7)');
     const b = db.open({ poolSize: 1 });
-    expect(await b.read('SELECT x FROM t')).toEqual([{ x: 7 }]);
+    expect(await b.all('SELECT x FROM t')).toEqual([{ x: 7 }]);
   });
 
   it('deletes the database once the test is over', {
@@ -40,6 +40,6 @@ describe('sharedDatabase', () => {
     });
     const db = sharedDatabase();
     name = db.name;
-    await db.open({ poolSize: 1 }).write('CREATE TABLE t (x)');
+    await db.open({ poolSize: 1 }).run('CREATE TABLE t (x)');
   });
 });

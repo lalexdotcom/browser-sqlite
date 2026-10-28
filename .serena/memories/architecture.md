@@ -22,8 +22,8 @@ The layout of `tests/` (where each suite lives, what runs where) is in `mem:stac
 
 ## Public surface
 
-`SQLiteQueryAPI` — `read` / `write` / `chunk` / `stream` / `first` / `bulkWrite` /
-`output` — is shared by **both** the client and a transaction, so a method cannot be
+`SQLiteQueryAPI` — `run` / `all` / `chunk` / `stream` / `first` / `bulkWrite` /
+`output` (`run()`/`all()` replaced `write()`/`read()` on `feat/sqlite-routing`) — is shared by **both** the client and a transaction, so a method cannot be
 added to one and forgotten on the other. `SQLiteDB` adds `transaction` / `close` /
 `debug` / `inspect`, plus seven readonly getters — `id` / `name` / `file` / `files` / `vfs` / `build` / `poolSize` (the pool it
 actually runs: the option, capped by the VFS and by the environment, exact once `ready` resolves) — and
@@ -32,9 +32,9 @@ which exist so a module handed a client can describe it without also being hande
 `SQLiteTransactionDB` adds `commit` / `rollback`. `signal` on every method **except `inspect`** and the transaction controls `commit` / `rollback` (no options at all, like BEGIN and COMMIT on the wire; `tx.savepoint()` and its handle follow them, user 2026-10-04) —
 a documented exception: `navigator.locks.query()` takes no lock and waits for nothing, so the
 parameter could only abort the `.then()`.
-and `chunkSize` on the three that stream. Client options: `name`, `poolSize`,
+and `chunkSize` on `chunk` / `stream` only (`all()` takes `SQLiteQueryOptions`). Client options: `name`, `poolSize`,
 **`vfs` (required)**, `build`, `pragmas`, `maxWorkerRestarts`, `openTimeout`,
-`drainTimeout`, `debug`. The entry exports exactly these names, pinned at runtime by `tests/unit/lib/exports.test.ts`. Values: `createSQLiteClient`, `deleteDatabase`, `inspectDatabase`, `detectFeatures`, `missingFeature`, `SQLiteError`, `SQLiteBulkWriteError`, `SQLITE_CODES`, `SQLITE_EXTENDED_CODES`, and since 2026-10-09 `sql` (its query type `SQLQuery` is exported as a type only). `read`/`write`/`chunk`/`stream`/`first` are overloaded call signatures in `SQLiteQueryAPI`, the `SQLQuery` form declared FIRST so that `Parameters<SQLiteDB['read']>` keeps reading the string form — TypeScript takes the last overload (`mem:architecture/layout`, `sql.ts`). Types: everything `src/api.ts` exports, plus `CreateSQLiteClientOptions`, `WorkerLostEvent`, `DeleteDatabaseOptions`, `InspectDatabaseOptions`, `DatabaseInspection`, `ClientInspection`, `InspectionBase`, `DatabaseClient`, `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature`, `SQLiteErrorCode`, `SQLiteResultCode`, `SQLiteExtendedResultCode`, and since 2026-09-30 `ClientDebugState`, `WorkerDebugState`, `RequestDebugState`, `QueryDebugState`. The package declares no subpath but `.`. The bench page gets its VFS table from `scripts/bench/assemble.ts`, which writes it only when the page imports it, because `pages.yaml` runs the current assembler over the published tag. `SQLiteDB.debug` is declared `debug?: ClientDebugState | undefined` — an optional key that may hold `undefined` — since this chantier: under `exactOptionalPropertyTypes` a plain `debug?:` refused the client's always-present, possibly-undefined key, so the declared type was widened, not narrowed, to match what the client publishes. `ClientDebugState` stays unexported (`@internal`); whether `db.debug` itself is public is the documentation review's call (`mem:follow-ups`).
+`drainTimeout`, `debug`. The entry exports exactly these names, pinned at runtime by `tests/unit/lib/exports.test.ts`. Values: `createSQLiteClient`, `deleteDatabase`, `inspectDatabase`, `detectFeatures`, `missingFeature`, `SQLiteError`, `SQLiteBulkWriteError`, `SQLITE_CODES`, `SQLITE_EXTENDED_CODES`, and since 2026-10-09 `sql` (its query type `SQLQuery` is exported as a type only). `run`/`all`/`chunk`/`stream`/`first` are overloaded call signatures in `SQLiteQueryAPI`, the `SQLQuery` form declared FIRST so that `Parameters<SQLiteDB['all']>` keeps reading the string form — TypeScript takes the last overload (`mem:architecture/layout`, `sql.ts`). Types: everything `src/api.ts` exports, plus `CreateSQLiteClientOptions`, `WorkerLostEvent`, `DeleteDatabaseOptions`, `InspectDatabaseOptions`, `DatabaseInspection`, `ClientInspection`, `InspectionBase`, `DatabaseClient`, `SQLiteVFS`, `SQLiteBuild`, `PlatformFeature`, `SQLiteErrorCode`, `SQLiteResultCode`, `SQLiteExtendedResultCode`, and since 2026-09-30 `ClientDebugState`, `WorkerDebugState`, `RequestDebugState`, `QueryDebugState`. The package declares no subpath but `.`. The bench page gets its VFS table from `scripts/bench/assemble.ts`, which writes it only when the page imports it, because `pages.yaml` runs the current assembler over the published tag. `SQLiteDB.debug` is declared `debug?: ClientDebugState | undefined` — an optional key that may hold `undefined` — since this chantier: under `exactOptionalPropertyTypes` a plain `debug?:` refused the client's always-present, possibly-undefined key, so the declared type was widened, not narrowed, to match what the client publishes. `ClientDebugState` stays unexported (`@internal`); whether `db.debug` itself is public is the documentation review's call (`mem:follow-ups`).
 
 **Every root export names the database positionally** — `createSQLiteClient(file, options)`,
 `deleteDatabase(file, options)`, `inspectDatabase(file, options)`. `inspectDatabase` shipped on
@@ -68,6 +68,21 @@ finalise a handle that query still holds — a use-after-free on a `sqlite3_stmt
 Before the cache this was merely confusing. The consequence is written where someone would
 break it, on the `available` declaration in `scheduler.ts`, not only in the worker.
 
+**A verdict is the one message that may reach a worker with a query in flight, and it is
+fenced for that.** It has its own message type and callId space (`pool.ts`'s `verdict()`),
+outside the reuse guard and `inTransaction`; it prepares, classifies and finalises, never
+steps. Inside the worker a **worker-wide SQLite mutex** (`holdSqlite`/`releaseSqlite`) keeps
+one SQLite call sequence at a time: a query holds it from start to reply and lets it go
+only while it waits for a credit, so on `async`/`jspi` a verdict never enters the module
+mid-call. A verdict saves and restores the authorizer's state (`allowControl`, `preparing`,
+`denied`, `seen`, starting from empty facts) and **never files a handle into the statement
+cache while a query is in flight or a transaction is open** — an eviction there could
+finalise a handle that query holds. In a transaction it prepares afresh rather than reading
+the cache, whose programs predate the transaction's schema changes. The scheduler serves
+verdict waiters before writers and readers (`kind: 'verdict'`); `offer()` lends a
+transaction's idle worker to a verdict, except one asked `{ free: true }` (a prepare that
+failed on that worker).
+
 **wa-sqlite's retrying VFS depend on the same rule** (`OPFSCoopSyncVFS`, `OPFSWriteAheadVFS`):
 `Module.retryOps` is one list per module, so two `retry()`-wrapped calls (`open_v2`, prepare,
 `step`) in flight in one module give a spurious `SQLITE_BUSY` and can strand the access handle
@@ -79,7 +94,7 @@ it never meets the open's pragmas, and `close` waits for `idleUntilQueryEnds()`.
 (spec 2026-09-14, §5.1).** `sqlite3_extended_errcode` reports the connection's MOST RECENT call,
 and the error path runs more calls: `settle`'s reset or finalize, and after a failed savepoint
 conclusion a full `ROLLBACK`, which resets it to 0. So `query` stamps wa-sqlite's error
-(`extendedCode`, `??=`) at three sites — `run` (bind, step); the fresh branch's inner catch (a
+(`extendedCode`, `??=`) at three sites — `rows` (bind, step); the fresh branch's inner catch (a
 later statement's prepare failure, before that branch's `finally` finalizes anything); and
 `query`'s outer catch (the uncacheable branch, where wa-sqlite's `statements()` runs only
 `sqlite3_errmsg` and `sqlite3_free` in between). **A new path out of `query` that runs SQL before
@@ -151,7 +166,7 @@ after a commit. What must hold:
   wait on `quiesce()` — the `mark.posted` rule above, and the final review found that rule
   applied on one of the two paths only.
 
-**Every message a transaction sends goes through `via`, except the teardown ROLLBACK.**
+**Every message a transaction sends goes through `via`, except the teardown ROLLBACK and a verdict.** A verdict (`kindOf` on the transaction's worker) changes nothing on the connection and carries no savepoint conclusion, so it bypasses `via` deliberately; a read-only transaction never asks one.
 `via(open, mark?)` is the facade whose `query` hands the pool a thunk read at post time and
 carries the pending conclusion of `__bsq_sp` — the savepoint a self-abandoned write leaves
 open for the transaction's next message to resolve. The teardown ROLLBACK (`rollbackNow`)
@@ -163,7 +178,7 @@ silently — its first message carries no pending conclusion, so a savepoint ope
 earlier abandoned write is never
 resolved. `tests/unit/lib/transaction.test.ts` T7 is parameterised over the methods to catch it. `tx.savepoint()`, `release()` and `rollback()` go through `via(false)` in `runControl`, and T7 covers them.
 
-**The worker's authorizer is the only guard against transaction control (spec 2026-10-04, § 4).** It denies `SQLITE_TRANSACTION` and `SQLITE_SAVEPOINT` unless the message carries `control`, which only `transaction.ts`'s `exec` and the worker's own `__bsq_sp` `control()` set; `controlSql` remembers the control statements it allowed so a cache hit cannot bypass it; savepoint operations run `uncached`. A new library path that sends transaction control without `exec` is refused with `AUTH`. Transaction control is allowed while a statement is stepping — VACUUM runs its own BEGIN/COMMIT during its step; a consumer's control statement is refused at its own prepare, or by `controlSql` on a cache hit, always before any step. The cache-hit refusal sets `extendedCode = SQLITE_AUTH` itself, because no SQLite call failed and `stamped` would otherwise read a stale code.
+**The worker's authorizer is the only guard against transaction control (spec 2026-10-04, § 4).** It denies `SQLITE_TRANSACTION` and `SQLITE_SAVEPOINT` unless the message carries `control`, which only `transaction.ts`'s `exec` and the worker's own `__bsq_sp` `control()` set; `controlSql` remembers the control statements it allowed so a cache hit cannot bypass it; savepoint operations run `uncached`. A new library path that sends transaction control without `exec` is refused with `AUTH`. Transaction control is allowed while a statement is stepping — VACUUM runs its own BEGIN/COMMIT during its step; a consumer's control statement is refused at its own prepare, or by `controlSql` on a cache hit, always before any step. The cache-hit refusal sets `extendedCode = SQLITE_AUTH` itself, because no SQLite call failed and `stamped` would otherwise read a stale code. **The same authorizer now also feeds the routing** (§ Routing below): it records each prepare's facts (pragma name and value, ATTACH/DETACH), returns `SQLITE_IGNORE` for a writing pragma where nothing may write, and denies non-read actions during a guarded step.
 
 **A load's batches are savepointed individually, not the load as a whole.** `bulk.ts`'s
 `runBatch` issues one `tx.write()` per batch, each independently savepointed by `withSignal`
@@ -211,12 +226,16 @@ a SQLite lock. One query in flight per worker bounds it at one or two per simult
 active worker. **Read from source, never measured** — see `mem:architecture/cross-tab` for the design that
 depends on it and `mem:measurements` for what a held lock costs a `query()`.
 
-**Routing is an allowlist, and its second clause is not decoration.** `isReadQuery`
-requires an allowlisted opening keyword **and** no write keyword anywhere in the
-statement, because the worker executes `;`-separated statements — `SELECT 1; DROP TABLE t`
-opens as a read and is not one. Accepted cost: `SELECT 'INSERT'` and `EXPLAIN INSERT …`
-serialize through the writer. String-literal misclassification needs tokenisation to fix
-properly; the failure direction is safe toward the writer.
+**Routing is SQLite's verdict, and a read verdict is never trusted alone (`feat/sqlite-routing`, spec `docs/superpowers/specs/2026-10-26-sqlite-routing-design.md`).** The regex allowlist (`isReadQuery`/`assertReadable`) is gone. What decides read or write:
+
+- **Classification at prepare** (`src/classify.ts`, `classifyStatement`): EXPLAIN first (always a read); a pragma by name and value (`WRITING_PRAGMAS`, `BARE_WRITING_PRAGMAS`, `INTROSPECTION_PRAGMAS`; wa-sqlite's relay gives `""` for a null argument, so the worker reads `=`/`(` in the text to tell a bare pragma from one assigned `''`, misreads going to the writer); ATTACH/DETACH (the authorizer's facts — `stmt_readonly` says 1 for them, so the authorizer wiring is their only guard); otherwise `sqlite3_stmt_readonly`. The facts are kept per handle beside the statement cache (`factsOf`), so a cache hit classifies without preparing.
+- **The client memoises verdicts per text** (`src/verdicts.ts`, `VERDICT_MEMO_ENTRIES = 256`, texts over `VERDICT_MEMO_MAX_LENGTH = 4096` never stored); a memo hit does not await; a verdict failing with SQLite 9/5/6 is re-asked once; its only bound is the caller's deadline, no liveness timer.
+- **A verdict can depend on the schema:** `stmt_readonly` is 1 for `DROP TRIGGER IF EXISTS` while the trigger is absent and for `CREATE TRIGGER IF NOT EXISTS` while it exists. So **every read-routed statement carries a worker-side refusal** (`refuseWrite: 'ROUTED_AS_READ'`): checked before the first step, and during the step by the authorizer (`guardingStep`), because a cached statement re-prepared mid-step after a schema change can become a write. The refusal surfaces as `RoutedAsRead`, never to a consumer: the client sets the memo to `'write'` (`misrouted`) and re-runs once through the writer, under the same deadline. In a transaction a memoised `'read'` is not trusted: the transaction's own worker is asked. Under the step guard a pragma is judged only when the guarded statement is itself a pragma (a pragma table-valued function prepares `PRAGMA name` itself).
+- **Some pragmas act at prepare** (`cache_size`, `busy_timeout`, the flags; `EXPLAIN PRAGMA x = v` too): during a verdict's prepare, one carrying `refuseWrite`, under EXPLAIN, or in a refused multi-statement tail, the authorizer returns `SQLITE_IGNORE` for a writing pragma, and such a handle is never cached.
+- **One statement per call:** a string holding more than one is refused `MULTIPLE_STATEMENTS` before anything runs (breaking). The barrier's own multi-statement string is the exception (`multi`), and stays cached.
+- **`first()` refuses a write in the worker** (`refuseWrite: 'NOT_A_READ_QUERY'`), as does a read-only transaction (`READ_ONLY_TRANSACTION`).
+- **A streamed write is drained first:** `stream()`/`chunk()` of a write step it to `SQLITE_DONE` in the worker before delivering a row (`drainWrite`, kept apart from the row loop `rows` for a measured Firefox cost, ROUTING-DELTAS in `mem:measurements/routing`), then post `affected`; at it the client publishes the epoch, releases the write lock and gives up the writer designation (`lease.demote()`), keeping the lease until delivery ends; `affected` resolves after the publish. A read's `affected` resolves 0 at its first chunk. Outside a transaction an abort undoes a streamed write only where it reaches the step; inside one the savepoint does. A transaction's next statement waits for the delivery.
+- **Bulk writes go through `writeDirect`**, an internal write without a verdict, one lease per batch.
 
 **`take()` awaits the tick unconditionally, before checking credits.** Skipping it when
 credits are available is the obvious optimisation and it destroys the property

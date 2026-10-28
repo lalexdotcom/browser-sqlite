@@ -32,17 +32,17 @@ describe('commit-propagation barrier', {
   it('sees a schema swap committed by another worker', async () => {
     const db = await createTestClient({ ...forced });
 
-    await db.write('CREATE TABLE t (old_col)');
-    await db.write('INSERT INTO t (old_col) VALUES (42)');
+    await db.run('CREATE TABLE t (old_col)');
+    await db.run('INSERT INTO t (old_col) VALUES (42)');
 
     // Caches the statement the read below reuses, prepared on the old schema.
-    await db.read('SELECT * FROM t');
+    await db.all('SELECT * FROM t');
 
     await db.transaction(async (tx) => {
-      await tx.write('ALTER TABLE t RENAME COLUMN old_col TO new_col');
+      await tx.run('ALTER TABLE t RENAME COLUMN old_col TO new_col');
     });
 
-    const rows = await db.read<{ new_col: number }>('SELECT * FROM t');
+    const rows = await db.all<{ new_col: number }>('SELECT * FROM t');
     expect(rows[0]?.new_col).toBe(42);
   });
 
@@ -51,17 +51,17 @@ describe('commit-propagation barrier', {
   it('sees a table dropped and replaced with a different shape', async () => {
     const db = await createTestClient({ ...forced });
 
-    await db.write('CREATE TABLE t (old_col)');
-    await db.write('INSERT INTO t (old_col) VALUES (1)');
-    await db.read('SELECT * FROM t');
+    await db.run('CREATE TABLE t (old_col)');
+    await db.run('INSERT INTO t (old_col) VALUES (1)');
+    await db.all('SELECT * FROM t');
 
     await db.transaction(async (tx) => {
-      await tx.write('DROP TABLE t');
-      await tx.write('CREATE TABLE t (new_col)');
-      await tx.write('INSERT INTO t (new_col) VALUES (42)');
+      await tx.run('DROP TABLE t');
+      await tx.run('CREATE TABLE t (new_col)');
+      await tx.run('INSERT INTO t (new_col) VALUES (42)');
     });
 
-    const rows = await db.read<{ new_col: number }>('SELECT * FROM t');
+    const rows = await db.all<{ new_col: number }>('SELECT * FROM t');
     expect(rows[0]?.new_col).toBe(42);
   });
 
@@ -72,11 +72,11 @@ describe('commit-propagation barrier', {
   it('does not repeat the barrier on a worker that is already current', async () => {
     const db = await createTestClient({ ...forced, debug: true });
 
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     // Both reads go to w1, the last writer, which is current.
-    await db.read('SELECT * FROM t');
+    await db.all('SELECT * FROM t');
     const before = countBarrierStatements(db);
-    await db.read('SELECT * FROM t'); // must pay nothing
+    await db.all('SELECT * FROM t'); // must pay nothing
     expect(countBarrierStatements(db)).toBe(before);
 
     // w1's first acquisition — the CREATE TABLE above — is where it paid the
@@ -105,12 +105,12 @@ describe('commit-propagation barrier', {
   it('sends a read to the worker that just wrote, which owes no barrier', async () => {
     const db = await createTestClient({ ...forced, debug: true });
 
-    await db.write('CREATE TABLE t (a)');
-    await db.read('SELECT * FROM t');
+    await db.run('CREATE TABLE t (a)');
+    await db.all('SELECT * FROM t');
     const before = countBarrierStatements(db);
 
-    await db.write('INSERT INTO t VALUES (1)');
-    await db.read('SELECT * FROM t');
+    await db.run('INSERT INTO t VALUES (1)');
+    await db.all('SELECT * FROM t');
 
     expect(countBarrierStatements(db)).toBe(before);
   });
@@ -126,12 +126,12 @@ describe('barrier — two clients in one tab', () => {
     const a = db.open();
     const b = db.open();
 
-    await a.write('CREATE TABLE t (old_col)');
-    await a.write('INSERT INTO t (old_col) VALUES (42)');
-    await b.read('SELECT * FROM t'); // caches B's statement on the old schema
-    await a.write('ALTER TABLE t RENAME COLUMN old_col TO new_col');
+    await a.run('CREATE TABLE t (old_col)');
+    await a.run('INSERT INTO t (old_col) VALUES (42)');
+    await b.all('SELECT * FROM t'); // caches B's statement on the old schema
+    await a.run('ALTER TABLE t RENAME COLUMN old_col TO new_col');
 
-    const rows = await b.read<{ new_col: number }>('SELECT * FROM t');
+    const rows = await b.all<{ new_col: number }>('SELECT * FROM t');
     expect(rows[0]?.new_col).toBe(42);
   });
 
@@ -150,12 +150,12 @@ describe('barrier — two clients in one tab', () => {
     const a = db.open();
     const b = db.open({}, `./${db.name}`);
 
-    await a.write('CREATE TABLE t (old_col)');
-    await a.write('INSERT INTO t (old_col) VALUES (42)');
-    await b.read('SELECT * FROM t'); // caches B's statement on the old schema
-    await a.write('ALTER TABLE t RENAME COLUMN old_col TO new_col');
+    await a.run('CREATE TABLE t (old_col)');
+    await a.run('INSERT INTO t (old_col) VALUES (42)');
+    await b.all('SELECT * FROM t'); // caches B's statement on the old schema
+    await a.run('ALTER TABLE t RENAME COLUMN old_col TO new_col');
 
-    const rows = await b.read<{ new_col: number }>('SELECT * FROM t');
+    const rows = await b.all<{ new_col: number }>('SELECT * FROM t');
     expect(rows[0]?.new_col).toBe(42);
   });
 });
@@ -175,11 +175,11 @@ describe('catch-up pragma', () => {
       debug: true,
     });
 
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     // Two at once, so one lands on worker 0, which the write left behind.
     const modes = await Promise.all([
-      db.read<Record<string, string>>('PRAGMA wal_read_latest'),
-      db.read<Record<string, string>>('PRAGMA wal_read_latest'),
+      db.all<Record<string, string>>('PRAGMA wal_read_latest'),
+      db.all<Record<string, string>>('PRAGMA wal_read_latest'),
     ]);
 
     expect(countBarrierStatements(db)).toBeGreaterThan(0);
@@ -231,12 +231,12 @@ describe('barrier — an abort while it waits', () => {
     };
     try {
       const controller = new AbortController();
-      const first = db.read('SELECT 1', [], { signal: controller.signal });
+      const first = db.all('SELECT 1', [], { signal: controller.signal });
       // Every first read on a worker runs the barrier (`seen` starts at -1).
       await parked.promise;
       controller.abort();
       await expect(first).rejects.toBeDefined();
-      const second = db.read<{ v: number }>('SELECT 2 AS v');
+      const second = db.all<{ v: number }>('SELECT 2 AS v');
       gate.resolve();
       expect(await second).toEqual([{ v: 2 }]);
     } finally {

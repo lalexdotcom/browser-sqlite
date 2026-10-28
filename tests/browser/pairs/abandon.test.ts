@@ -17,8 +17,8 @@ const SEED =
   'SELECT x FROM c';
 
 const seed = async (db: Awaited<ReturnType<typeof createTestClient>>) => {
-  await db.write('CREATE TABLE t (n INTEGER)');
-  await db.write(SEED);
+  await db.run('CREATE TABLE t (n INTEGER)');
+  await db.run(SEED);
 };
 
 /**
@@ -32,7 +32,7 @@ const servesWithin = (
   db: Awaited<ReturnType<typeof createTestClient>>,
   ms: number,
 ) => {
-  const read = db.read('SELECT 1 AS ok').then(() => true);
+  const read = db.all('SELECT 1 AS ok').then(() => true);
   read.catch(() => {});
   return Promise.race([read, sleep(ms).then(() => false)]);
 };
@@ -168,7 +168,7 @@ describe('a reclaim that arrives late', () => {
           await sleep(50);
           // The guard is not tripped, and this is the point: the transaction
           // ends normally, which is what leaves the stale transport behind.
-          const ok = await tx.read<{ ok: number }>('SELECT 1 AS ok');
+          const ok = await tx.all<{ ok: number }>('SELECT 1 AS ok');
           expect(ok[0]?.ok).toBe(1);
         });
 

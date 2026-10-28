@@ -5,7 +5,7 @@ import { createTestClient } from '../helpers';
 describe('bulkWrite inside a transaction', () => {
   it('writes nothing when the transaction rolls back', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE t (a INTEGER)');
+    await db.run('CREATE TABLE t (a INTEGER)');
 
     await expect(
       db.transaction(async (tx) => {
@@ -13,7 +13,7 @@ describe('bulkWrite inside a transaction', () => {
         bulk.enqueue({ a: 1 });
         bulk.enqueue({ a: 2 });
         await bulk.close();
-        const inside = await tx.read<{ n: number }>(
+        const inside = await tx.all<{ n: number }>(
           'SELECT count(*) AS n FROM t',
         );
         expect(inside[0].n).toBe(2);
@@ -21,13 +21,13 @@ describe('bulkWrite inside a transaction', () => {
       }),
     ).rejects.toThrow('caller gave up');
 
-    const rows = await db.read<{ n: number }>('SELECT count(*) AS n FROM t');
+    const rows = await db.all<{ n: number }>('SELECT count(*) AS n FROM t');
     expect(rows[0].n).toBe(0);
   });
 
   it('writes every row when the transaction commits', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE t (a INTEGER)');
+    await db.run('CREATE TABLE t (a INTEGER)');
 
     await db.transaction(async (tx) => {
       const bulk = tx.bulkWrite('t', ['a']);
@@ -36,7 +36,7 @@ describe('bulkWrite inside a transaction', () => {
       await bulk.close();
     });
 
-    const rows = await db.read<{ n: number }>('SELECT count(*) AS n FROM t');
+    const rows = await db.all<{ n: number }>('SELECT count(*) AS n FROM t');
     expect(rows[0].n).toBe(2);
   });
 });
@@ -44,8 +44,8 @@ describe('bulkWrite inside a transaction', () => {
 describe('output inside a transaction', () => {
   it('leaves the previous target and no staging table when it rolls back', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE target (a INTEGER)');
-    await db.write('INSERT INTO target VALUES (42)');
+    await db.run('CREATE TABLE target (a INTEGER)');
+    await db.run('INSERT INTO target VALUES (42)');
 
     await expect(
       db.transaction(async (tx) => {
@@ -56,10 +56,10 @@ describe('output inside a transaction', () => {
       }),
     ).rejects.toThrow('caller gave up');
 
-    const rows = await db.read<{ a: number }>('SELECT a FROM target');
+    const rows = await db.all<{ a: number }>('SELECT a FROM target');
     expect(rows).toEqual([{ a: 42 }]);
 
-    const staging = await db.read<{ name: string }>(
+    const staging = await db.all<{ name: string }>(
       `SELECT name FROM sqlite_master WHERE name LIKE '__bsq_staging_%'`,
     );
     expect(staging).toEqual([]);
@@ -67,8 +67,8 @@ describe('output inside a transaction', () => {
 
   it('replaces the target when it commits', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE target (a INTEGER)');
-    await db.write('INSERT INTO target VALUES (42)');
+    await db.run('CREATE TABLE target (a INTEGER)');
+    await db.run('INSERT INTO target VALUES (42)');
 
     await db.transaction(async (tx) => {
       const out = tx.output('target', { a: 'INTEGER' });
@@ -76,7 +76,7 @@ describe('output inside a transaction', () => {
       await out.close();
     });
 
-    const rows = await db.read<{ a: number }>('SELECT a FROM target');
+    const rows = await db.all<{ a: number }>('SELECT a FROM target');
     expect(rows).toEqual([{ a: 7 }]);
   });
 });
@@ -87,7 +87,7 @@ describe('a read-only transaction', () => {
   // be handed a writer that fails only after it has enqueued a million rows.
   it('refuses bulkWrite at the call, not at the first flush', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE t (a INTEGER)');
+    await db.run('CREATE TABLE t (a INTEGER)');
 
     await db.transaction(
       async (tx) => {
@@ -118,7 +118,7 @@ describe('a read-only transaction', () => {
     await expect(
       db.transaction(
         async (tx) => {
-          await tx.write('CREATE TABLE nope (a INTEGER)');
+          await tx.run('CREATE TABLE nope (a INTEGER)');
         },
         { readOnly: true },
       ),
@@ -140,9 +140,9 @@ describe('the staging sweep under a transaction', () => {
     if (!db.debug) throw new Error('debug: true yields db.debug');
     const lockName = sweepLockName(db.vfs, db.debug.file);
 
-    await db.write('CREATE TABLE target (a INTEGER)');
+    await db.run('CREATE TABLE target (a INTEGER)');
     // A staging table nobody holds a lock for: the sweep would drop it.
-    await db.write('CREATE TABLE __bsq_staging_orphan (a INTEGER)');
+    await db.run('CREATE TABLE __bsq_staging_orphan (a INTEGER)');
 
     let releaseSweepLock!: () => void;
     const lockTaken = new Promise<void>((taken) => {
@@ -158,7 +158,7 @@ describe('the staging sweep under a transaction', () => {
     try {
       const finished = db.transaction(async (tx) => {
         // Mandatory: takes SQLite's write lock, which BEGIN alone does not.
-        await tx.write('INSERT INTO target VALUES (1)');
+        await tx.run('INSERT INTO target VALUES (1)');
         const out = tx.output('target', { a: 'INTEGER' });
         out.enqueue({ a: 2 });
         await out.close();
@@ -181,12 +181,55 @@ describe('the staging sweep under a transaction', () => {
 
       // The control. If this orphan is gone the sweep ran, which means the lock
       // name did not match and the test proved nothing about skipping.
-      const staging = await db.read<{ name: string }>(
+      const staging = await db.all<{ name: string }>(
         `SELECT name FROM sqlite_master WHERE name = '__bsq_staging_orphan'`,
       );
       expect(staging).toHaveLength(1);
     } finally {
       releaseSweepLock();
     }
+  });
+});
+
+describe('tx.run() and tx.all() (spec 2026-10-26, § Transactions)', () => {
+  // Falsifiable: have tx.run() drop the rows runWorker returned.
+  it("returns an INSERT's RETURNING rows and its count, kept by the commit", async () => {
+    const db = await createTestClient();
+    await db.run('CREATE TABLE t (a INTEGER)');
+
+    let result: unknown;
+    await db.transaction(async (tx) => {
+      result = await tx.run('INSERT INTO t VALUES (7) RETURNING a');
+    });
+
+    expect(result).toEqual({ rows: [{ a: 7 }], affected: 1 });
+    expect(await db.all('SELECT a FROM t')).toEqual([{ a: 7 }]);
+  });
+
+  // Falsifiable: have tx.all() return run()'s whole result.
+  it('returns the rows of a SELECT', async () => {
+    const db = await createTestClient();
+    await db.run('CREATE TABLE t (a INTEGER)');
+    await db.run('INSERT INTO t VALUES (1), (2)');
+
+    let rows: unknown;
+    await db.transaction(async (tx) => {
+      rows = await tx.all('SELECT a FROM t ORDER BY a');
+    });
+
+    expect(rows).toEqual([{ a: 1 }, { a: 2 }]);
+  });
+
+  // Falsifiable: drop the readOnly term from via() in src/transaction.ts.
+  it('refuses a write in a read-only transaction with READ_ONLY_TRANSACTION', async () => {
+    const db = await createTestClient();
+    await db.run('CREATE TABLE t (a INTEGER)');
+
+    await expect(
+      db.transaction((tx) => tx.run('INSERT INTO t VALUES (1)'), {
+        readOnly: true,
+      }),
+    ).rejects.toMatchObject({ code: 'READ_ONLY_TRANSACTION' });
+    expect(await db.all('SELECT a FROM t')).toEqual([]);
   });
 });

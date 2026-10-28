@@ -1,6 +1,7 @@
 import type {
   Interruptible,
   SQLiteChunkOptions,
+  SQLiteDB,
   SQLiteQueryAPI,
   SQLiteSavepoint,
   SQLiteTransactionDB,
@@ -8,36 +9,44 @@ import type {
 } from './api';
 import { prepareParams, type QueryParams } from './binary';
 import type { ReadFn, TransactionFn, WriteFn } from './bulk';
-import { flatten } from './flatten';
+import type { StatementKind } from './classify';
+import { carryAffected, flatten } from './flatten';
 import type { Logger } from './logger';
 import type { PoolWorker, PoolWorkerQueryOptions } from './pool';
 import {
+  type AffectedSlot,
+  affectedSlot,
   chunk as chunkWorker,
   firstWorker,
   type InternalChunkOptions,
   makeAbortRace,
   raceAbort,
   readWorker,
-  writeWorker,
+  runWorker,
+  settleOnClose,
 } from './queries';
 import { createSavepointStack, type SavepointEntry } from './savepoints';
-import type { Scheduler } from './scheduler';
+import type { Lease } from './scheduler';
 import { queryArgs, type SQLQuery } from './sql';
 import { SQLiteError } from './types/errors';
-import {
-  assertReadable,
-  isWriteQuery,
-  mergeSignals,
-  quoteIdent,
-  withDeadline,
-} from './utils';
+import { mergeSignals, quoteIdent, withDeadline } from './utils';
 
 /**
- * The transaction object as the library's own code sees it: `write` also takes
- * the encoded params that `bulkWrite` builds, which no consumer can construct.
- * Assignable to `SQLiteTransactionDB`.
+ * What only the library's own code is handed beside the transaction object:
+ * `writeDirect` writes without asking for a verdict, and takes the encoded
+ * params that `bulkWrite` builds, which no consumer can construct. Never a
+ * member of the object a callback of the public API receives.
  */
-type InternalTransactionDB = SQLiteTransactionDB & { write: WriteFn };
+export type TransactionInternals = { writeDirect: WriteFn };
+
+/**
+ * The public `transaction()` over `createTransaction`'s runner: the callback
+ * receives the transaction object alone, with no write path of the library's.
+ */
+export const exposeTransaction =
+  (run: ReturnType<typeof createTransaction>): SQLiteDB['transaction'] =>
+  (callback, options) =>
+    run((db) => callback(db), options);
 
 // Drains a statement that returns no rows (BEGIN, COMMIT, ROLLBACK, a
 // savepoint operation) without the chunkSize-1 + break overhead of
@@ -99,7 +108,29 @@ type OpenStatement = {
  */
 export const createTransaction =
   (deps: {
-    scheduler: Scheduler<PoolWorker>;
+    scheduler: {
+      acquire: (
+        kind: 'read' | 'write',
+        signal?: AbortSignal,
+      ) => Promise<Lease<PoolWorker>>;
+    };
+    /**
+     * Lends the transaction's worker to a waiting verdict. Called only while
+     * that worker is idle and inside the transaction: between two statements.
+     */
+    offer: (worker: PoolWorker) => void;
+    /**
+     * Whether `sql` reads or writes, as SQLite says: the client's memo, or a
+     * verdict from `worker` itself, which the caller holds idle. `signal` ends
+     * the wait. Rejects `MULTIPLE_STATEMENTS` for a string of several. Not
+     * through `via`, deliberately: a verdict changes nothing on the connection
+     * and carries no savepoint conclusion.
+     */
+    kindOf: (
+      worker: PoolWorker,
+      sql: string,
+      signal?: AbortSignal,
+    ) => Promise<StatementKind>;
     afterWrite: (worker: PoolWorker) => Promise<unknown>;
     /**
      * Called when a connection may still hold an open transaction. The worker
@@ -121,7 +152,7 @@ export const createTransaction =
     closeSignal: AbortSignal;
     /**
      * The client's bulk factory. Called per transaction with the transaction's
-     * own read/write and a pass-through `transaction`, so output()'s swap runs
+     * own read/writeDirect and a pass-through `transaction`, so output()'s swap runs
      * on the caller's transaction instead of opening a BEGIN SQLite does not
      * allow.
      */
@@ -129,7 +160,7 @@ export const createTransaction =
     checkStatement: (sql: string) => void;
     bulkFor: (target: {
       read: ReadFn;
-      write: WriteFn;
+      writeDirect: WriteFn;
       transaction: TransactionFn;
       /** See `src/bulk.ts`: the batch's place in this transaction's queue. */
       reserve?: () => { started: Promise<void>; done: () => void };
@@ -145,7 +176,10 @@ export const createTransaction =
     logger: Pick<Logger, 'always'>;
   }) =>
   async <T = void>(
-    callback: (db: InternalTransactionDB) => Promise<T>,
+    callback: (
+      db: SQLiteTransactionDB,
+      internals: TransactionInternals,
+    ) => Promise<T>,
     options?: SQLiteTransactionOptions,
   ): Promise<T> => {
     const { readOnly = false, autoCommit = true } = options ?? {};
@@ -216,15 +250,9 @@ export const createTransaction =
       );
       const worker = lease.worker;
 
-      /** `method` names a read method: it refuses a write, as the client's do. */
-      const checksql = (sql: string, method?: string): string => {
+      /** A read-only transaction's writes are refused by the worker, which `via` tells. */
+      const checksql = (sql: string): string => {
         deps.checkStatement(sql);
-        if (method) assertReadable(sql, method);
-        if (readOnly && isWriteQuery(sql))
-          throw new SQLiteError(
-            'READ_ONLY_TRANSACTION',
-            'Cannot write in a read-only transaction.',
-          );
         return sql;
       };
 
@@ -276,8 +304,20 @@ export const createTransaction =
        * own signal aborts in that window never reaches the worker: it broke
        * spec R7 (`tests/unit/transaction.test.ts`, "does not die when a read is
        * abandoned by its own signal"), where the read must run on and be judged.
+       * The one statement that cannot is one that asks SQLite first
+       * (`opensSavepoint`): an abort during the ask rejects it alone, unposted.
        */
       let tail: Promise<void> | undefined;
+
+      /**
+       * Lends the worker to a waiting verdict once nothing of this transaction
+       * is on it: the queue empty, no generator open, no abandoned write still
+       * running. BEGIN has run, and no COMMIT or ROLLBACK yet.
+       */
+      const offerIfIdle = () => {
+        if (tail || open.size > 0 || abandoned || ending || !begun) return;
+        deps.offer(worker);
+      };
 
       /** The library's copy of this transaction's savepoint stack (spec 2026-10-04, § 5). */
       const savepoints = createSavepointStack();
@@ -289,15 +329,25 @@ export const createTransaction =
        * (spec 2026-10-04, D9). A failure leaves the stack copy unprovable, so
        * it kills the transaction, whose teardown rolls everything back (E12).
        */
-      const runControl = async (sql: string): Promise<void> => {
+      const runControl = async (...statements: string[]): Promise<void> => {
         const prior = tail;
         const mine = Promise.withResolvers<void>();
         tail = mine.promise;
+        // Set once `prior` has ended: from then on the worker is this call's.
+        let reached = false;
         try {
           if (prior) await queueWait(prior, signal);
           if (abandoned) await entryWait(signal);
+          reached = true;
           try {
-            await exec(via(false), sql, { uncached: true });
+            // One statement per call; several share this place in the queue.
+            // A death between them rolled the whole transaction back, which
+            // discards the savepoints: the next one would hit a connection
+            // that has left its transaction.
+            for (const [i, sql] of statements.entries()) {
+              if (i > 0 && ending) throw closedError(ending);
+              await exec(via(false), sql, { uncached: true });
+            }
           } catch (e) {
             die(e);
             throw e;
@@ -305,6 +355,7 @@ export const createTransaction =
         } finally {
           if (tail === mine.promise) tail = undefined;
           mine.resolve(prior);
+          if (reached || !prior) offerIfIdle();
         }
       };
 
@@ -349,6 +400,10 @@ export const createTransaction =
           options?: PoolWorkerQueryOptions,
         ) =>
           worker.query(sql, params, {
+            // The library's own control statements are not the caller's.
+            ...(readOnly && !options?.control
+              ? { refuseWrite: 'READ_ONLY_TRANSACTION' as const }
+              : {}),
             ...options,
             savepoint: () => {
               if (mark) mark.posted = true;
@@ -448,7 +503,10 @@ export const createTransaction =
             // the caller already has its rejection.
           })
           .finally(() => {
-            if (abandoned === judged) abandoned = undefined;
+            if (abandoned !== judged) return;
+            abandoned = undefined;
+            // The worker may be idle now: a waiting verdict can have it.
+            offerIfIdle();
           });
         abandoned = judged;
       };
@@ -467,17 +525,49 @@ export const createTransaction =
       };
 
       /**
+       * What SQLite says of `sql`, asked of this transaction's worker. A
+       * failed verdict is no answer: the statement then runs savepointed and
+       * reports its own error, as it would without a signal. `waiting` cut
+       * short is the statement's own rejection.
+       */
+      const kindAt = async (
+        sql: string,
+        waiting: AbortSignal | undefined,
+      ): Promise<StatementKind> => {
+        try {
+          return await deps.kindOf(worker, sql, waiting);
+        } catch (e) {
+          waiting?.throwIfAborted();
+          if (e instanceof SQLiteError && e.code === 'MULTIPLE_STATEMENTS')
+            throw e;
+          return 'write';
+        }
+      };
+
+      /**
        * Whether a statement runs inside the library's savepoint (spec
        * 2026-09-11, R1): a write the caller may abandon alone — it carries its
        * own signal or timeout, not already aborted at the call. Only those pay
-       * (D4). A consumer's transaction control is refused by the worker's
-       * authorizer (spec 2026-10-04, § 4).
+       * (D4), and only those ask SQLite, at the statement's turn on the idle
+       * connection (spec 2026-10-26, § Transactions). `known` is a kind the
+       * library has without asking. A read-only transaction opens none: its
+       * worker refuses a write before any step. A consumer's transaction
+       * control is refused by the worker's authorizer (spec 2026-10-04, § 4).
+       *
+       * Synchronous when nothing is asked, so that such a statement still
+       * posts in the tick it was issued (see `tail`).
        */
       const opensSavepoint = (
         sql: string,
         own: AbortSignal | undefined,
         abortedAtCall: boolean,
-      ) => own !== undefined && !abortedAtCall && isWriteQuery(sql);
+        waiting: AbortSignal | undefined,
+        known?: StatementKind,
+      ): boolean | Promise<boolean> => {
+        if (own === undefined || abortedAtCall || readOnly) return false;
+        if (known !== undefined) return known === 'write';
+        return kindAt(sql, waiting).then((kind) => kind === 'write');
+      };
 
       /**
        * Kills the transaction when the connection reports it is no longer in
@@ -513,7 +603,7 @@ export const createTransaction =
        * idle again.** Inside a transaction the statements share one worker with
        * no scheduler lease between them, so a statement that leaves its
        * transport without reaching `done` — `first()` on any query with a row
-       * left to produce, a `read()`/`write()` cut short by an abort — leaves
+       * left to produce, a `run()`/`all()` cut short by an abort — leaves
        * `pool.ts`'s `deferredChunk` set: `queries.ts` posts the stop and fires
        * `iterator.return()` WITHOUT awaiting it, deliberately, because the
        * client path has a lease to do the waiting and no reason to block. Here
@@ -541,6 +631,10 @@ export const createTransaction =
        * `abandoned`, which the next entry point awaits. The wait is owed only
        * by a statement that was posted (`mark.posted`) — a statement the reuse
        * guard refused never was.
+       *
+       * `savepointed` is false until `decide()` has run, at the statement's
+       * turn: `settled` calls it after the queue, `releasing` at the first
+       * `next()`, and everything that reads it reads it after.
        */
       const withSignal = <
         O extends {
@@ -558,6 +652,8 @@ export const createTransaction =
          * they are themselves holding.
          */
         queued = true,
+        /** A kind the library has without asking SQLite (`opensSavepoint`). */
+        known?: StatementKind,
       ): {
         options: O;
         driving: O;
@@ -568,6 +664,7 @@ export const createTransaction =
         own: AbortSignal | undefined;
         abortedAtCall: boolean;
         savepointed: boolean;
+        decide: () => boolean | Promise<boolean>;
         mark: { posted: boolean };
       } => {
         const own = withDeadline(given, method);
@@ -580,13 +677,28 @@ export const createTransaction =
           merged.release();
           own.release();
         };
-        const savepointed = opensSavepoint(sql, own.signal, abortedAtCall);
         const mark = { posted: false };
         const options = { ...given, signal: merged.signal } as O;
         // A savepointed write's QUERY runs with the transaction's signal alone,
         // so that only a death cuts it: SQLite closes every savepoint when it
         // interrupts a write (spec 2026-09-11, §1).
-        const driving = savepointed ? ({ ...given, signal } as O) : options;
+        const driving = { ...given, signal } as O;
+        const decided = (opens: boolean) => {
+          st.savepointed = opens;
+          return opens;
+        };
+        const decide = () => {
+          const opens = opensSavepoint(
+            sql,
+            own.signal,
+            abortedAtCall,
+            options.signal,
+            known,
+          );
+          return typeof opens === 'boolean'
+            ? decided(opens)
+            : opens.then(decided);
+        };
         const settled = async <R>(
           start: (target: PoolWorker, options: O) => Promise<R>,
         ): Promise<R> => {
@@ -603,7 +715,13 @@ export const createTransaction =
           try {
             if (prior) await queueWait(prior, options.signal);
             if (abandoned) await entryWait(options.signal);
-            if (!savepointed) return await start(via(false, mark), options);
+            // At its turn: nothing of this transaction is on the worker, so a
+            // verdict asked of it waits behind no statement. Awaited only when
+            // asked, so the common path still posts synchronously.
+            const deciding = decide();
+            const opens =
+              typeof deciding === 'boolean' ? deciding : await deciding;
+            if (!opens) return await start(via(false, mark), options);
             // Its own signal may have fired during the wait: then it never
             // reached the worker, and rejects alone.
             own.signal?.throwIfAborted();
@@ -653,19 +771,23 @@ export const createTransaction =
               // waits its turn"). A place left early is passed on, not cancelled.
               if (tail === mine.promise) tail = undefined;
               mine.resolve(prior);
+              // A statement that left early may leave `prior` still running.
+              if (mark.posted || !prior) offerIfIdle();
             }
           }
         };
-        return {
+        const st = {
           options,
           driving,
           release,
           settled,
           own: own.signal,
           abortedAtCall,
-          savepointed,
+          savepointed: false,
+          decide,
           mark,
         };
+        return st;
       };
 
       /**
@@ -687,11 +809,12 @@ export const createTransaction =
           release: () => void;
           own: AbortSignal | undefined;
           abortedAtCall: boolean;
-          savepointed: boolean;
+          decide: () => boolean | Promise<boolean>;
           mark: { posted: boolean };
           options: { signal?: AbortSignal | undefined };
         },
         method: string,
+        affected: AffectedSlot,
       ): AsyncGenerator<R> => {
         // The entry is the box the generator's own `finally` needs: it must
         // remove itself from `open` and cannot name a generator that does not
@@ -702,7 +825,9 @@ export const createTransaction =
           if (ending) {
             open.delete(entry);
             st.release();
-            throw closedError(ending);
+            const closed = closedError(ending);
+            affected.reject(closed);
+            throw closed;
           }
           // The queue, joined at the FIRST next() rather than at creation:
           // this body does not run until the consumer pulls, and a generator
@@ -721,6 +846,11 @@ export const createTransaction =
           try {
             if (prior) await queueWait(prior, st.options.signal);
             if (abandoned) await entryWait(st.options.signal);
+            // At its turn, as in `settled`, and before `source` is first
+            // pulled: that pull builds the query from the decision.
+            const deciding = st.decide();
+            const savepointed =
+              typeof deciding === 'boolean' ? deciding : await deciding;
 
             // **The queue waits on the WORKER, not on this object.** A consumer
             // that stops pulling a query which has already reached `done`
@@ -749,7 +879,7 @@ export const createTransaction =
               void worker.free().then(releaseQueue, releaseQueue);
             };
 
-            if (!st.savepointed) {
+            if (!savepointed) {
               try {
                 for await (const value of source) {
                   watchIdle();
@@ -774,11 +904,16 @@ export const createTransaction =
                 yield next.value;
               }
             } catch (e) {
+              // Before `affected`, the write is undone; after it, it is
+              // complete and stays: only its delivery stops (spec 2026-10-26,
+              // § Streaming a write).
               if (
                 st.mark.posted &&
                 st.own?.aborted === true &&
-                e === st.own.reason
+                e === st.own.reason &&
+                !affected.settled
               ) {
+                affected.reject(e);
                 left = true;
                 abandon(drainToEnd(source), method);
               }
@@ -792,8 +927,11 @@ export const createTransaction =
           } catch (e) {
             failed = true;
             error = e;
+            affected.reject(e);
             throw e;
           } finally {
+            // Ended without a count: nothing ran, or the transaction cut it.
+            affected.resolve(0);
             open.delete(entry);
             st.release();
             // The generator half of `settled`'s invariant, and the reason it
@@ -813,6 +951,7 @@ export const createTransaction =
             } finally {
               if (tail === mine.promise) tail = undefined;
               mine.resolve(prior);
+              if (st.mark.posted || !prior) offerIfIdle();
             }
           }
         })();
@@ -822,10 +961,11 @@ export const createTransaction =
       };
 
       /**
-       * The chunk source of `chunk()` and `stream()`. The worker and the options
-       * are settled when this is called, at the statement's call; the function
-       * it returns starts the query, so each method decides when: `chunk()` at
-       * the call, `stream()` at its first next().
+       * The chunk source of `chunk()` and `stream()`. The function it returns
+       * starts the query, and reads `savepointed` then, to choose the worker
+       * facade and the options: each method calls it once that is decided —
+       * `stream()` at its first next(), `chunk()` at the call when there is
+       * nothing to decide and at its first next() otherwise.
        */
       const chunkSource = <T extends Record<string, unknown>>(
         st: {
@@ -838,16 +978,23 @@ export const createTransaction =
         query: string,
         bound: ReturnType<typeof prepareParams>,
         entry: OpenStatement,
+        affected: AffectedSlot,
       ): (() => AsyncGenerator<T[]>) => {
-        const target = via(st.savepointed, st.mark);
-        const options: InternalChunkOptions = {
-          ...(st.savepointed ? st.driving : st.options),
-          onAbandon: st.release,
-          onTransport: (iterator) => {
-            entry.transport = iterator;
-          },
+        return () => {
+          const target = via(st.savepointed, st.mark);
+          const options: InternalChunkOptions = {
+            ...(st.savepointed ? st.driving : st.options),
+            // A write completes before its first chunk; its count settles
+            // `affected`, unless an abandon has already judged it.
+            drainWrites: true,
+            onAffected: affected.resolve,
+            onAbandon: st.release,
+            onTransport: (iterator) => {
+              entry.transport = iterator;
+            },
+          };
+          return chunkWorker<T>(target, query, bound, options);
         };
-        return () => chunkWorker<T>(target, query, bound, options);
       };
 
       /**
@@ -928,21 +1075,35 @@ export const createTransaction =
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
               const bound = prepareParams(params);
-              const { settled } = withSignal(given, 'read', query);
+              // The library's own read: a read without asking.
+              const { settled } = withSignal(
+                given,
+                'read',
+                query,
+                true,
+                'read',
+              );
               return settled((target, options) =>
                 readWorker(target, query, bound, options),
               );
             },
-            write: (sql, params, given) => {
+            writeDirect: (sql, params, given) => {
               if (ending) return Promise.reject(closedError(ending));
               const query = checksql(sql);
               const bound = prepareParams(params);
               // Not queued: `flush()` took the slot synchronously, the moment
               // the batch was committed to. Asking for a second one here would
-              // wait for the first.
-              const { settled } = withSignal(given, 'write', query, false);
+              // wait for the first. A batch is the library's own INSERT: a
+              // write, without asking.
+              const { settled } = withSignal(
+                given,
+                'write',
+                query,
+                false,
+                'write',
+              );
               return settled((target, options) =>
-                writeWorker(target, query, bound, options),
+                runWorker(target, query, bound, options),
               );
             },
             /**
@@ -963,37 +1124,36 @@ export const createTransaction =
                 done: () => {
                   if (tail === mine.promise) tail = undefined;
                   mine.resolve(prior);
+                  offerIfIdle();
                 },
               };
             },
             // The caller's transaction is already open. No BEGIN, no COMMIT.
-            // db is referenced before its const declaration, deliberately: this arrow
-            // only runs when output().close() fires, by which point db is assigned.
-            // Moving `bulk` below `const db` breaks the literal that consumes it.
-            transaction: (fn) => fn(db),
+            // writeDirect is referenced before its const declaration, deliberately:
+            // this arrow only runs when output().close() fires, by which point it
+            // is assigned. Moving `bulk` below `const db` breaks the literal that
+            // consumes it.
+            transaction: (fn) => fn({ writeDirect }),
           });
 
-      const db: InternalTransactionDB = {
-        read: async <T extends Record<string, unknown>>(
-          input: string | SQLQuery,
-          second?: unknown,
-          third?: SQLiteChunkOptions,
-        ) => {
-          if (ending) return Promise.reject(closedError(ending));
-          const {
-            sql,
-            params,
-            options: given,
-          } = queryArgs(input, second, third);
-          const query = checksql(sql, 'read');
-          const bound = prepareParams(params);
-          const { settled } = withSignal(given, 'read', query);
-          return settled((target, options) =>
-            readWorker<T>(target, query, bound, options),
-          );
-        },
+      /** A write, asked of no verdict: the library's own, never the callback's. */
+      const writeDirect = async <T extends Record<string, unknown>>(
+        input: string | SQLQuery,
+        second?: unknown,
+        third?: Interruptible,
+      ) => {
+        if (ending) return Promise.reject(closedError(ending));
+        const { sql, params, options: given } = queryArgs(input, second, third);
+        const query = checksql(sql);
+        const bound = prepareParams(params);
+        const { settled } = withSignal(given, 'write', query);
+        return settled((target, options) =>
+          runWorker<T>(target, query, bound, options),
+        );
+      };
 
-        write: async <T extends Record<string, unknown>>(
+      const db: SQLiteTransactionDB = {
+        run: async <T extends Record<string, unknown>>(
           input: string | SQLQuery,
           second?: unknown,
           third?: Interruptible,
@@ -1006,10 +1166,30 @@ export const createTransaction =
           } = queryArgs(input, second, third);
           const query = checksql(sql);
           const bound = prepareParams(params);
-          const { settled } = withSignal(given, 'write', query);
+          const { settled } = withSignal(given, 'run', query);
           return settled((target, options) =>
-            writeWorker<T>(target, query, bound, options),
+            runWorker<T>(target, query, bound, options),
           );
+        },
+
+        all: async <T extends Record<string, unknown>>(
+          input: string | SQLQuery,
+          second?: unknown,
+          third?: Interruptible,
+        ) => {
+          if (ending) return Promise.reject(closedError(ending));
+          const {
+            sql,
+            params,
+            options: given,
+          } = queryArgs(input, second, third);
+          const query = checksql(sql);
+          const bound = prepareParams(params);
+          const { settled } = withSignal(given, 'all', query);
+          return settled(async (target, options) => {
+            const { rows } = await runWorker<T>(target, query, bound, options);
+            return rows;
+          });
         },
 
         chunk: <T extends Record<string, unknown>>(
@@ -1022,15 +1202,30 @@ export const createTransaction =
             params,
             options: given,
           } = queryArgs(input, second, third);
-          const query = checksql(sql, 'chunk');
+          const query = checksql(sql);
           const bound = prepareParams(params);
           const st = withSignal(given, 'chunk', query);
           const entry: OpenStatement = {};
+          const affected = affectedSlot();
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const source = chunkSource<T>(st, query, bound, entry)();
-          return releasing(source, entry, st, 'chunk');
+          const start = chunkSource<T>(st, query, bound, entry, affected);
+          // Built at the call when no signal of its own can open a savepoint;
+          // otherwise at the first next(), once SQLite has been asked.
+          const source =
+            st.own === undefined || st.abortedAtCall || readOnly
+              ? start()
+              : (async function* () {
+                  yield* start();
+                })();
+          return carryAffected(
+            settleOnClose(
+              releasing(source, entry, st, 'chunk', affected),
+              affected,
+            ),
+            affected.promise,
+          );
         },
 
         stream: <T extends Record<string, unknown>>(
@@ -1043,14 +1238,15 @@ export const createTransaction =
             params,
             options: given,
           } = queryArgs(input, second, third);
-          const query = checksql(sql, 'stream');
+          const query = checksql(sql);
           const bound = prepareParams(params);
           const st = withSignal(given, 'stream', query);
           const entry: OpenStatement = {};
+          const affected = affectedSlot();
           // No lease work here: the transaction owns the lease, and
           // iterator.return() resolves `idle`, which settles the
           // quiesce().then(release) already pending in its own finally.
-          const start = chunkSource<T>(st, query, bound, entry);
+          const start = chunkSource<T>(st, query, bound, entry, affected);
           // The query is built on the first next(), not here: a stream never
           // read holds no query, and its transport lands in `entry` only then.
           const source = (async function* () {
@@ -1058,9 +1254,14 @@ export const createTransaction =
           })();
           // `releasing` checks its own signal once per chunk; the adapter checks
           // it before each buffered row and throws its reason into `releasing`.
-          const rows = flatten(
-            releasing(source, entry, st, 'stream'),
-            st.savepointed ? { signal: st.own } : undefined,
+          // Read per buffered row: a stream decided not savepointed keeps the
+          // adapter's fast path, with no signal to check.
+          const rows = settleOnClose(
+            flatten(releasing(source, entry, st, 'stream', affected), {
+              signal: () => (st.savepointed ? st.own : undefined),
+              affected: affected.promise,
+            }),
+            affected,
           );
           // The transaction closes the adapter, which drops its buffered rows
           // and closes `releasing` in turn.
@@ -1079,11 +1280,15 @@ export const createTransaction =
             params,
             options: given,
           } = queryArgs(input, second, third);
-          const query = checksql(sql, 'first');
+          const query = checksql(sql);
           const bound = prepareParams(params);
-          const { settled } = withSignal(given, 'first', query);
+          // The worker refuses a write before any step: nothing to undo.
+          const { settled } = withSignal(given, 'first', query, true, 'read');
           return settled((target, options) =>
-            firstWorker<T>(target, query, bound, options),
+            firstWorker<T>(target, query, bound, {
+              ...options,
+              refuseWrite: 'NOT_A_READ_QUERY',
+            }),
           );
         },
 
@@ -1177,9 +1382,8 @@ export const createTransaction =
                 const release = options?.release ?? true;
                 return savepoints.rollback(entry, release) === 'send'
                   ? runControl(
-                      release
-                        ? `ROLLBACK TO ${quoted}; RELEASE ${quoted}`
-                        : `ROLLBACK TO ${quoted}`,
+                      `ROLLBACK TO ${quoted}`,
+                      ...(release ? [`RELEASE ${quoted}`] : []),
                     )
                   : Promise.resolve();
               } catch (e) {
@@ -1221,7 +1425,7 @@ export const createTransaction =
         // flight, and the transaction is open now. The callback never runs.
         signal?.throwIfAborted();
 
-        const running = callback(db);
+        const running = callback(db, { writeDirect });
         // Racing the callback, not only its statements: an abort landing while
         // the callback sits in user code — an await on anything that is not a
         // statement — would otherwise be invisible until it returns, which may be
@@ -1308,7 +1512,7 @@ export const createTransaction =
         releaseDeath();
         signal?.removeEventListener('abort', onAbort);
         teardown();
-        // Same reasoning as write(): before the void, because release is
+        // Same reasoning as a write's: before the void, because release is
         // asynchronous. A read-only transaction commits nothing and must not
         // bump.
         if (!readOnly) await deps.afterWrite(worker);

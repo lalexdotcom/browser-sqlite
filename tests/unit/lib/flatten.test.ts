@@ -627,6 +627,26 @@ describe('flatten', () => {
     });
   });
 
+  // A transaction's stream learns at its first next() whether it runs
+  // savepointed. Falsifiability: read the function once, at construction —
+  // it then returns undefined for good and this resolves with 2.
+  it('reads a signal given as a function when it serves a buffered row', async () => {
+    const controller = new AbortController();
+    const reason = new Error('aborted');
+    let armed = false;
+    const { source, thrown } = scripted([[1, 2, 3]], () =>
+      Promise.reject(reason),
+    );
+    const iterator = flatten(source, {
+      signal: () => (armed ? controller.signal : undefined),
+    });
+    expect(await iterator.next()).toEqual({ value: 1, done: false });
+    armed = true;
+    controller.abort(reason);
+    await expect(iterator.next()).rejects.toBe(reason);
+    expect(thrown).toEqual([reason]);
+  });
+
   it('treats a signal of undefined as no signal', async () => {
     const { source, calls } = scripted([[1, 2, 3]]);
     const iterator = flatten(source, { signal: undefined });

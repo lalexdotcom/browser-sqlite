@@ -20,18 +20,18 @@ describe('a VFS that caps its pool', {
   // maxPoolSize to null — db.poolSize is then 2, not its cap.
   it('defaults to the VFS cap rather than throwing when poolSize is omitted', async () => {
     const db = await createTestClient();
-    await db.write('CREATE TABLE t (id INTEGER PRIMARY KEY)');
-    expect(await db.read('SELECT id FROM t')).toEqual([]);
+    await db.run('CREATE TABLE t (id INTEGER PRIMARY KEY)');
+    expect(await db.all('SELECT id FROM t')).toEqual([]);
     expect(db.poolSize).toBe(VFS_CAPABILITIES[TEST_TARGET.vfs].maxPoolSize);
   });
 
   it('accepts poolSize 1 and serves queries', async () => {
     const db = await createTestClient({ poolSize: 1 });
 
-    await db.write('CREATE TABLE capped (id INTEGER, val TEXT)');
-    await db.write("INSERT INTO capped VALUES (1, 'ok')");
+    await db.run('CREATE TABLE capped (id INTEGER, val TEXT)');
+    await db.run("INSERT INTO capped VALUES (1, 'ok')");
 
-    const rows = await db.read<{ id: number; val: string }>(
+    const rows = await db.all<{ id: number; val: string }>(
       'SELECT * FROM capped',
     );
     expect(rows).toHaveLength(1);
@@ -69,9 +69,9 @@ describe('every wired VFS', () => {
           { vfs, build: defaultBuildFor(vfs, AVAILABLE_FEATURES) },
         );
         try {
-          await db.write('CREATE TABLE wired (id INTEGER, val TEXT)');
-          await db.write("INSERT INTO wired VALUES (1, 'ok')");
-          const rows = await db.read<{ id: number; val: string }>(
+          await db.run('CREATE TABLE wired (id INTEGER, val TEXT)');
+          await db.run("INSERT INTO wired VALUES (1, 'ok')");
+          const rows = await db.all<{ id: number; val: string }>(
             'SELECT * FROM wired',
           );
           expect(rows).toHaveLength(1);

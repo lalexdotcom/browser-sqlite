@@ -14,7 +14,19 @@ import type { CreateSQLiteClientOptions } from './client';
  */
 export type Lease<W> = {
   readonly worker: W;
+  /**
+   * Set only on a lease from `offer()`: the worker belongs to someone else (a
+   * transaction), so this lease's `release()` gives nothing back.
+   */
+  borrowed?: true;
   release: () => void;
+  /**
+   * Gives up the write designation while keeping the worker leased. A streamed
+   * write finishes, and frees the next writer, before its worker has delivered
+   * the rows it buffered. Idempotent; a no-op without the designation, after
+   * `release()`, and on a borrowed lease.
+   */
+  demote: () => void;
 };
 
 /**
@@ -59,7 +71,18 @@ export type Scheduler<W> = {
    * pool had nothing to lend, which is the state a VFS rotating one exclusive
    * OPFS handle can stay in indefinitely.
    */
-  acquire: (kind: 'read' | 'write', signal?: AbortSignal) => Promise<Lease<W>>;
+  acquire: (
+    kind: 'read' | 'write' | 'verdict',
+    signal?: AbortSignal,
+    /** `free`: a verdict only a free worker may serve, never `offer()`. */
+    options?: { free?: boolean },
+  ) => Promise<Lease<W>>;
+  /**
+   * Lends `worker`, which the scheduler does not own (a transaction holds it),
+   * to the first verdict waiter that is not free-only. Returns whether one was
+   * waiting. The lease is `borrowed`: releasing it touches no availability.
+   */
+  offer: (worker: W) => boolean;
   /**
    * Takes a worker out of the pool for good. A lease already outstanding on
    * that index becomes inert: its `release()` neither hands the worker back nor
@@ -87,6 +110,8 @@ export type Scheduler<W> = {
   stats: () => {
     read: number;
     write: number;
+    /** Waiters for a verdict, which is served before writers and readers. */
+    verdict: number;
     available: number;
     leased: number;
     /**
@@ -237,14 +262,17 @@ export const createScheduler = <W extends { index: number }>(
     opts.onGateOpen?.();
   };
 
-  const readerQueue: Array<{
-    resolve: (worker: W) => void;
+  type Waiter = {
+    resolve: (worker: W, borrowed?: true) => void;
     reject: (error: Error) => void;
-  }> = [];
-  const writerQueue: Array<{
-    resolve: (worker: W) => void;
-    reject: (error: Error) => void;
-  }> = [];
+    /** A verdict that only a free worker may serve: `offer()` skips it. */
+    free?: true;
+  };
+  const readerQueue: Waiter[] = [];
+  const writerQueue: Waiter[] = [];
+  // Served before both others: a verdict is one `prepare` and holds its worker
+  // for no longer than that, so it never waits behind a long write or read.
+  const verdictQueue: Waiter[] = [];
 
   // Index of the worker designated for writes, or -1 when none is designated.
   //
@@ -293,6 +321,15 @@ export const createScheduler = <W extends { index: number }>(
   };
 
   const handOver = (worker: W) => {
+    if (verdictQueue.length) {
+      // A verdict never alters the designation — rule 1 — except that the
+      // designation may not outlive the last queued write: `designated` and
+      // `leased` coincide.
+      if (currentWriterIndex === worker.index && !writerQueue.length)
+        currentWriterIndex = -1;
+      verdictQueue.shift()?.resolve(worker);
+      return;
+    }
     if (serveWriterFirst(worker)) return;
 
     // Release the designation. Reaching this line proves no write is queued:
@@ -317,12 +354,29 @@ export const createScheduler = <W extends { index: number }>(
     opts.onIdle?.(worker);
   };
 
-  const makeLease = (worker: W): Lease<W> => {
+  const makeLease = (worker: W, borrowed?: true): Lease<W> => {
+    if (borrowed) {
+      // Not ours: a transaction holds this worker and hands it back itself.
+      // Nothing here may reach `available`, `handOver` or `leased`.
+      return { worker, borrowed, release: () => {}, demote: () => {} };
+    }
     leased.add(worker.index);
     const myGen = gen(worker.index);
     let released = false;
     return {
       worker,
+      demote: () => {
+        // After release() the designation may belong to the next writer on
+        // this very worker; a stale lease's worker is not ours to touch.
+        if (released || gen(worker.index) !== myGen) return;
+        if (currentWriterIndex !== worker.index) return;
+        currentWriterIndex = -1;
+        if (!writerQueue.length) return;
+        // The head writer is served on another free worker. None free: it
+        // waits, and the next worker to come back serves it (`handOver`).
+        const next = takeAvailable(true);
+        if (next) writerQueue.shift()?.resolve(next);
+      },
       release: () => {
         if (released) return;
         released = true;
@@ -414,6 +468,10 @@ export const createScheduler = <W extends { index: number }>(
       // Serve any requests that arrived before this worker was ready, preserving
       // the same writer-first priority as handOver. Does NOT call onIdle — the
       // worker is newly joining the pool, not returning from a lease.
+      if (verdictQueue.length) {
+        verdictQueue.shift()?.resolve(worker);
+        return;
+      }
       if (serveWriterFirst(worker)) return;
       if (readerQueue.length) {
         // Reads never alter the designation — rule 1.
@@ -421,6 +479,14 @@ export const createScheduler = <W extends { index: number }>(
         return;
       }
       available.add(worker.index);
+    },
+
+    offer: (worker) => {
+      const at = verdictQueue.findIndex((waiter) => !waiter.free);
+      if (at === -1) return false;
+      const [waiter] = verdictQueue.splice(at, 1);
+      waiter?.resolve(worker, true);
+      return true;
     },
 
     remove: (index) => {
@@ -443,6 +509,7 @@ export const createScheduler = <W extends { index: number }>(
       }
       shutdownReason ??= reason;
       shutdownDeferred ??= Promise.withResolvers<void>();
+      for (const waiter of verdictQueue.splice(0)) waiter.reject(reason);
       for (const waiter of readerQueue.splice(0)) waiter.reject(reason);
       for (const waiter of writerQueue.splice(0)) waiter.reject(reason);
       checkShutdown();
@@ -452,6 +519,7 @@ export const createScheduler = <W extends { index: number }>(
     stats: () => ({
       read: readerQueue.length,
       write: writerQueue.length,
+      verdict: verdictQueue.length,
       available: available.size,
       leased: leased.size,
       gated: gatedWaiters,
@@ -461,7 +529,7 @@ export const createScheduler = <W extends { index: number }>(
       if (!gateOpen) settledSlots.delete(index);
     },
 
-    acquire: async (kind, signal) => {
+    acquire: async (kind, signal, options) => {
       if (shutdownReason) throw shutdownReason;
       // Before the queue, not after: a caller who has already given up must not
       // take a place in line and be served a worker nobody will release.
@@ -506,15 +574,30 @@ export const createScheduler = <W extends { index: number }>(
 
       const write = kind === 'write';
 
+      // A verdict is a read as far as availability goes: it takes any free
+      // worker and never the designation.
       const immediate = takeAvailable(write);
       if (immediate) return makeLease(immediate);
 
-      const { promise, resolve, reject } = Promise.withResolvers<W>();
-      const queue = write ? writerQueue : readerQueue;
-      const waiter = { resolve, reject };
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        worker: W;
+        borrowed: true | undefined;
+      }>();
+      const queue =
+        kind === 'verdict' ? verdictQueue : write ? writerQueue : readerQueue;
+      const waiter: Waiter = {
+        resolve: (worker, borrowed) => resolve({ worker, borrowed }),
+        reject,
+        ...(kind === 'verdict' && options?.free ? { free: true as const } : {}),
+      };
       queue.push(waiter);
 
-      if (!signal) return makeLease(await promise);
+      const lease = async () => {
+        const granted = await promise;
+        return makeLease(granted.worker, granted.borrowed);
+      };
+
+      if (!signal) return lease();
 
       const onAbort = () => {
         const at = queue.indexOf(waiter);
@@ -540,7 +623,7 @@ export const createScheduler = <W extends { index: number }>(
       };
       signal.addEventListener('abort', onAbort, { once: true });
       try {
-        return makeLease(await promise);
+        return await lease();
       } finally {
         signal.removeEventListener('abort', onAbort);
       }

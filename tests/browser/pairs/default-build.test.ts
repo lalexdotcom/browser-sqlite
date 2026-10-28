@@ -30,7 +30,7 @@ describe('the default build without JSPI', () => {
       const db = createSQLiteClient(file, { vfs });
       try {
         expect(db.build).toBe(expected);
-        expect(await db.read<{ one: number }>('SELECT 1 AS one')).toEqual([
+        expect(await db.all<{ one: number }>('SELECT 1 AS one')).toEqual([
           { one: 1 },
         ]);
       } finally {
@@ -53,7 +53,7 @@ describe('the default build without JSPI', () => {
     const db = createSQLiteClient(file, { vfs, build });
     try {
       expect(db.build).toBe(build);
-      await db.read('SELECT 1');
+      await db.all('SELECT 1');
     } finally {
       await db.close();
     }

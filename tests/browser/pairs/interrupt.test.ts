@@ -24,7 +24,7 @@ describe('aborting a running statement', () => {
       // takes run(cached) — no macrotask boundary before the step, so the step
       // always starts before 'stop' arrives. N is a parameter, so a tiny prime
       // caches the same statement the long run reuses.
-      await db.read(LONG_QUERY, [1_000]);
+      await db.all(LONG_QUERY, [1_000]);
 
       // N=40_000_000: the full step takes ~8 s on Chromium async (4x the
       // ~2 082 ms measured for 10 M on 2026-09-05 under the
@@ -32,7 +32,7 @@ describe('aborting a running statement', () => {
       // it 4-5x slower still. The abort interrupts mid-step regardless of N
       // when the feature works, so only the broken case pays for it.
       const controller = new AbortController();
-      const long = db.read(LONG_QUERY, [40_000_000], {
+      const long = db.all(LONG_QUERY, [40_000_000], {
         signal: controller.signal,
       });
       long.catch(() => {});
@@ -48,7 +48,7 @@ describe('aborting a running statement', () => {
       const started = performance.now();
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
-      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       // In isolation the short read takes ~10-20 ms on both engines; ~900 ms
       // was observed on Firefox under full-suite contention, and the bound
       // sits between that and the broken path's seconds. Anything over ~100 ms
@@ -81,7 +81,7 @@ describe('aborting a running statement', () => {
       // 200 ms assertion unchanged. Use "frees the worker" to pin that feature.
       {
         const primeCtrl = new AbortController();
-        const prime = db.read(longQuery(20_000_000), [], {
+        const prime = db.all(longQuery(20_000_000), [], {
           signal: primeCtrl.signal,
         });
         prime.catch(() => {});
@@ -94,7 +94,7 @@ describe('aborting a running statement', () => {
       }
 
       const controller = new AbortController();
-      const long = db.read(longQuery(20_000_000), [], {
+      const long = db.all(longQuery(20_000_000), [], {
         signal: controller.signal,
       });
       long.catch(() => {});
@@ -121,7 +121,7 @@ describe('aborting a running statement', () => {
       debug: true,
     });
     try {
-      await db.write('CREATE TABLE t (a INTEGER)');
+      await db.run('CREATE TABLE t (a INTEGER)');
       // Fast-abort prime so the real abort run takes run(cached) and the step
       // starts. Without this the step is skipped pre-execution and the test
       // does not exercise mid-step cleanup.
@@ -131,7 +131,7 @@ describe('aborting a running statement', () => {
       // so a broken progress handler does not cause a failure here.
       {
         const primeCtrl = new AbortController();
-        const prime = db.read(longQuery(20_000_000), [], {
+        const prime = db.all(longQuery(20_000_000), [], {
           signal: primeCtrl.signal,
         });
         prime.catch(() => {});
@@ -144,7 +144,7 @@ describe('aborting a running statement', () => {
       }
 
       const controller = new AbortController();
-      const long = db.read(longQuery(20_000_000), [], {
+      const long = db.all(longQuery(20_000_000), [], {
         signal: controller.signal,
       });
       long.catch(() => {});
@@ -156,11 +156,11 @@ describe('aborting a running statement', () => {
       await expect(long).rejects.toThrow('cancelled');
       // The same SQL runs again: the statement the abort left behind is
       // reusable, not poisoned, and it holds no read transaction open.
-      expect(await db.read(longQuery(1_000))).toEqual([{ n: 1_000 }]);
+      expect(await db.all(longQuery(1_000))).toEqual([{ n: 1_000 }]);
       await db.transaction(async (tx) => {
-        await tx.write('INSERT INTO t VALUES (1)');
+        await tx.run('INSERT INTO t VALUES (1)');
       });
-      expect(await db.read('SELECT a FROM t')).toEqual([{ a: 1 }]);
+      expect(await db.all('SELECT a FROM t')).toEqual([{ a: 1 }]);
     } finally {
       await db.close();
     }
@@ -184,7 +184,7 @@ describe('aborting a running statement', () => {
     });
     try {
       const controller = new AbortController();
-      const long = db.read(longQuery(20_000_000), [], {
+      const long = db.all(longQuery(20_000_000), [], {
         signal: controller.signal,
       });
       long.catch(() => {});

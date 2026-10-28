@@ -1,10 +1,29 @@
 /**
  * Rows out of a generator of chunks, as `for await (c of source) yield* c`
  * gives them, minus a generator per row; `throw()` goes to the source and
- * `signal` is checked before each buffered row.
+ * `signal` is checked before each buffered row. A function for `signal` is
+ * read each time a buffered row is served, so it may arrive late.
  */
 
+// Nothing but types imported: tests/unit/lib/flatten-unhandled.test.ts loads
+// this file alone in Node.
+import type { SQLiteStream } from './api';
+
+/** `gen`, carrying `affected` as a read-only property. */
+export const carryAffected = <G extends object>(
+  gen: G,
+  affected: Promise<number>,
+): G & { readonly affected: Promise<number> } =>
+  Object.defineProperty(gen, 'affected', {
+    value: affected,
+    enumerable: true,
+  }) as G & { readonly affected: Promise<number> };
+
 type Status = 'idle' | 'open' | 'done';
+
+type FlattenOptions = {
+  signal?: AbortSignal | (() => AbortSignal | undefined) | undefined;
+};
 
 const resolved = Promise.resolve();
 
@@ -15,7 +34,7 @@ const finished = (): IteratorReturnResult<void> => ({
 
 class Flattened<T> implements AsyncIterator<T, void, unknown> {
   readonly #source: AsyncGenerator<T[], void, unknown>;
-  readonly #signal: AbortSignal | undefined;
+  readonly #signal: () => AbortSignal | undefined;
   #rows: readonly T[] = [];
   #index = 0;
   #status: Status = 'idle';
@@ -35,17 +54,18 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
 
   constructor(
     source: AsyncGenerator<T[], void, unknown>,
-    signal: AbortSignal | undefined,
+    signal: AbortSignal | (() => AbortSignal | undefined) | undefined,
   ) {
     this.#source = source;
-    this.#signal = signal;
+    this.#signal = typeof signal === 'function' ? signal : () => signal;
   }
 
   next(): Promise<IteratorResult<T, void>> {
     if (this.#pending === 0 && this.#index < this.#rows.length) {
       // Nothing can abort a buffered row without a signal: it is handed out
       // now, in a promise already resolved, which settles ahead of any later call.
-      if (this.#signal === undefined) {
+      const signal = this.#signal();
+      if (signal === undefined) {
         return Promise.resolve({
           value: this.#rows[this.#index++] as T,
           done: false,
@@ -59,11 +79,11 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
       this.#delivering = true;
       const result = resolved.then(
         (): IteratorResult<T, void> | PromiseLike<IteratorResult<T, void>> => {
-          if (this.#signal?.aborted) {
+          if (signal.aborted) {
             // A thenable, so `#pending` is released in the very run that
             // settles `result`: a call in between must queue behind it, and
             // `result` stays unobserved, as an async generator's is.
-            const reason: unknown = this.#signal.reason;
+            const reason: unknown = signal.reason;
             return {
               // biome-ignore lint/suspicious/noThenProperty: a thenable on purpose, see above
               then: (
@@ -180,9 +200,8 @@ class Flattened<T> implements AsyncIterator<T, void, unknown> {
   async #serve(): Promise<IteratorResult<T, void>> {
     if (this.#status === 'done') return finished();
     if (this.#index < this.#rows.length) {
-      if (this.#signal?.aborted) {
-        return this.#throwIntoSource(this.#signal.reason);
-      }
+      const signal = this.#signal();
+      if (signal?.aborted) return this.#throwIntoSource(signal.reason);
       return { value: this.#rows[this.#index++] as T, done: false };
     }
     this.#status = 'open';
@@ -228,7 +247,15 @@ Object.defineProperty(Flattened.prototype, Symbol.toStringTag, {
 
 export function flatten<T>(
   source: AsyncGenerator<T[], void, unknown>,
-  options?: { signal?: AbortSignal | undefined },
+  options: FlattenOptions & { affected: Promise<number> },
+): SQLiteStream<T>;
+export function flatten<T>(
+  source: AsyncGenerator<T[], void, unknown>,
+  options?: FlattenOptions,
+): AsyncGenerator<T, void, unknown>;
+export function flatten<T>(
+  source: AsyncGenerator<T[], void, unknown>,
+  options?: FlattenOptions & { affected?: Promise<number> },
 ): AsyncGenerator<T, void, unknown> {
   // The class is checked as an AsyncIterator; the cast adds what an
   // AsyncGenerator type requires on top, [Symbol.asyncIterator] and
@@ -237,5 +264,7 @@ export function flatten<T>(
     source,
     options?.signal,
   );
-  return iterator as AsyncGenerator<T, void, unknown>;
+  const gen = iterator as AsyncGenerator<T, void, unknown>;
+  // The source's `affected`, on the object the caller holds.
+  return options?.affected ? carryAffected(gen, options.affected) : gen;
 }

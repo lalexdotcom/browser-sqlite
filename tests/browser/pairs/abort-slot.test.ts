@@ -25,10 +25,10 @@ describe('the sync build, isolated', {
       // test gives a false GREEN. The prime ensures the abort run takes the
       // direct run(cached) path, which has no macrotask before the step.
       // Unaborted step time: ~4 343 ms (measured 2026-09-04, sync MemoryVFS).
-      await db.read(longQuery(20_000_000));
+      await db.all(longQuery(20_000_000));
 
       const controller = new AbortController();
-      const long = db.read(longQuery(20_000_000), [], {
+      const long = db.all(longQuery(20_000_000), [], {
         signal: controller.signal,
       });
       long.catch(() => {});
@@ -45,7 +45,7 @@ describe('the sync build, isolated', {
       const started = performance.now();
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
-      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       expect(performance.now() - started).toBeLessThan(1000);
     } finally {
       await db.close();
@@ -79,7 +79,7 @@ describe('the sync build, isolated', {
         break;
       }
       const started = performance.now();
-      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       expect(performance.now() - started).toBeLessThan(1000);
     } finally {
       await db.close();
@@ -95,12 +95,12 @@ describe('the sync build, isolated', {
       poolSize: 1,
     });
     try {
-      await db.read('SELECT 1');
+      await db.all('SELECT 1');
       // The second row is a 20 M-row count, one long step (~4 343 ms unaborted).
       const sql = `SELECT 1 AS n UNION ALL SELECT (${longQuery(20_000_000)})`;
       expect(await db.first<{ n: number }>(sql)).toEqual({ n: 1 });
       const started = performance.now();
-      expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
       expect(performance.now() - started).toBeLessThan(1000);
     } finally {
       await db.close();
@@ -122,7 +122,7 @@ describe('the sync build, isolated', {
     });
     try {
       const controller = new AbortController();
-      const long = db.read(longQuery(20_000_000), [], {
+      const long = db.all(longQuery(20_000_000), [], {
         signal: controller.signal,
       });
       long.catch(() => {});
@@ -148,7 +148,7 @@ describe('the sync build, isolated', {
       const neverAborted = new AbortController();
       for (let i = 0; i < 8; i++) {
         expect(
-          await db.read(longQuery(200_000), [], {
+          await db.all(longQuery(200_000), [], {
             signal: neverAborted.signal,
           }),
         ).toEqual([{ n: 200_000 }]);
@@ -168,8 +168,8 @@ describe('the sync build, isolated', {
       maxWorkerRestarts: 1,
       debug: true,
     });
-    await db.write('CREATE TABLE t (a)');
-    const running = db.read(longQuery(20_000_000));
+    await db.run('CREATE TABLE t (a)');
+    const running = db.all(longQuery(20_000_000));
     await waitUntil(
       theQueryIsRunning(db, longQuery(20_000_000)),
       'the query to be running',
@@ -193,7 +193,7 @@ describe('the sync build, isolated', {
     // The replacement does not inherit KILLED_SLOT: a statement past the
     // progress handler's 100 000-op threshold still completes, twice.
     for (let run = 0; run < 2; run++) {
-      expect(await db.read(longQuery(200_000))).toEqual([{ n: 200_000 }]);
+      expect(await db.all(longQuery(200_000))).toEqual([{ n: 200_000 }]);
     }
     await db.close();
   });
@@ -228,11 +228,11 @@ describe('statement cache, sync build isolated', {
     });
     try {
       // Prime: compile and cache the statement (prepared=1).
-      await db.read(LONG_QUERY, [1_000]);
+      await db.all(LONG_QUERY, [1_000]);
 
       // Abort via the slot channel while step() is running.
       const controller = new AbortController();
-      const aborting = db.read(LONG_QUERY, [20_000_000], {
+      const aborting = db.all(LONG_QUERY, [20_000_000], {
         signal: controller.signal,
       });
       aborting.catch(() => {});
@@ -244,7 +244,7 @@ describe('statement cache, sync build isolated', {
       await expect(aborting).rejects.toThrow('cancelled');
 
       // The statement must still be in the cache: prepared=0 on this run.
-      await db.read(LONG_QUERY, [1_000]);
+      await db.all(LONG_QUERY, [1_000]);
       expect(runsOf(db, LONG_QUERY)[2]?.prepared).toBe(0);
     } finally {
       await db.close();

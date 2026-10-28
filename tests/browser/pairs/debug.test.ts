@@ -21,9 +21,9 @@ describe('debug subsystem (B6)', () => {
   it('populates the whole chain after one read', async () => {
     const db = await createTestClient({ debug: true });
 
-    await db.write('CREATE TABLE d (id INTEGER)');
-    await db.write('INSERT INTO d (id) VALUES (1)');
-    await db.read('SELECT id FROM d');
+    await db.run('CREATE TABLE d (id INTEGER)');
+    await db.run('INSERT INTO d (id) VALUES (1)');
+    await db.all('SELECT id FROM d');
 
     const state = db.debug;
     expect(state).toBeDefined();
@@ -82,11 +82,12 @@ describe('the pool-level request history', () => {
   // acquireInstrumented — the queued read is then absent.
   it('shows a read queued behind a transaction before it has a worker', async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     const hold = holdTheWorker(db);
     await hold.entered;
 
-    const queued = db.read('SELECT a FROM t');
+    // first(): a read that asks no verdict, so it queues for a worker at once.
+    const queued = db.first('SELECT a FROM t');
     await waitUntil(
       () =>
         db.debug?.requests.some(
@@ -108,12 +109,12 @@ describe('the pool-level request history', () => {
   // aborted wait keeps no endTime and no error.
   it('keeps a wait aborted by its signal, with its error', async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
     const hold = holdTheWorker(db);
     await hold.entered;
 
     const controller = new AbortController();
-    const aborted = db.read('SELECT a FROM t', [], {
+    const aborted = db.first('SELECT a FROM t', [], {
       signal: controller.signal,
     });
     await waitUntil(
@@ -141,15 +142,15 @@ describe('the pool-level request history', () => {
     if (webkit) return skip(webkit);
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1, debug: true });
-    await db.write('CREATE TABLE t (a)');
+    await db.run('CREATE TABLE t (a)');
 
-    const running = db.read(longQuery(20_000_000));
+    const running = db.all(longQuery(20_000_000));
     await sleep(100);
     const record = records[0];
     if (!record) throw new Error('no worker record');
     record.worker.dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
-    await db.read('SELECT 1 AS n');
+    await db.all('SELECT 1 AS n');
 
     const debug = db.debug;
     if (!debug) throw new Error('debug not available');
@@ -171,12 +172,12 @@ describe('the pool-level request history', () => {
   // Falsifiable: stop adding `rows` in the query handle's `chunk`.
   it('counts the rows delivered, and stops at what a first() received', async () => {
     const db = await createTestClient({ debug: true });
-    await db.write('CREATE TABLE t (a)');
-    await db.write(
+    await db.run('CREATE TABLE t (a)');
+    await db.run(
       'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1000) INSERT INTO t SELECT x FROM c',
     );
 
-    await db.read('SELECT a FROM t');
+    await db.all('SELECT a FROM t');
     await db.first('SELECT a FROM t');
 
     const dbDebug = db.debug;
@@ -197,12 +198,12 @@ describe('the pool-level request history', () => {
   // earlier on the same connection.
   it('reports affected: 0 for BEGIN and COMMIT, even after a bigger write', async () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
-    await db.write('CREATE TABLE t (a)');
-    await db.write('INSERT INTO t VALUES (1),(2),(3),(4),(5)');
-    await db.write('UPDATE t SET a = a + 1');
+    await db.run('CREATE TABLE t (a)');
+    await db.run('INSERT INTO t VALUES (1),(2),(3),(4),(5)');
+    await db.run('UPDATE t SET a = a + 1');
 
     await db.transaction(async (tx) => {
-      await tx.write('INSERT INTO t VALUES (6),(7),(8)');
+      await tx.run('INSERT INTO t VALUES (6),(7),(8)');
     });
 
     const dbDebug = db.debug;
@@ -242,7 +243,10 @@ describe('the cross-tab write lock in the history', () => {
     const poolSize = poolFor(TEST_TARGET.vfs);
     const a = database.open({ poolSize });
     const b = database.open({ poolSize, debug: true });
-    await a.write('CREATE TABLE t (a)');
+    await a.run('CREATE TABLE t (a)');
+    // Run once before a holds the lock: b remembers the statement's verdict, so
+    // the run below waits on the lock and not on a verdict taken behind it.
+    await b.run('INSERT INTO t VALUES (1)');
     const gate = Promise.withResolvers<void>();
     const entered = Promise.withResolvers<void>();
     const holding = a.transaction(async () => {
@@ -251,19 +255,20 @@ describe('the cross-tab write lock in the history', () => {
     });
     await entered.promise;
 
-    const blocked = b.write('INSERT INTO t VALUES (1)');
+    const blocked = b.run('INSERT INTO t VALUES (1)');
     await waitUntil(
-      () => b.debug?.requests.some((r) => r.kind === 'write') ?? false,
+      () =>
+        (b.debug?.requests.filter((r) => r.kind === 'write').length ?? 0) > 1,
       'the blocked write in requests',
     );
     await sleep(50);
-    const waiting = b.debug?.requests.find((r) => r.kind === 'write');
+    const waiting = b.debug?.requests.findLast((r) => r.kind === 'write');
     if (!waiting) throw new Error('no waiting write request');
     expect(waiting.lockTime).toBeUndefined();
 
     gate.resolve();
     await Promise.all([holding, blocked]);
-    const write = b.debug?.requests.find((r) => r.kind === 'write');
+    const write = b.debug?.requests.findLast((r) => r.kind === 'write');
     if (!write) throw new Error('no write request found');
     expect(write.lockTime).toBeDefined();
     if (write.lockTime === undefined) throw new Error('lockTime not set');

@@ -39,7 +39,7 @@ export type WriteFn = (
   sql: string,
   params?: unknown[] | EncodedParams,
   options?: BulkCallOptions,
-) => Promise<{ result: unknown[]; affected: number }>;
+) => Promise<{ affected: number }>;
 
 export type ReadFn = (
   sql: string,
@@ -48,13 +48,7 @@ export type ReadFn = (
 ) => Promise<unknown[]>;
 
 export type TransactionFn = <T>(
-  callback: (db: {
-    write: (
-      sql: string,
-      params?: unknown[] | EncodedParams,
-      options?: BulkCallOptions,
-    ) => Promise<{ result: unknown[]; affected: number }>;
-  }) => Promise<T>,
+  callback: (db: { writeDirect: WriteFn }) => Promise<T>,
   options?: SQLiteTransactionOptions,
 ) => Promise<T>;
 
@@ -105,7 +99,7 @@ export const createBulk = (shared: {
 
   return (target: {
     read: ReadFn;
-    write: WriteFn;
+    writeDirect: WriteFn;
     transaction: TransactionFn;
     /**
      * Takes this batch's place in the caller's statement queue, SYNCHRONOUSLY,
@@ -120,13 +114,13 @@ export const createBulk = (shared: {
      */
     reserve?: () => { started: Promise<void>; done: () => void };
   }) => {
-    const { read, write, transaction, reserve } = target;
+    const { read, writeDirect, transaction, reserve } = target;
 
     // bulkWrite, sweepOnce, indexStatements and output move in here VERBATIM.
     // Not one character of their bodies changes: they already read `read`,
-    // `write`, `transaction`, `file`, `locks`, `logger` and `maxVariables` as
-    // free variables, and all seven are still in scope. This task is a
-    // relocation; any behavioural edit smuggled into it is a defect.
+    // `writeDirect`, `transaction`, `file`, `locks`, `logger` and
+    // `maxVariables` as free variables, and all seven are still in scope. This
+    // task is a relocation; any behavioural edit smuggled into it is a defect.
 
     /**
      * Creates a bulk write utility for efficiently inserting many rows.
@@ -189,7 +183,7 @@ export const createBulk = (shared: {
       // caller keeps does not collect one listener per writer.
       signal?.addEventListener('abort', releaseRoom, { once: true });
 
-      // Inside a transaction each batch is a `tx.write` carrying this signal,
+      // Inside a transaction each batch is a `tx.writeDirect` carrying this signal,
       // so the transaction runs it inside its own savepoint (spec 2026-09-11,
       // D6): an abandoned load keeps the batches it completed — as it does
       // outside a transaction, where each is already committed — and the
@@ -237,7 +231,7 @@ export const createBulk = (shared: {
             // on an engine without `readwrite-unsafe`, waiting on a handle
             // hand-over that never comes — left this chain pending for ever,
             // and close() with it. Observed on macOS Safari 27.0.
-            const { affected } = await write(head, params, { signal });
+            const { affected } = await writeDirect(head, params, { signal });
             rowsWritten += rowCount;
             return currentAffected + affected;
           } catch (error) {
@@ -365,7 +359,7 @@ export const createBulk = (shared: {
             file,
           );
           for (const orphan of stale) {
-            await write(`DROP TABLE IF EXISTS ${quoteIdent(orphan)}`);
+            await writeDirect(`DROP TABLE IF EXISTS ${quoteIdent(orphan)}`);
           }
         })
         .then(() => undefined)
@@ -453,7 +447,7 @@ export const createBulk = (shared: {
 
       const createStaging = sweepOnce()
         .then(() =>
-          write(`
+          writeDirect(`
 			CREATE TABLE ${quoteIdent(staging)}(
 				${normalizedSchema
           .map(({ name, type, unique, notnull, generated }) => {
@@ -479,7 +473,7 @@ export const createBulk = (shared: {
 
       const dropStaging = () =>
         Promise.race([
-          write(`DROP TABLE IF EXISTS ${quoteIdent(staging)}`),
+          writeDirect(`DROP TABLE IF EXISTS ${quoteIdent(staging)}`),
           // Bounded, because this runs on the path whose whole point is to
           // stop quickly. The DROP is a write, so it needs a worker — and
           // after an abort the pool may still be finishing the batch the abort
@@ -515,12 +509,14 @@ export const createBulk = (shared: {
 
             try {
               await transaction(async (tx) => {
-                await tx.write(`DROP TABLE IF EXISTS ${quoteIdent(table)}`);
-                await tx.write(
+                await tx.writeDirect(
+                  `DROP TABLE IF EXISTS ${quoteIdent(table)}`,
+                );
+                await tx.writeDirect(
                   `ALTER TABLE ${quoteIdent(staging)} RENAME TO ${quoteIdent(table)}`,
                 );
                 for (const statement of indexStatements(table, options)) {
-                  await tx.write(statement);
+                  await tx.writeDirect(statement);
                 }
               });
             } catch (error) {

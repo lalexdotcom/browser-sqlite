@@ -8,7 +8,10 @@ import type {
   ClientDebugState,
   QueryDebugState,
   RequestDebugState,
+  SQLiteChunkStream,
   SQLiteDB,
+  SQLiteRunResult,
+  SQLiteStream,
   SQLiteTransactionDB,
   SQLQuery,
   WorkerDebugState,
@@ -65,6 +68,29 @@ type _DebugTypesExported = [
   RequestDebugState,
   QueryDebugState,
 ];
+
+/**
+ * The result types of `run()`, `stream()` and `chunk()` are importable from the
+ * entry. Falsifiable: drop one from src/api.ts.
+ */
+type _ResultTypesExported = [
+  SQLiteRunResult<unknown>,
+  SQLiteStream<unknown>,
+  SQLiteChunkStream<unknown>,
+];
+
+/**
+ * `write()` and `read()` are gone from both surfaces. Falsifiable: put either
+ * back in src/api.ts and tsc reports the directive as unused.
+ */
+// @ts-expect-error -- `read` is no longer a member of the client
+type _ReadGone = SQLiteDB['read'];
+// @ts-expect-error -- `write` is no longer a member of the client
+type _WriteGone = SQLiteDB['write'];
+// @ts-expect-error -- `read` is no longer a member of a transaction
+type _TxReadGone = SQLiteTransactionDB['read'];
+// @ts-expect-error -- `write` is no longer a member of a transaction
+type _TxWriteGone = SQLiteTransactionDB['write'];
 
 /** The query object's type is nameable, though its class is not exported. */
 type _SQLQueryExported = SQLQuery;

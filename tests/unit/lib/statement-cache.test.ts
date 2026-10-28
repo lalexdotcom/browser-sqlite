@@ -29,39 +29,10 @@ describe('statement cache — the entry bound', () => {
     expect(cache.get('b')).toBeUndefined();
   });
 
-  it('reports SQL that must not be cached', () => {
-    const cache = entriesOnly(4);
-    expect(cache.markUncacheable('SELECT 1; SELECT 2')).toEqual([]);
-    // Falsifiability: return `entry.handle` instead of 'uncacheable' in `get`
-    // and this is null, which the worker would read as a handle.
-    expect(cache.get('SELECT 1; SELECT 2')).toBe('uncacheable');
-  });
-
-  it('bounds the uncacheable markings with everything else', () => {
-    const cache = entriesOnly(2);
-    cache.markUncacheable('x');
-    cache.markUncacheable('y');
-    // Falsifiability: keep the markings in a separate collection and 'x'
-    // survives for ever — the second unbounded map the design refuses.
-    expect(cache.set('z', 9, 0)).toEqual([]);
-    expect(cache.get('x')).toBeUndefined();
-  });
-
-  it('returns a handle evicted by a marking', () => {
-    const cache = entriesOnly(1);
-    cache.set('a', 1, 0);
-    // Falsifiability: give `markUncacheable` no return value and handle 1 is
-    // leaked — nothing would ever finalise it.
-    expect(cache.markUncacheable('b')).toEqual([1]);
-  });
-
   it('drains every live handle and empties', () => {
     const cache = entriesOnly(4);
     cache.set('a', 1, 0);
-    cache.markUncacheable('b');
     cache.set('c', 3, 0);
-    // Falsifiability: push `null` handles too and close would finalise a
-    // marking as if it were a statement.
     expect(cache.drain().sort()).toEqual([1, 3]);
     expect(cache.get('a')).toBeUndefined();
     expect(cache.drain()).toEqual([]);
@@ -141,17 +112,6 @@ describe('statement cache — the byte bound', () => {
     // the cache is emptied before 'small' goes in.
     expect(cache.set('small', 2, 10)).toEqual([1]);
     expect(cache.get('big')).toBeUndefined();
-  });
-
-  it('gives a marking no weight', () => {
-    const cache = createStatementCache({ maxEntries: 4, maxBytes: 100 });
-    cache.set('a', 1, 90);
-    cache.markUncacheable('m');
-    // Falsifiability: give a marking any weight and the total crosses 100, so
-    // this returns [1] and 'a' is evicted by a string that holds no statement.
-    expect(cache.set('b', 2, 5)).toEqual([]);
-    expect(cache.get('a')).toBe(1);
-    expect(cache.get('m')).toBe('uncacheable');
   });
 
   it('enforces the entry bound while the byte bound is slack', () => {

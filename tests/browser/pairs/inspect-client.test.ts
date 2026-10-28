@@ -33,7 +33,7 @@ describe('db.inspect', () => {
     const shared = sharedDatabase();
     const a = shared.open();
     const b = shared.open();
-    await Promise.all([a.read('SELECT 1'), b.read('SELECT 1')]);
+    await Promise.all([a.all('SELECT 1'), b.all('SELECT 1')]);
 
     const view = await a.inspect();
     expect(view.self?.id).toBe(a.id);
@@ -55,7 +55,7 @@ describe('db.inspect on the target', () => {
   }, async () => {
     const db = await createTestClient();
     onTestFinished(() => db.close().catch(() => {}));
-    await db.read('SELECT 1');
+    await db.all('SELECT 1');
     const view = await db.inspect();
     expect(view.self?.id).toBe(db.id);
     expect(view.siblings).toHaveLength(0);
@@ -69,7 +69,7 @@ describe('db.inspect on the target', () => {
   }, async () => {
     const db = await createTestClient();
     onTestFinished(() => db.close().catch(() => {}));
-    await db.read('SELECT 1');
+    await db.all('SELECT 1');
     await expect(db.inspect()).rejects.toMatchObject({
       code: 'INVALID_OPTION',
     });
@@ -77,7 +77,7 @@ describe('db.inspect on the target', () => {
 
   it('throws CLIENT_CLOSED after close', async () => {
     const db = await createTestClient();
-    await db.read('SELECT 1');
+    await db.all('SELECT 1');
     await db.close();
 
     await expect(db.inspect()).rejects.toMatchObject({

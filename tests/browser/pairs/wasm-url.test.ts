@@ -33,7 +33,7 @@ describe('the wasmUrl option', () => {
   it('takes a callback, called once with the build, and serves a query', async () => {
     const wasmUrl = vi.fn((build: SQLiteBuild) => WASM_DIR + WASM_FILE[build]);
     const db = open(wasmUrl);
-    const rows = await db.read<{ ok: number }>('SELECT 1 AS ok');
+    const rows = await db.all<{ ok: number }>('SELECT 1 AS ok');
     expect(rows[0].ok).toBe(1);
     expect(wasmUrl).toHaveBeenCalledTimes(1);
     expect(wasmUrl).toHaveBeenCalledWith(TEST_TARGET.build);
@@ -41,7 +41,7 @@ describe('the wasmUrl option', () => {
 
   it('takes a string and serves a query', async () => {
     const db = open(WASM_DIR);
-    const rows = await db.read<{ ok: number }>('SELECT 1 AS ok');
+    const rows = await db.all<{ ok: number }>('SELECT 1 AS ok');
     expect(rows[0].ok).toBe(1);
   });
 
@@ -49,12 +49,12 @@ describe('the wasmUrl option', () => {
   // the worker loads its default `.wasm` and serves the query.
   it('is what the worker loads: a callback naming no file fails the client', async () => {
     const db = open((build) => `${WASM_DIR}missing/${WASM_FILE[build]}`);
-    await expect(db.read('SELECT 1')).rejects.toThrow();
+    await expect(db.all('SELECT 1')).rejects.toThrow();
   });
 
   // Falsifiable: as above.
   it('is what the worker loads: a string naming no directory fails the client', async () => {
     const db = open(`${WASM_DIR}missing/`);
-    await expect(db.read('SELECT 1')).rejects.toThrow();
+    await expect(db.all('SELECT 1')).rejects.toThrow();
   });
 });

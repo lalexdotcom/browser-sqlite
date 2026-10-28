@@ -72,8 +72,8 @@ const writesAgainstReads = async (dbA: Client, dbB: Client) => {
   const settled = await Promise.allSettled(
     Array.from({ length: CONCURRENT }, (_, i) =>
       i % 2 === 0
-        ? dbA.write('INSERT INTO t (a) VALUES (?)', [i])
-        : dbB.read('SELECT count(*) AS n FROM t'),
+        ? dbA.run('INSERT INTO t (a) VALUES (?)', [i])
+        : dbB.all('SELECT count(*) AS n FROM t'),
     ),
   );
   return settled.flatMap((s) =>
@@ -87,8 +87,8 @@ const mixedBatch = async (dbA: Client, dbB: Client) => {
     Array.from({ length: CONCURRENT }, (_, i) => {
       const db = i % 2 === 0 ? dbA : dbB;
       return i % 3 === 0
-        ? db.write('INSERT INTO t (a) VALUES (?)', [i])
-        : db.read('SELECT count(*) AS n FROM t');
+        ? db.run('INSERT INTO t (a) VALUES (?)', [i])
+        : db.all('SELECT count(*) AS n FROM t');
     }),
   );
   return settled.flatMap((s) =>
@@ -111,7 +111,7 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
         const dbA = open(file);
         const dbB = open(file);
         try {
-          await dbA.write('CREATE TABLE t (a INTEGER)');
+          await dbA.run('CREATE TABLE t (a INTEGER)');
           for (let round = 0; round < 3; round++) {
             failures.push(...(await mixedBatch(dbA, dbB)));
           }
@@ -138,12 +138,12 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
         const dbA = open(file);
         let dbB: Client | undefined;
         try {
-          await dbA.write('CREATE TABLE t (a INTEGER)');
+          await dbA.run('CREATE TABLE t (a INTEGER)');
           dbB = open(file);
           // Both clients' statements cached on the current schema first, so
           // the CREATE TABLE below is what makes them stale.
           failures.push(...(await writesAgainstReads(dbA, dbB)));
-          await dbB.write('CREATE TABLE u (a INTEGER)');
+          await dbB.run('CREATE TABLE u (a INTEGER)');
           for (let round = 0; round < 2; round++) {
             failures.push(...(await writesAgainstReads(dbA, dbB)));
           }
@@ -182,8 +182,8 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
         const dbB = open(file);
         try {
           const settled = await Promise.allSettled([
-            dbA.read('SELECT 1 AS one'),
-            dbB.read('SELECT 1 AS one'),
+            dbA.all('SELECT 1 AS one'),
+            dbB.all('SELECT 1 AS one'),
           ]);
           for (const s of settled) {
             if (s.status === 'rejected') failures.push(describeError(s.reason));

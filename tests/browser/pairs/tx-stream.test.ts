@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient } from '../helpers';
+import {
+  createTestClient,
+  scaled,
+  theQueryIsRunning,
+  waitUntil,
+} from '../helpers';
 
 /**
  * `tx.stream()` hands out rows of chunks the worker has already delivered:
@@ -13,14 +18,29 @@ const SERIES = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c W
 
 const setUp = async () => {
   const db = await createTestClient({ poolSize: 1 });
-  await db.write('CREATE TABLE t (a INTEGER)');
+  await db.run('CREATE TABLE t (a INTEGER)');
+  return db;
+};
+
+/** `setUp`, with the debug tree `theQueryIsRunning` reads and a `big` table. */
+const setUpWrites = async () => {
+  const db = await createTestClient({ poolSize: 1, debug: true });
+  await db.run('CREATE TABLE t (a INTEGER)');
+  await db.run('CREATE TABLE big (x INTEGER)');
   return db;
 };
 
 type Db = Awaited<ReturnType<typeof setUp>>;
 
 const rowsOf = async (db: Db) =>
-  (await db.read<{ a: number }>('SELECT a FROM t ORDER BY a')).map((r) => r.a);
+  (await db.all<{ a: number }>('SELECT a FROM t ORDER BY a')).map((r) => r.a);
+
+const bigCount = async (db: Db) =>
+  (await db.all<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n;
+
+/** Steps for hundreds of milliseconds and inserts ten rows. */
+const SLOW_INSERT =
+  'INSERT INTO big SELECT x FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1000000) SELECT x FROM c) WHERE x % 100000 = 0 RETURNING x';
 
 describe('tx.stream() between two rows of a chunk', () => {
   // Falsifiable: in tx.stream, leave `entry.gen` on releasing's generator —
@@ -39,7 +59,7 @@ describe('tx.stream() between two rows of a chunk', () => {
     expect(outcome).toBe('returned');
     expect(first).toEqual({ value: { x: 1 }, done: false });
     expect(await kept.next()).toEqual({ value: undefined, done: true });
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
   });
 
   // Falsifiable: in flatten's return(), skip the source's return() on an open
@@ -55,7 +75,7 @@ describe('tx.stream() between two rows of a chunk', () => {
         seen++;
         break;
       }
-      after = await tx.read('SELECT 1 AS one');
+      after = await tx.all('SELECT 1 AS one');
     });
     expect(seen).toBe(1);
     expect(after).toEqual([{ one: 1 }]);
@@ -80,7 +100,7 @@ describe('tx.stream() between two rows of a chunk', () => {
         (e: unknown) => ({ rejected: e }),
       );
       after = await rows.next();
-      read = await tx.read('SELECT 1 AS one');
+      read = await tx.all('SELECT 1 AS one');
       return 'returned';
     });
     expect(first).toEqual({ rejected: reason });
@@ -96,15 +116,122 @@ describe('tx.stream() between two rows of a chunk', () => {
     const db = await setUp();
     let read: unknown;
     const outcome = await db.transaction(async (tx) => {
-      const before = tx.read('SELECT 1 AS one');
+      const before = tx.all('SELECT 1 AS one');
       tx.stream(SERIES, [], { chunkSize: CHUNK_SIZE });
       read = await before;
-      await tx.write('INSERT INTO t VALUES (7)');
+      await tx.run('INSERT INTO t VALUES (7)');
       return 'returned';
     });
     expect(read).toEqual([{ one: 1 }]);
     expect(outcome).toBe('returned');
     expect(await rowsOf(db)).toEqual([7]);
-    expect(await db.read('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+    expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+  });
+});
+
+describe('tx.stream() takes a write (spec 2026-10-26, § Streaming a write)', () => {
+  // Falsifiable: put the `'stream'` method back in tx.stream's checksql() in
+  // src/transaction.ts — the call then throws NOT_A_READ_QUERY.
+  it('a tx.stream() INSERT … RETURNING delivers its rows and the transaction commits it', async () => {
+    const db = await setUpWrites();
+    let seen = 0;
+    let affected: number | undefined;
+    await db.transaction(async (tx) => {
+      const rows = tx.stream<{ x: number }>(
+        `INSERT INTO big ${SERIES} RETURNING x`,
+        [],
+        { chunkSize: CHUNK_SIZE },
+      );
+      for await (const _row of rows) seen++;
+      affected = await rows.affected;
+    });
+    expect(seen).toBe(ROWS);
+    expect(affected).toBe(ROWS);
+    expect(await bigCount(db)).toBe(ROWS);
+  });
+
+  // Falsifiable: in `releasing`, keep the write when its own signal lands
+  // before `affected` too (skip the abandon) — the INSERT then stays.
+  it('a savepointed tx.stream() write aborted before affected is undone, and the transaction commits the rest', async () => {
+    const db = await setUpWrites();
+    const ctl = new AbortController();
+    const reason = new Error('abort before affected');
+    let caught: unknown;
+    let affected: unknown;
+    await db.transaction(async (tx) => {
+      await tx.run('INSERT INTO t VALUES (1)');
+      const rows = tx.stream(SLOW_INSERT, [], { signal: ctl.signal });
+      const pending = rows[Symbol.asyncIterator]().next();
+      await waitUntil(theQueryIsRunning(db, SLOW_INSERT), 'the INSERT running');
+      ctl.abort(reason);
+      caught = await pending.catch((e: unknown) => e);
+      affected = await rows.affected.catch((e: unknown) => ({ rejected: e }));
+      await tx.run('INSERT INTO t VALUES (2)');
+    });
+    expect(caught).toBe(reason);
+    expect(affected).toEqual({ rejected: reason });
+    expect(await bigCount(db)).toBe(0);
+    expect(await rowsOf(db)).toEqual([1, 2]);
+  });
+
+  // Falsifiable: in `releasing`, undo on every abandon by the statement's own
+  // signal, as before this branch — the INSERT is then rolled back.
+  it('a savepointed tx.stream() write aborted between buffered rows after affected keeps its write, and the next statement runs', async () => {
+    const db = await setUpWrites();
+    const ctl = new AbortController();
+    const reason = new Error('abort after affected');
+    let first: IteratorResult<{ x: number }> | undefined;
+    let affected: number | undefined;
+    let second: unknown;
+    const outcome = await db.transaction(async (tx) => {
+      await tx.run('INSERT INTO t VALUES (1)');
+      const stream = tx.stream<{ x: number }>(
+        `INSERT INTO big ${SERIES} RETURNING x`,
+        [],
+        { chunkSize: CHUNK_SIZE, signal: ctl.signal },
+      );
+      const rows = stream[Symbol.asyncIterator]();
+      first = await rows.next();
+      affected = await stream.affected;
+      ctl.abort(reason);
+      second = await rows.next().then(
+        (r) => ({ resolved: r }),
+        (e: unknown) => ({ rejected: e }),
+      );
+      // Here, not after the callback: a row served instead keeps the stream
+      // open, and the write below would wait behind it for ever.
+      expect(second).toEqual({ rejected: reason });
+      await tx.run('INSERT INTO t VALUES (2)');
+      return 'returned';
+    });
+    expect(first).toEqual({ value: { x: 1 }, done: false });
+    expect(affected).toBe(ROWS);
+    expect((second as { rejected: unknown }).rejected).toBe(reason);
+    expect(outcome).toBe('returned');
+    expect(await rowsOf(db)).toEqual([1, 2]);
+    expect(await bigCount(db)).toBe(ROWS);
+  });
+
+  // Falsifiable: make settleOnClose in src/queries.ts return `gen` untouched —
+  // the transaction closes both generators before they ran, and their count
+  // never settles.
+  it('a tx.stream() or tx.chunk() write never pulled has affected 0 once the transaction closes it', async () => {
+    const db = await setUpWrites();
+    let rows: { affected: Promise<number> } | undefined;
+    let chunks: { affected: Promise<number> } | undefined;
+    await db.transaction(async (tx) => {
+      rows = tx.stream(`INSERT INTO big ${SERIES} RETURNING x`);
+      chunks = tx.chunk(`INSERT INTO big ${SERIES} RETURNING x`);
+    });
+    const waited = (pending: Promise<number> | undefined) =>
+      Promise.race([
+        pending,
+        new Promise((resolve) =>
+          setTimeout(() => resolve('waited'), scaled(5_000)),
+        ),
+      ]);
+    expect(await waited(rows?.affected)).toBe(0);
+    expect(await waited(chunks?.affected)).toBe(0);
+    expect(await bigCount(db)).toBe(0);
   });
 });
