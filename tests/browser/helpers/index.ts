@@ -370,6 +370,26 @@ export const sleep = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Resolves on the next task, through a message rather than a timer. Safari 27
+ * can run a test page's timers once a second while its main thread is idle and
+ * a worker's messages arrive at once (SAFARI27-TIMER-1HZ): a `setTimeout(0)`
+ * poll then missed a statement that started and ended between two seconds.
+ */
+const nextTask = (() => {
+  let channel: MessageChannel | undefined;
+  const waiting: (() => void)[] = [];
+  return () =>
+    new Promise<void>((resolve) => {
+      if (!channel) {
+        channel = new MessageChannel();
+        channel.port1.onmessage = () => waiting.shift()?.();
+      }
+      waiting.push(resolve);
+      channel.port2.postMessage(null);
+    });
+})();
+
+/**
  * Polls until the predicate is true, yielding to the macrotask queue between
  * checks. Used to observe scheduler state without a fixed-duration sleep.
  *
@@ -389,7 +409,7 @@ export const waitUntil = async (
     if (Date.now() > deadline) {
       throw new Error(`timed out after ${bound} ms waiting for ${what}`);
     }
-    await sleep(0);
+    await nextTask();
   }
 };
 
