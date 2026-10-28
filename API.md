@@ -207,7 +207,7 @@ On `stream()`, `chunkSize` is the only lever on how many rows are in flight.
 
 **`affected` settles once the statement has run.**<br>It resolves with the rows the statement changed — 0 for a read — and rejects with the statement's error; leaving it unread never raises an unhandled rejection. A generator you never iterate does not run its statement, and its `affected` stays pending; one you close before the statement ran settles it with 0.
 
-**A write is completed before its first row is delivered.**<br>By then the write is visible to every other call and the write lock is released, so a slow loop never holds other writers up; breaking out of the loop afterwards keeps the write. Abandoning it earlier, with an abort or a timeout, undoes it. A write is never retried, and its rows are held in memory until you have read them.
+**A write is completed before its first row is delivered.**<br>By then the write is visible to every other call and the write lock is released, so a slow loop never holds other writers up; breaking out of the loop afterwards keeps the write. Abandoning it earlier, with an abort or a timeout, undoes it inside a [transaction](#clienttransaction), whose savepoint takes it back. Outside one it is undone only where the abort reaches the running statement (see [Interrupting a call](#interrupting-a-call)); elsewhere the write completes even though the call rejects. A write is never retried, and its rows are held in memory until you have read them.
 
 See [Queries](#queries).
 
