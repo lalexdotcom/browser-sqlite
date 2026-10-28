@@ -1,6 +1,6 @@
 # Follow-up — on Safari 27, a long statement of the routing tests is never seen running
 
-**Status: OPEN** — found 2026-10-28 on the first macOS 27 runs after `feat/sqlite-routing`'s merge; cause unknown, diagnosis in progress (systematic debugging, phase 1).
+**Status: DONE (2026-10-28, `fix/safari27-wait-yield`)** — found the same day on the first macOS 27 runs after `feat/sqlite-routing`'s merge; a test fault, not a library one: `waitUntil` polled on a timer Safari 27 held to 1 Hz. Fixed in the helper, macOS 27 green twice (§ Fix).
 
 Part of `mem:follow-ups`.
 
@@ -18,4 +18,6 @@ Part of `mem:follow-ups`.
 
 **Probe note:** its worker is built with the helper's `NativeWorker`; through `globalThis.Worker` an `interceptWorkers()` test records it as `records[0]` (`abort-slot` went red in the pre-push). Run 40732354209 was dispatched through `tests-macos-27.yaml`/`tests.yaml` edited on the spike branch — the method the user rejected the same day (`mem:lessons/process`). The spike branch and its four runs were deleted on 2026-10-28, the diagnosis recorded (SAFARI27-TIMER-1HZ, `mem:measurements/ci-runners`).
 
-**Next:** the user's call on what to do with a 1 s timer throttle (phase 1 of systematic debugging done, no fix decided). macOS 27 runs on the `xcode-27` preview image (`mem:stack-and-build/ci`); iterations go through `tests-macos-27.yaml` → `tests.yaml` edited on the spike branch (`mem:lessons/process`).
+**Fix (2026-10-28, `fix/safari27-wait-yield`, user: "on résout le problème").** `waitUntil` (`tests/browser/helpers/index.ts`) yields between checks with `nextTask()` — one reused `MessageChannel`, a FIFO of resolvers, a `postMessage` per turn — instead of `sleep(0)`; a message task is not held back by the throttle. The library is unchanged. Verified: `pnpm test` local 394/394 (Chrome/Firefox, cell times unchanged); `tests-macos-27.yaml` on the branch, runs 40741792029 and 40745756595: 562/562 files and conformance 9/9 each, the two cells that failed (`[2/28]` WriteAhead/sync, `[3/28]` Adaptive/jspi, the same place in the order as in the red runs) green.
+
+**Left open, not tracked elsewhere:** why Safari 27 throttles — a rule of Safari 27 itself (a page or a window left without focus or interaction; it appears only after a while in a cell, never in a one-file spike) or an effect of the safaridriver session — is not known; Vitest's test iframe is visible and viewport-sized (its orchestrator, checked). Cheapest test: a page measuring `setTimeout(0)` continuously in Safari 27 on a Mac, visible without focus behind another window, no WebDriver. If it is Safari itself, the library's own timers would be held the same way in such a page: `close()`'s `setTimeout(0)` (`src/client.ts`) and `deleteDatabase`'s (`src/delete.ts`) up to 1 s each, every deadline and back-off timer late by up to 1 s.

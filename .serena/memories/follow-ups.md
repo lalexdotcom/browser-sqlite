@@ -15,7 +15,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
-| `safari27-running-wait` | On Safari 27, routing tests waiting for a long statement to run time out (never seen `RUNNING`) | OPEN — diagnosed 2026-10-28: Safari 27 runs the test page's timers once a second (SAFARI27-TIMER-1HZ), so short statements end between two polls; fix not decided |
+| `safari27-running-wait` | On Safari 27, routing tests waiting for a long statement to run time out (never seen `RUNNING`) | DONE 2026-10-28 — Safari 27 ran the test page's timers once a second (SAFARI27-TIMER-1HZ); `waitUntil` now polls on a message (`fix/safari27-wait-yield`), macOS 27 green twice; why Safari throttles not known |
 | `tx-abort-race-window` | An abort fired during a savepointed statement's post is missed (`makeAbortRace` never tests `aborted`) | OPEN — narrow window, predates the routing branch |
 | `named-params` | Params as an object, bound by name | OPEN — not designed |
 | `bulkwrite-types` | More `types` values for `bulkWrite()` | OPEN — not designed |
