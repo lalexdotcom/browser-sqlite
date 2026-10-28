@@ -166,7 +166,8 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 
 ## `mem:measurements/routing` — routing by SQLite's verdict
 
-- ROUTING-VS-MAIN — the verdict and the memo against `main`, stock Chrome 153 / Firefox 155: first call +0.05-0.19 ms per statement, steady state equal with the memo, +25-60 % without; two open deltas (Firefox `stream()`, Chrome Adaptive repeated writes)
+- ROUTING-VS-MAIN — the verdict and the memo against `main`, stock Chrome 153 / Firefox 155: first call +0.05-0.19 ms per statement, steady state equal with the memo, +23-69 % without
+- ROUTING-DELTAS — its two deltas, 2026-10-28: Firefox `stream()` +6/+16 % is real, bisected to `7f67c01`'s worker (drain code in the row generator slows SpiderMonkey's per-row loop), a fix prototyped by splitting the generator; Adaptive repeated writes show no delta at n = 6
 
 ## `mem:measurements/step` — the step loop
 
