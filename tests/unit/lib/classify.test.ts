@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyStatement,
+  EXPLAIN_FIRST,
   type PrepareFacts,
   type StatementKind,
 } from '../../../src/classify';
@@ -172,5 +173,38 @@ describe.each([
         readonly: true,
       }),
     ).toBe('read');
+  });
+});
+
+describe('EXPLAIN_FIRST', () => {
+  it.each([
+    'EXPLAIN SELECT 1',
+    '  \n explain query plan select 1',
+    ';;explain select 1',
+    '-- note\nEXPLAIN select 1',
+    '-- one\n-- two\n/* three */ explain select 1',
+    '/* a */ ; /* b */ explain select 1',
+  ])('matches %j', (text) => {
+    expect(EXPLAIN_FIRST.test(text)).toBe(true);
+  });
+
+  it.each([
+    'SELECT 1',
+    'PRAGMA cache_size = 5',
+    '-- EXPLAIN\nSELECT 1',
+    '-- EXPLAIN',
+    '/* explain */ SELECT 1',
+    'explained',
+  ])('does not match %j', (text) => {
+    expect(EXPLAIN_FIRST.test(text)).toBe(false);
+  });
+
+  // Falsifiable: let the line comment end anywhere (`--[^\n]*` alone) — the
+  // test backtracks quadratically, ~3 s for this text.
+  it('rejects a long leading line comment without backtracking', () => {
+    const text = `--${' '.repeat(40_000)}\nPRAGMA cache_size = 5`;
+    const start = performance.now();
+    expect(EXPLAIN_FIRST.test(text)).toBe(false);
+    expect(performance.now() - start).toBeLessThan(1000);
   });
 });

@@ -71,3 +71,10 @@ export const classifyStatement = (facts: PrepareFacts): StatementKind => {
   if (facts.attach) return 'write';
   return facts.readonly ? 'read' : 'write';
 };
+
+/**
+ * A text whose first keyword is EXPLAIN, past blanks, `;` and comments. A line
+ * comment ends at its newline, so a long one cannot be re-split by backtracking.
+ */
+export const EXPLAIN_FIRST =
+  /^(?:\s|;|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*explain\b/i;

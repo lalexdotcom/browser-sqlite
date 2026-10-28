@@ -36,6 +36,7 @@ import {
 } from 'wa-sqlite/src/sqlite-constants.js';
 import {
   classifyStatement,
+  EXPLAIN_FIRST,
   type PrepareFacts,
   type StatementKind,
 } from '../classify';
@@ -124,9 +125,6 @@ const READ_ACTIONS = new Set<number>([
   SQLITE_TRANSACTION,
   SQLITE_SAVEPOINT,
 ]);
-
-/** A text whose first keyword is EXPLAIN, past blanks, `;` and comments. */
-const EXPLAIN_FIRST = /^(?:\s|;|--[^\n]*|\/\*[\s\S]*?\*\/)*explain\b/i;
 
 /**
  * wa-sqlite hands the authorizer "" for a null argument, so a bare pragma and
