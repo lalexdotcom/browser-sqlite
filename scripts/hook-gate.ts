@@ -12,7 +12,8 @@
  *
  * Paths are classified by exclusion: what is not known to be ignorable is
  * code, so a new kind of file is checked by default. If the facts cannot be
- * gathered, the hook's full list runs.
+ * gathered, the hook's full list runs. On a throwaway `spike/*` branch the
+ * hooks run nothing; `delivery` still runs everything.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -73,7 +74,14 @@ export type Facts = {
   directCodeCommit?: boolean;
   /** pre-push only: a `refs/tags/v*` ref is pushed. */
   tagPushed?: boolean;
+  /**
+   * Hooks only: the work is a throwaway `spike/*` branch, never merged — the
+   * branch committed or merged on, or every ref a push lands. Nothing runs.
+   */
+  spike?: boolean;
 };
+
+const SPIKE = 'spike/';
 
 // What conformance depends on besides its tests: the VFS code, the wa-sqlite
 // patch, and the wa-sqlite pin, which lives in the lockfile.
@@ -122,6 +130,7 @@ export const FULL: Readonly<Record<Hook, readonly Check[]>> = {
 };
 
 export function checksFor(hook: Hook, facts: Facts): Check[] {
+  if (facts.spike) return [];
   const classes = new Set(facts.files.map(classOf));
   const code = classes.has('code');
   const docsOnly = !code && classes.has('docs');
@@ -174,6 +183,9 @@ export function gatherFacts(
   hook: Hook,
   { cwd = process.cwd(), stdin = '' }: { cwd?: string; stdin?: string } = {},
 ): Facts {
+  // Empty when detached; works on a branch with no commit yet.
+  const onSpike = () =>
+    git(cwd, 'branch', '--show-current')[0]?.startsWith(SPIKE) === true;
   switch (hook) {
     case 'pre-commit': {
       const [mergeHead = 'MERGE_HEAD'] = git(
@@ -185,11 +197,12 @@ export function gatherFacts(
       return {
         files: staged(cwd),
         merging: existsSync(resolve(cwd, mergeHead)),
+        ...(onSpike() && { spike: true }),
       };
     }
     case 'pre-merge-commit':
       // For a merge, the index against HEAD is what the merge brings.
-      return { files: staged(cwd) };
+      return { files: staged(cwd), ...(onSpike() && { spike: true }) };
     case 'delivery':
       return {
         files: [
@@ -206,9 +219,12 @@ export function gatherFacts(
       const files = new Set<string>();
       let directCodeCommit = false;
       let tagPushed = false;
+      // What lands on the remote decides: a spike pushed to main is main.
+      let spike: boolean | undefined;
       for (const line of stdin.split('\n')) {
         const [localRef, sha, remoteRef = ''] = line.split(' ');
         if (!localRef || !sha || /^0+$/.test(sha)) continue;
+        spike = spike !== false && remoteRef.startsWith(`refs/heads/${SPIKE}`);
         // The remote ref is the tag GitHub receives: `HEAD:refs/tags/v1.2.3`
         // pushes one with no local tag.
         if (remoteRef.startsWith('refs/tags/v')) tagPushed = true;
@@ -249,7 +265,12 @@ export function gatherFacts(
           ).some((file) => classOf(file) === 'code'),
         );
       }
-      return { files: [...files], directCodeCommit, tagPushed };
+      return {
+        files: [...files],
+        directCodeCommit,
+        tagPushed,
+        ...(spike && { spike: true }),
+      };
     }
   }
 }
@@ -341,6 +362,7 @@ function main(argv: readonly string[]): number {
   if (!hook) throw new Error(`unknown hook: ${name}`);
   let checks: readonly Check[];
   let noRefs = false;
+  let spike = false;
   try {
     // A terminal on stdin means a hand run: reading it would wait forever.
     const stdin =
@@ -350,7 +372,9 @@ function main(argv: readonly string[]): number {
     // git runs pre-push only with refs to push; none means a hand run, where
     // "nothing to check" would wrongly vouch for unpushed commits.
     noRefs = hook === 'pre-push' && stdin.trim() === '';
-    checks = checksFor(hook, gatherFacts(hook, { stdin }));
+    const facts = gatherFacts(hook, { stdin });
+    spike = facts.spike === true;
+    checks = checksFor(hook, facts);
   } catch (error) {
     checks = FULL[hook];
     console.error(
@@ -361,9 +385,11 @@ function main(argv: readonly string[]): number {
     `hook-gate: ${hook} — ${
       noRefs
         ? 'no refs on stdin (git passes "<local ref> <sha> <remote ref> <sha>" lines)'
-        : checks.length > 0
-          ? checks.join(', ')
-          : 'nothing to check'
+        : spike
+          ? 'a spike/* branch, nothing runs'
+          : checks.length > 0
+            ? checks.join(', ')
+            : 'nothing to check'
     }`,
   );
   return flag === '--run' ? runChecks(checks) : 0;
