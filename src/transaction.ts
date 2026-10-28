@@ -503,7 +503,10 @@ export const createTransaction =
             // the caller already has its rejection.
           })
           .finally(() => {
-            if (abandoned === judged) abandoned = undefined;
+            if (abandoned !== judged) return;
+            abandoned = undefined;
+            // The worker may be idle now: a waiting verdict can have it.
+            offerIfIdle();
           });
         abandoned = judged;
       };

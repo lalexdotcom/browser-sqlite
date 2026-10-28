@@ -99,6 +99,8 @@ const harness = (
     closeSignal?: AbortSignal;
     /** What SQLite says of a statement. Default: a write unless it is a SELECT. */
     kindOf?: (sql: string) => Promise<'read' | 'write'>;
+    /** Told each time the transaction lends its worker to a verdict. */
+    offer?: (worker: unknown) => void;
   } = {},
 ) => {
   const poisoned: number[] = [];
@@ -115,7 +117,7 @@ const harness = (
   };
   const run = createTransaction({
     scheduler: scheduler as never,
-    offer: () => {},
+    offer: overrides.offer ?? (() => {}),
     // As the client's: the signal ends the caller's wait, not the verdict.
     kindOf: (_worker: unknown, sql: string, signal?: AbortSignal) => {
       asked.push(sql);
@@ -622,6 +624,36 @@ describe('transaction — what else kills it (spec R1)', () => {
       'INSERT INTO t VALUES (2)',
       'COMMIT',
     ]);
+  });
+
+  // Falsifiable: drop the offerIfIdle() of `abandon`'s finally in
+  // src/transaction.ts — nothing lends the idle worker to a waiting verdict.
+  it('lends its worker to a verdict once a write abandoned by its own signal is judged', async () => {
+    const reached = deferred();
+    const gate = deferred();
+    const worker = fakeWorker([], {
+      'INSERT INTO t VALUES (1)': async () => {
+        reached.resolve();
+        await gate.promise;
+      },
+    });
+    const offers: unknown[] = [];
+    const { transaction } = harness(worker, {
+      offer: (lent) => offers.push(lent),
+    });
+    const own = new AbortController();
+    await transaction(async (tx) => {
+      const pending = tx.run('INSERT INTO t VALUES (1)', [], {
+        signal: own.signal,
+      });
+      await reached.promise;
+      own.abort(new Error('this write only'));
+      await pending.catch(() => {});
+      const before = offers.length;
+      gate.resolve();
+      await vi.waitFor(() => expect(offers.length).toBeGreaterThan(before));
+    });
+    expect(offers.at(-1)).toBe(worker);
   });
 
   it('does not die when a read is abandoned by its own signal (R7)', async () => {
