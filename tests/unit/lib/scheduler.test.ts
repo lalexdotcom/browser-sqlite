@@ -1482,4 +1482,28 @@ describe('scheduler — Lease.demote()', () => {
     second.release();
     expect((await third).worker.index).toBe(0);
   });
+
+  // Falsifiable: drop the generation check from demote() — the dead worker's
+  // lease clears the designation its replacement holds, and the queued write
+  // is served on worker 1 beside it: two writers.
+  it('is a no-op on a stale lease, whose worker was replaced', async () => {
+    const { scheduler } = makeScheduler(2);
+    const stale = await scheduler.acquire('write'); // worker 0
+    scheduler.remove(0);
+    scheduler.add({ index: 0 });
+    const writer = await scheduler.acquire('write');
+    expect(writer.worker.index).toBe(0);
+    let served: number | undefined;
+    void scheduler.acquire('write').then((lease) => {
+      served = lease.worker.index;
+    });
+    await flush();
+    stale.demote();
+    await flush();
+    expect(served).toBeUndefined();
+    expect(scheduler.stats().write).toBe(1);
+    writer.release();
+    await flush();
+    expect(served).toBe(0);
+  });
 });

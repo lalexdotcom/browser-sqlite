@@ -64,6 +64,22 @@ describe('verdict', () => {
     expect(await worker.verdict('PRAGMA optimize')).toBe('write');
   });
 
+  // stmt_readonly answers 1 for both: the authorizer alone makes them writes.
+  // Falsifiable: drop the SQLITE_ATTACH/SQLITE_DETACH branch of the worker's
+  // authorize (src/worker/worker.ts).
+  it('calls ATTACH and DETACH writes, and attaches nothing', async () => {
+    const { db, worker } = await setUp();
+    expect(await worker.verdict("ATTACH DATABASE ':memory:' AS aux")).toBe(
+      'write',
+    );
+    expect(await worker.verdict('DETACH DATABASE aux')).toBe('write');
+    expect(
+      (await db.all<{ name: string }>('PRAGMA database_list')).map(
+        (d) => d.name,
+      ),
+    ).not.toContain('aux');
+  });
+
   // Falsifiable: skip refuseMore in the verdict.
   it('refuses a string holding two statements', async () => {
     const { worker } = await setUp();
