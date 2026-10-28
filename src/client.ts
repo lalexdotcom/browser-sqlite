@@ -1773,6 +1773,7 @@ export const createSQLiteClient = (
     third?: SQLiteQueryOptions,
   ) => {
     const { sql, params, options } = queryArgs(input, second, third);
+    assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
     const { signal, release } = withDeadline(options, 'first');
     try {

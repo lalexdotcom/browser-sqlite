@@ -92,13 +92,17 @@ describe('a pragma that writes the database', {
  * write after another client's schema change hung there (2026-10-01).
  */
 describe('a pragma the VFS refuses', () => {
-  // Falsifiable: drop the check in runStatement(), or in the transaction's checksql.
+  // Falsifiable: drop the check in runStatement() or first(), or in the
+  // transaction's checksql.
   it('is refused in a statement that sets it, in or out of a transaction', {
     tags: ['vfs:OPFSCoopSyncVFS'],
   }, async () => {
     const db = await createTestClient();
 
     await expect(db.run('PRAGMA busy_timeout = 100')).rejects.toMatchObject({
+      code: 'INVALID_PRAGMA',
+    });
+    await expect(db.first('PRAGMA busy_timeout = 100')).rejects.toMatchObject({
       code: 'INVALID_PRAGMA',
     });
     await expect(
