@@ -10,4 +10,8 @@ Part of `mem:follow-ups`.
 
 **Not known yet:** whether on Safari 27 the statement never starts (a verdict or a lease waiting), or runs without `db.debug` showing it `RUNNING`, or ends before it is polled. A first guess — the failing tests' statements are short (1-2 M iterations) and Safari finishes them unseen — is weakened by Safari 26 seeing them at once.
 
+**Alone, it does not reproduce (spike run 40725890211, 2026-10-28).** One spike file, one Vitest process per project: on Safari 27.0.1, `OPFSWriteAheadVFS/sync` and `OPFSAdaptiveVFS/jspi` — the failing pairs — see a cold 2 M-step `all()`, the same warm, and a savepointed `tx.stream()` write running in 11-14 ms, a 20 M-step read in ~100 ms; Safari 26.6.2 alike. So the verdict, the read, the streamed write and `db.debug`'s view all work there: **the failure needs the suite's context** (earlier files or tests of the cell). Aside: on the `async` build (Safari 26 and 27), the third client of that file (a cold 20 M-step read) got its request only 4-9 s after the call — something earlier in the file held it; not investigated.
+
+**In flight:** the two failing cells run whole through the planner, with `waitUntil` printing the debug history of a `theQueryIsRunning` that times out (branch `spike/safari27-running-wait`, run 40727661900).
+
 **Next, recommended:** a diagnostic branch whose spike prints `db.debug`'s request/worker state live to the step log while it waits, on macOS 27 only (`mem:conventions`: spikes are observable), before changing code or tests. macOS 27 runs on the `xcode-27` preview image (`mem:stack-and-build/ci`).
