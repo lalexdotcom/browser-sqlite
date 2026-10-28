@@ -139,6 +139,47 @@ describe('routing — strictness', () => {
   });
 });
 
+describe('a pragma table-valued function in the text of a read', () => {
+  // `count(*)` makes the text hold `(`, and the function prepares its pragma
+  // during the step. Falsifiable: judge every SQLITE_PRAGMA of a guarded step
+  // by the nested prepare's arguments in the worker's authorize.
+  const READS = [
+    'SELECT count(*) AS n FROM pragma_database_list',
+    'SELECT count(*) AS n FROM pragma_compile_options',
+    'SELECT (SELECT count(*) FROM pragma_function_list) AS n',
+  ];
+
+  it('is read by first() and by a read-only transaction', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    for (const read of READS) {
+      expect(typeof (await db.first<{ n: number }>(read))?.n).toBe('number');
+      const rows = await db.transaction((tx) => tx.all<{ n: number }>(read), {
+        readOnly: true,
+      });
+      expect(typeof rows[0]?.n).toBe('number');
+      await db.transaction(async (tx) => void (await tx.run(read)), {
+        readOnly: true,
+      });
+    }
+  });
+
+  it('stays routed as a read by run(), all() and stream()', async () => {
+    const db = await createTestClient({ poolSize: 1, debug: true });
+    for (const read of READS) {
+      await db.run(read);
+      const rows = await db.all<{ n: number }>(read);
+      expect(typeof rows[0]?.n).toBe('number');
+      for await (const _ of db.stream(read)) {
+        // One row.
+      }
+      const kinds = (db.debug?.requests ?? [])
+        .filter((r) => r.queries.some((q) => q.sql === read))
+        .map((r) => r.kind);
+      expect(kinds).toEqual(['read', 'read', 'read']);
+    }
+  });
+});
+
 describe('chunk() and stream() — arguments are validated at the call', () => {
   // Falsifiable: move queryArgs, assertStatementAllowed or prepareParams back inside
   // the generator in src/client.ts and the call returns instead of throwing.

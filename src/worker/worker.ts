@@ -637,12 +637,23 @@ const open = (file: string, options: OpenOptions) => {
    */
   let compiling: { text: string; guarded: boolean } | undefined;
   /**
-   * The text of a statement carrying `refuseWrite` while it steps. Its kind
+   * The handle of a statement carrying `refuseWrite` while it steps. Its kind
    * was checked before the first step, but a cached statement whose schema
    * changed is re-prepared during the step and may become a write then
    * (`DROP TRIGGER IF EXISTS` once the trigger exists).
    */
-  let guardingStep: string | undefined;
+  let guardingStep: number | undefined;
+  /** A handle's text, read only when a pragma needs it; set with the API. */
+  let textOf: (stmt: number) => string = () => '';
+  /**
+   * Whether a pragma met while `stmt` steps reads. Only a pragma statement is
+   * judged, by the facts of its prepare: a pragma function prepares
+   * `PRAGMA name` itself, with an argument the outer text cannot account for.
+   */
+  const guardedPragmaReads = (stmt: number) => {
+    const pragma = factsOf.get(stmt)?.pragma;
+    return !pragma || !pragmaWrites(pragmaIn(pragma, textOf(stmt)));
+  };
   /** The authorizer denied such a re-preparation: the step's error is a refusal. */
   let stepRefused = false;
   const authorize = (
@@ -669,12 +680,7 @@ const open = (file: string, options: OpenOptions) => {
     } else if (
       guardingStep !== undefined &&
       !(action === SQLITE_PRAGMA
-        ? !pragmaWrites(
-            pragmaIn(
-              { name: operation ?? '', value: argument ?? null },
-              guardingStep,
-            ),
-          )
+        ? guardedPragmaReads(guardingStep)
         : READ_ACTIONS.has(action))
     ) {
       stepRefused = true;
@@ -756,6 +762,7 @@ const open = (file: string, options: OpenOptions) => {
           }
           // After the pragmas, which are not control. A plain function: an
           // async one would take wa-sqlite's `_async` relay.
+          textOf = (stmt) => sqlite.sql(stmt);
           sqlite.set_authorizer(db, authorize, null);
           return { sqlite, module, db };
         });
@@ -1012,8 +1019,7 @@ const open = (file: string, options: OpenOptions) => {
      */
     const refuseWrites = (stmt: number, code: RefuseWrite) => {
       if (kindOf(stmt) === 'write') throw new WriteRefused(code);
-      if (module._sqlite3_stmt_isexplain(stmt) === 0)
-        guardingStep = sqlite.sql(stmt);
+      if (module._sqlite3_stmt_isexplain(stmt) === 0) guardingStep = stmt;
     };
     /** A step whose re-preparation the authorizer denied is a refused write. */
     const refusal = (e: unknown) =>
