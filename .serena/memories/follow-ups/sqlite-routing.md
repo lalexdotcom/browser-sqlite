@@ -1,6 +1,6 @@
 # Follow-up — SQLite decides read or write: `run()`, routing by verdict, and read workers that refuse writes
 
-**Status: IN PROGRESS — implemented and reviewed on `feat/sqlite-routing` (not pushed); measured against `main` (ROUTING-VS-MAIN, `mem:measurements/routing`); two perf deltas to investigate, then the final whole-branch review, the delivery gate, the matrix and the merge (2026-10-27).**
+**Status: CLOSED — 2026-10-28, `feat/sqlite-routing` merged into `main` (`mem:history/2026-10-26-to-11-01`).** The parked ideas below stay parked.
 
 Part of `mem:follow-ups`, opened 2026-10-26 (user). Large and breaking, done before `1.0.0` stable on purpose (user: "quitte à faire un gros breaking, autant le faire avant la release de la v1 stable").
 
