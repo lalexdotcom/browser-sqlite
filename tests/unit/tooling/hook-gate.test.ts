@@ -175,6 +175,21 @@ describe('hook-gate checksFor', () => {
     ]);
   });
 
+  it('runs nothing on a spike/* branch, whatever it touches', () => {
+    const facts = {
+      files: ['src/a.ts', '.github/workflows/ci.yaml'],
+      directCodeCommit: true,
+      spike: true,
+    };
+    for (const hook of [
+      'pre-commit',
+      'pre-merge-commit',
+      'pre-push',
+    ] as const) {
+      expect(checksFor(hook, facts)).toEqual([]);
+    }
+  });
+
   it('answers in the fixed order, and the full lists use it too', () => {
     const all = checksFor('pre-merge-commit', {
       files: ['scripts/bench/x.ts', 'src/a.ts', '.github/workflows/ci.yaml'],
@@ -313,6 +328,50 @@ describe('hook-gate gatherFacts', () => {
     });
     expect(facts.files).toEqual(['src/a.ts']);
     expect(facts.directCodeCommit).toBe(true);
+  });
+
+  it('pre-commit and pre-merge-commit: spike on a spike/* branch only', () => {
+    const r = repo();
+    r.write('src/a.ts');
+    r.git('add', 'src/a.ts');
+    expect(gatherFacts('pre-commit', { cwd: r.dir }).spike).toBeUndefined();
+    r.git('switch', '-q', '-c', 'spike/x');
+    expect(gatherFacts('pre-commit', { cwd: r.dir }).spike).toBe(true);
+    expect(gatherFacts('pre-merge-commit', { cwd: r.dir }).spike).toBe(true);
+    r.git('switch', '-q', '-c', 'feat/spike/x');
+    expect(gatherFacts('pre-commit', { cwd: r.dir }).spike).toBeUndefined();
+  });
+
+  it('pre-push: spike when every pushed ref lands on refs/heads/spike/*', () => {
+    const r = repo();
+    r.git('switch', '-q', '-c', 'spike/x');
+    const sha = r.commit('src/a.ts');
+    const push = (stdin: string) =>
+      gatherFacts('pre-push', { cwd: r.dir, stdin }).spike;
+    expect(push(`refs/heads/spike/x ${sha} refs/heads/spike/x ${ZERO}\n`)).toBe(
+      true,
+    );
+    // What lands on the remote decides: a spike pushed to main is main.
+    expect(
+      push(`refs/heads/spike/x ${sha} refs/heads/main ${ZERO}\n`),
+    ).toBeUndefined();
+    expect(
+      push(
+        `refs/heads/spike/x ${sha} refs/heads/spike/x ${ZERO}\n` +
+          `refs/heads/main ${sha} refs/heads/main ${ZERO}\n`,
+      ),
+    ).toBeUndefined();
+    // A deletion alone pushes nothing to skip.
+    expect(
+      push(`(delete) ${ZERO} refs/heads/spike/x ${sha}\n`),
+    ).toBeUndefined();
+  });
+
+  it('delivery: never spike, the verification runs on every branch', () => {
+    const r = repo();
+    r.git('switch', '-q', '-c', 'spike/x');
+    r.commit('src/a.ts');
+    expect(gatherFacts('delivery', { cwd: r.dir }).spike).toBeUndefined();
   });
 
   it('delivery: the branch against main, uncommitted and untracked files', () => {
