@@ -15,7 +15,8 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
-| `sqlite-routing` | One `run()` routed by SQLite's own read/write diagnosis, to stream a write's `RETURNING`; holds the `sqlite3_stmt_readonly` entry | IN PROGRESS — implemented and measured on `feat/sqlite-routing`; two perf deltas, the final review and the merge owed (handoff 2026-10-27) |
+| `sqlite-routing` | One `run()` routed by SQLite's own read/write diagnosis, to stream a write's `RETURNING`; holds the `sqlite3_stmt_readonly` entry | IN PROGRESS — implemented and measured on `feat/sqlite-routing`; perf deltas settled and the final review's fixes in (2026-10-28); the `architecture` memory, the delivery gate, the matrix and the merge owed |
+| `tx-abort-race-window` | An abort fired during a savepointed statement's post is missed (`makeAbortRace` never tests `aborted`) | OPEN — narrow window, predates the routing branch |
 | `named-params` | Params as an object, bound by name | OPEN — not designed |
 | `bulkwrite-types` | More `types` values for `bulkWrite()` | OPEN — not designed |
 | `jspi-before-sync` | `jspi` before `sync` in the build order | OPEN — to examine; measurements owed |
