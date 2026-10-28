@@ -13,6 +13,8 @@ const DROP = 'DROP TRIGGER IF EXISTS trg';
 const CREATE =
   'CREATE TRIGGER trg AFTER INSERT ON t BEGIN INSERT INTO log VALUES (new.a); END';
 
+const CREATE_IF_ABSENT = CREATE.replace('TRIGGER', 'TRIGGER IF NOT EXISTS');
+
 const setUp = async (options: Record<string, unknown> = {}) => {
   const db = await createTestClient({ poolSize: 1, debug: true, ...options });
   await db.run('CREATE TABLE t (a)');
@@ -63,6 +65,19 @@ describe('a read verdict the schema made false', () => {
     await db.run(DROP);
     expect(await triggers(db)).toBe(0);
     expect(kindsOf(db, DROP)).toEqual(['read', 'read', 'write']);
+  });
+
+  // The mirror: CREATE TRIGGER IF NOT EXISTS is read-only while `trg` exists.
+  // Falsifiable: as the cached case above.
+  it('run() creates the trigger on the writer once a memoised IF NOT EXISTS stopped being a no-op', async () => {
+    const db = await setUp();
+    await db.run(CREATE);
+    await db.run(CREATE_IF_ABSENT);
+    expect(await triggers(db)).toBe(1);
+    await db.run(DROP);
+    await db.run(CREATE_IF_ABSENT);
+    expect(await triggers(db)).toBe(1);
+    expect(kindsOf(db, CREATE_IF_ABSENT)).toEqual(['read', 'read', 'write']);
   });
 
   /** stream() over DROP, once its read verdict no longer holds. */
