@@ -1701,7 +1701,7 @@ export const createSQLiteClient = (
     method: 'run' | 'all',
     input: string | SQLQuery,
     second: unknown,
-    third: SQLiteChunkOptions | undefined,
+    third: SQLiteQueryOptions | undefined,
   ): Promise<SQLiteRunResult<T>> => {
     const { sql, params, options } = queryArgs(input, second, third);
     assertStatementAllowed(vfs, sql);
@@ -1754,7 +1754,7 @@ export const createSQLiteClient = (
   >(
     input: string | SQLQuery,
     second?: unknown,
-    third?: SQLiteChunkOptions,
+    third?: SQLiteQueryOptions,
   ) => (await runStatement<T>('all', input, second, third)).rows;
 
   /**

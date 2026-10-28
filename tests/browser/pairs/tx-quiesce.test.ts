@@ -94,9 +94,9 @@ describe('a statement following a short-circuited statement in the same callback
       const counted = await db.transaction(async (tx) => {
         const controller = new AbortController();
         // The abort fires on the read's first chunk: the client's own listener
-        // was added first, so it has taken that chunk, and with chunkSize 1
-        // over 2000 rows `done` is still ~1999 credits away — the abort lands
-        // mid-read on any machine. A timer cannot promise that: in a full
+        // was added first, so it has taken that chunk, and with 2000 rows in
+        // chunks of 500 under a credit window of 2, `done` is still a credit
+        // away — the abort lands mid-read on any machine. A timer cannot promise that: in a full
         // shard Firefox ran a sleep(0) 26-105 ms late, past the whole read.
         for (const { worker } of records) {
           worker.addEventListener('message', (event: MessageEvent) => {
@@ -107,7 +107,6 @@ describe('a statement following a short-circuited statement in the same callback
         }
         const pending = tx.all('SELECT n FROM t', [], {
           signal: controller.signal,
-          chunkSize: 1,
         });
         let rejected = false;
         try {

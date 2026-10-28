@@ -941,7 +941,7 @@ const open = (file: string, options: OpenOptions) => {
       if (keyword !== undefined) throw cachedControlRefusal(keyword);
       return kindOf(cached);
     }
-    const keep = cached === undefined && queryRunning === undefined && free;
+    const keep = queryRunning === undefined && free;
     // A query between two chunks has taken its facts and finished preparing.
     seen = {};
     const outer = compiling;

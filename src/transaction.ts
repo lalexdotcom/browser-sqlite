@@ -1175,7 +1175,7 @@ export const createTransaction =
         all: async <T extends Record<string, unknown>>(
           input: string | SQLQuery,
           second?: unknown,
-          third?: SQLiteChunkOptions,
+          third?: Interruptible,
         ) => {
           if (ending) return Promise.reject(closedError(ending));
           const {

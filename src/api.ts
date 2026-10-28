@@ -283,12 +283,12 @@ export type SQLiteQueryAPI = {
   all: {
     <T extends Record<string, unknown>>(
       query: SQLQuery,
-      options?: SQLiteChunkOptions,
+      options?: SQLiteQueryOptions,
     ): Promise<T[]>;
     <T extends Record<string, unknown>>(
       sql: string,
       params?: unknown[],
-      options?: SQLiteChunkOptions,
+      options?: SQLiteQueryOptions,
     ): Promise<T[]>;
   };
 

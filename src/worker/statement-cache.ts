@@ -11,12 +11,8 @@
 /** A `sqlite3_stmt` pointer. Opaque here: the cache only files it. */
 export type StatementHandle = number;
 
-/**
- * A cached statement and what it weighs. `handle: null` marks SQL that must
- * never be cached; a marking weighs nothing, so it can never evict a real
- * statement by its size alone.
- */
-type Entry = { handle: StatementHandle | null; weight: number };
+/** A cached statement and what it weighs. */
+type Entry = { handle: StatementHandle; weight: number };
 
 /**
  * The two bounds, both active. `maxEntries` answers the churn that generated
@@ -30,7 +26,7 @@ export type StatementCacheBounds = {
 };
 
 export type StatementCache = {
-  get: (sql: string) => StatementHandle | 'uncacheable' | undefined;
+  get: (sql: string) => StatementHandle | undefined;
   /**
    * Returns the handles evicted by this insertion; the caller finalises them.
    * `weight` is `SQLITE_STMTSTATUS_MEMUSED` and is required on purpose: an
@@ -41,8 +37,6 @@ export type StatementCache = {
     handle: StatementHandle,
     weight: number,
   ) => StatementHandle[];
-  /** Returns the handles evicted by this marking; the caller finalises them. */
-  markUncacheable: (sql: string) => StatementHandle[];
   delete: (sql: string) => StatementHandle | undefined;
   /** Empties the cache and returns every live handle, for close. */
   drain: () => StatementHandle[];
@@ -65,12 +59,12 @@ export const createStatementCache = ({
     return entry;
   };
 
-  /** Drops the least recently used entry, collecting its handle if live. */
+  /** Drops the least recently used entry, collecting its handle. */
   const evictOldest = (evicted: StatementHandle[]) => {
     const oldest = entries.keys().next();
     if (oldest.done) return;
     const entry = drop(oldest.value);
-    if (entry?.handle != null) evicted.push(entry.handle);
+    if (entry) evicted.push(entry.handle);
   };
 
   /**
@@ -108,16 +102,12 @@ export const createStatementCache = ({
       // becomes the most recently used and keys().next() is the least.
       entries.delete(sql);
       entries.set(sql, entry);
-      return entry.handle === null ? 'uncacheable' : entry.handle;
+      return entry.handle;
     },
     set: (sql, handle, weight) => insert(sql, { handle, weight }),
-    markUncacheable: (sql) => insert(sql, { handle: null, weight: 0 }),
-    delete: (sql) => drop(sql)?.handle ?? undefined,
+    delete: (sql) => drop(sql)?.handle,
     drain: () => {
-      const live: StatementHandle[] = [];
-      for (const entry of entries.values()) {
-        if (entry.handle !== null) live.push(entry.handle);
-      }
+      const live = [...entries.values()].map((entry) => entry.handle);
       entries.clear();
       total = 0;
       return live;

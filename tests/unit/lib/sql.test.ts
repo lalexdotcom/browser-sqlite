@@ -263,9 +263,9 @@ describe('queryArgs', () => {
 // Compile-time only, never called. Falsifiable: drop the SQLQuery overload
 // from SQLiteQueryAPI.all or .run.
 const _overloads = async (db: SQLiteDB) => {
-  await db.all(sql`SELECT 1`, { chunkSize: 1 });
+  await db.all(sql`SELECT 1`, { timeout: 1 });
   await db.run(sql`SELECT 1`);
-  await db.all('SELECT ?', [1], { chunkSize: 1 });
+  await db.all('SELECT ?', [1], { timeout: 1 });
   // @ts-expect-error a query built by sql takes no params array
   await db.all(sql`SELECT 1`, [1]);
 };
@@ -298,7 +298,7 @@ const _nominal = async (db: SQLiteDB) => {
   await db.all({ sql: 'SELECT 1', params: [] });
   // A wrapper typed from the method keeps the string form: TypeScript reads
   // the last overload.
-  const args: Parameters<SQLiteDB['all']> = ['SELECT ?', [1], { chunkSize: 1 }];
+  const args: Parameters<SQLiteDB['all']> = ['SELECT ?', [1], { timeout: 1 }];
   await db.all(...args);
 };
 
