@@ -42,3 +42,18 @@ Moved here from `mem:follow-ups` on 2026-10-16, as written. **Method:** throwawa
 | retry off and #381 out (installed file = `6b59b231` + #386 only) | red 4/4: `WORKER_CRASHED`, `NoModificationAllowedError` on `createSyncAccessHandle` |
 
 The whole first-open branch removed, every pair of both VFS (`sync`/`jspi`/`async`), Chrome and Firefox, `--full`: 39 cells, 1 534/1 534 files, 8 644 tests. **Acted on the same day** on `refactor/post-381-open-retry`, after #381 merged and was pinned (`8a8bc2ee`): the branch and `openWithRetry`'s `vfs` parameter removed, `exclusiveFileHandle` kept for the test planner (`requires:exclusive-file-handle`); `pnpm test` 371/371 files. The after-death retry stays: `busy` waits until `openDeadline` (Safari, WebKit 328618; unmeasured here), and `OPFSAdaptiveVFS`'s `xOpen` without `readwrite-unsafe` is not #382's (`jLock()`).
+
+## JOURNAL-PROBE — OPFS calls per autocommit write, per VFS and `journal_mode`, 2026-10-29, this container
+
+**Method.** A throwaway scratchpad page (not kept): a module worker loads wa-sqlite as patched in `node_modules` (upstream VFS classes, no library), wraps `getFileHandle`, `getDirectoryHandle`, `removeEntry`, `createSyncAccessHandle` and the access handle's `close`/`flush`/`truncate`, and counts them by file suffix. Per configuration: open, apply the pragmas, 3 warm-up `INSERT`s, then 40 autocommit `INSERT`s counted and timed, then the same 40 in one transaction. `OPFSAdaptiveVFS` on `jspi` (both engines have it), the others on `sync`. Stock Firefox 155 and Chrome 153, Linux, one run each.
+
+| VFS · `journal_mode` | OPFS calls per commit (the same on both engines unless said) | median ms/commit Firefox / Chrome |
+|---|---|---|
+| `OPFSAdaptiveVFS` · `delete` (its default) | on `-journal`: `getFileHandle(create)`, `createSyncAccessHandle`, `close`, `removeEntry`, 2 `flush`; `getFileHandle` without create on `-journal` and `-wal` (SQLite's `xAccess`); 1 `flush` of the database | 3 / 2.3 |
+| `OPFSAdaptiveVFS` · `truncate`, `persist` | **refused on Firefox** (`disk I/O error`: `jFileControl` accepts only `off`/`memory`/`delete`/`wal` without `readwrite-unsafe`), the mode stays `delete`; accepted on Chrome and worse there: 2 `createSyncAccessHandle` + 2 `close` on `-journal` per commit | — / 3.0-3.2 |
+| `OPFSAdaptiveVFS` · `memory` | the two `getFileHandle` without create, 1 `flush` | 0 / 1.1 |
+| `OPFSCoopSyncVFS` · `delete` | no metadata call: `truncate` of `-journal` (its `jDelete`), 3 `flush`; `truncate` refused (`disk I/O error`) on both engines | 1 / 0.1 |
+| `OPFSWriteAheadVFS` | no OPFS call at all | 1 / 0.1 |
+| `AccessHandlePoolVFS` · `exclusive` + `wal` (the library's default) / `delete` | none / 6 `flush` + 1 `truncate` of pool files | 0-1 / 0-0.1 |
+
+The one-transaction phase made the same calls as one autocommit write: the cost is per commit, not per row. Firefox's timer rounds to 1 ms. **Reading:** without `readwrite-unsafe` (Firefox, Safari), `OPFSAdaptiveVFS` creates, opens, closes and removes its `-journal` at every write transaction — exactly the cycle of Mozilla bug 2072928; at OPFS-PROBE's Windows costs that is 420-660 ms per commit before the two lookups, which matches `results.test.ts`'s ~630 ms per commit there (`mem:follow-ups/firefox-opfs-fsync`). The other VFS keep every file and handle they use between commits.
