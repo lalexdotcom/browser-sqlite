@@ -138,7 +138,6 @@ describe('result rows', () => {
     const texts: string[] = [];
     for (let n = 1; n <= 40; n++)
       texts.push('a'.repeat(n), 'é'.repeat(n), '😀'.repeat(Math.ceil(n / 4)));
-    for (const t of texts) await db.run('INSERT INTO e (v) VALUES (?)', [t]);
     const invalid = [
       'ff',
       'c0af',
@@ -155,12 +154,20 @@ describe('result rows', () => {
     const hexBytes = (h: string) =>
       Uint8Array.from(h.match(/../g) ?? [], (b) => Number.parseInt(b, 16));
     const expectedInvalid: string[] = [];
-    for (const h of invalid) {
-      for (const pad of ['', '61'.repeat(40)]) {
-        await db.run(`INSERT INTO e (v) VALUES (CAST(x'${pad}${h}' AS TEXT))`);
-        expectedInvalid.push(reference.decode(hexBytes(pad + h)));
+    // One transaction, not one commit per row: committed one by one, these
+    // rows took 88 s to over 120 s on Firefox on Windows, where Chrome takes
+    // seconds (mem:follow-ups/firefox-opfs-fsync). The subject is the decoding.
+    await db.transaction(async (tx) => {
+      for (const t of texts) await tx.run('INSERT INTO e (v) VALUES (?)', [t]);
+      for (const h of invalid) {
+        for (const pad of ['', '61'.repeat(40)]) {
+          await tx.run(
+            `INSERT INTO e (v) VALUES (CAST(x'${pad}${h}' AS TEXT))`,
+          );
+          expectedInvalid.push(reference.decode(hexBytes(pad + h)));
+        }
       }
-    }
+    });
     const rows = await db.all<{ v: string }>('SELECT v FROM e ORDER BY id');
     expect(rows.map((r) => r.v)).toEqual([...texts, ...expectedInvalid]);
     await db.close();
