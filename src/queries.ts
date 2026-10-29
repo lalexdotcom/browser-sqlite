@@ -26,6 +26,13 @@ export const makeAbortRace = (
   signal: AbortSignal | undefined,
 ): { aborted: Promise<never> | undefined; teardown: () => void } => {
   if (!signal) return { aborted: undefined, teardown: () => {} };
+  // B9: addEventListener never fires for a signal already aborted — one that
+  // fired between the caller's own check and this call, e.g. while it posted.
+  if (signal.aborted) {
+    const aborted = Promise.reject<never>(signal.reason);
+    aborted.catch(() => {});
+    return { aborted, teardown: () => {} };
+  }
   let onAbort: (() => void) | undefined;
   const aborted = new Promise<never>((_, reject) => {
     onAbort = () => reject(signal.reason);
