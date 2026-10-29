@@ -184,11 +184,10 @@ describe('close() during a query', () => {
 
     // The query is in flight: its first row has reached the consumer.
     await waitUntil(() => received > 0, 'the first row');
-    const started = performance.now();
-    await db.close();
     // Bounded by drainTimeout (300 ms); with a slow consumer the drain runs to
-    // drainTimeout — that is the wave-2 contract. We assert well below 3 s.
-    expect(performance.now() - started).toBeLessThan(3000);
+    // drainTimeout — that is the wave-2 contract. A close that does not settle
+    // fails the test on its timeout.
+    await db.close();
 
     expect(await streaming).toBe('rejected');
     await expect(db.all('SELECT 1 AS n')).rejects.toThrow();

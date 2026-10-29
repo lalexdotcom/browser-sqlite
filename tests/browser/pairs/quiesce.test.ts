@@ -63,8 +63,9 @@ describe('a worker killed without closing', () => {
 
     expect(log).toContain('post:quiesce');
     expect(log).not.toContain('recv:quiesced');
+    // The grace is the subject: no kill before it. A kill that never comes
+    // fails `waitUntil` above, which is the bound.
     expect(waited).toBeGreaterThanOrEqual(200);
-    expect(waited).toBeLessThan(5_000);
   });
 
   // Falsifiable: quiesce every VFS — OPFS handles would outlive the kill by

@@ -24,29 +24,27 @@ describe('the sync build, isolated', {
       // rather than mid-step — the slot channel never fires and the mutation
       // test gives a false GREEN. The prime ensures the abort run takes the
       // direct run(cached) path, which has no macrotask before the step.
-      // Unaborted step time: ~4 343 ms (measured 2026-09-04, sync MemoryVFS).
-      await db.all(longQuery(20_000_000));
+      // N is a parameter, so a tiny prime caches the statement the long run
+      // reuses. Unaborted, 20 M took ~4 343 ms (measured 2026-09-04, sync
+      // MemoryVFS): 2 G runs past this test's timeout, which is the bound.
+      await db.all(LONG_QUERY, [1_000]);
 
       const controller = new AbortController();
-      const long = db.all(longQuery(20_000_000), [], {
+      const long = db.all(LONG_QUERY, [2_000_000_000], {
         signal: controller.signal,
       });
       long.catch(() => {});
       await waitUntil(
-        theQueryIsRunning(db, longQuery(20_000_000)),
+        theQueryIsRunning(db, LONG_QUERY),
         'the query to be running',
       );
-      // `started` is before the abort so the timer captures abort → drain →
-      // SELECT 1. On the working path the SAB slot interrupts the step within
-      // the first progress-handler call (~100 K VDBE ops); the full unaborted
-      // step takes ~4 343 ms (measured). A broken interrupt channel lets the
-      // step run to completion, pushing the total well past the bound, which
-      // leaves room for a loaded runner.
-      const started = performance.now();
+      // On the working path the SAB slot interrupts the step within the first
+      // progress-handler call (~100 K VDBE ops), and the read below is served
+      // at once. A broken interrupt channel lets the step run to completion,
+      // and the read waits it out past the test's timeout.
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      expect(performance.now() - started).toBeLessThan(1000);
     } finally {
       await db.close();
     }
@@ -58,15 +56,15 @@ describe('the sync build, isolated', {
     // never runs. A signal is still passed so the test pins that path, on the
     // sync build under isolation; the signal-less case is the next test.
     // Falsifiable: remove the `interrupt()` in drain()'s finally
-    // (src/queries.ts) — the count then runs to its end, seconds, before
-    // SELECT 1 gets the worker.
+    // (src/queries.ts) — the count then runs to its end, past the test's
+    // timeout, before SELECT 1 gets the worker.
     const db = await createTestClient({
       poolSize: 1,
     });
     try {
-      // The first row is immediate; the second is a 20 M-row count, one long
-      // step (~4 343 ms unaborted, measured for the test above).
-      const sql = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 20000000) SELECT 0 AS n UNION ALL SELECT count(*) FROM c`;
+      // The first row is immediate; the second is a 2 G-row count, one long
+      // step (20 M took ~4 343 ms unaborted, measured for the test above).
+      const sql = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 2000000000) SELECT 0 AS n UNION ALL SELECT count(*) FROM c`;
       const signal = new AbortController().signal;
       for await (const rows of db.chunk<{ n: number }>(sql, [], {
         signal,
@@ -78,9 +76,7 @@ describe('the sync build, isolated', {
         await sleep(100);
         break;
       }
-      const started = performance.now();
       expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      expect(performance.now() - started).toBeLessThan(1000);
     } finally {
       await db.close();
     }
@@ -90,18 +86,17 @@ describe('the sync build, isolated', {
     // No signal and no timeout anywhere: the sync build polls the abort slot
     // for every statement, so first() cuts the step it left running.
     // Falsifiable: poll the slot only for a statement that was given a signal —
-    // the count then runs to its end, seconds, before SELECT 1 gets the worker.
+    // the count then runs to its end, past the test's timeout, before SELECT 1
+    // gets the worker.
     const db = await createTestClient({
       poolSize: 1,
     });
     try {
       await db.all('SELECT 1');
-      // The second row is a 20 M-row count, one long step (~4 343 ms unaborted).
-      const sql = `SELECT 1 AS n UNION ALL SELECT (${longQuery(20_000_000)})`;
+      // The second row is a 2 G-row count, one long step (20 M: ~4 343 ms).
+      const sql = `SELECT 1 AS n UNION ALL SELECT (${longQuery(2_000_000_000)})`;
       expect(await db.first<{ n: number }>(sql)).toEqual({ n: 1 });
-      const started = performance.now();
       expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      expect(performance.now() - started).toBeLessThan(1000);
     } finally {
       await db.close();
     }

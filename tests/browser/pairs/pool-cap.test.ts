@@ -278,8 +278,9 @@ describe('a pool capped by its environment', () => {
   // worker can never send. Runs on every VFS the environment can cap: where
   // nothing declines, close() should still be prompt and warning-free.
   // Falsifiers (checked once each while building this fix): removing
-  // `deferredClose?.resolve()` from pool.ts's `poison` makes this take ~10 s
-  // on Firefox; removing the `closing` guard in client.ts's `retireSlot`
+  // `deferredClose?.resolve()` from pool.ts's `poison` makes close() wait out
+  // drainTimeout on Firefox, past this test's timeout; removing the `closing`
+  // guard in client.ts's `retireSlot`
   // makes Firefox capture a `pool capped` warning here.
   it('close() during startup of a capped pool returns promptly and does not warn', {
     tags: ['requires:env-cappable'],
@@ -294,11 +295,11 @@ describe('a pool capped by its environment', () => {
       vfs: TEST_TARGET.vfs,
       build: TEST_TARGET.build,
       poolSize: 2,
-      drainTimeout: 10_000,
+      // Past the test's own timeout: a close that waits out the drain then
+      // fails the test on its timeout instead of passing late.
+      drainTimeout: scaled(60_000),
     });
-    const t0 = performance.now();
     await db.close();
-    expect(performance.now() - t0).toBeLessThan(5000);
     expect(warnings.filter((w) => w.includes('pool capped'))).toEqual([]);
   });
 

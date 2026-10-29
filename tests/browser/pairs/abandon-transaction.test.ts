@@ -103,13 +103,13 @@ describe('an abandoned generator inside a transaction', {
       drainTimeout: 2000,
     });
     try {
-      const started = performance.now();
       await expect(
         db.transaction(async (tx) => {
           // Nothing abortable anywhere: no signal on the transaction, none on
           // the statement, no timeout. The only thing that can settle the
-          // next() below is the worker being told to stop.
-          const rows = tx.chunk(longQuery(200_000_000));
+          // next() below is the worker being told to stop. 2 G iterations:
+          // uncut, the query outlives this test's timeout, which is the bound.
+          const rows = tx.chunk(longQuery(2_000_000_000));
           // In flight and never awaited — the shape a `Promise.race` that
           // lost its own timer leaves behind.
           void rows.next().catch(() => {});
@@ -117,9 +117,6 @@ describe('an abandoned generator inside a transaction', {
           throw new Error('boom');
         }),
       ).rejects.toThrow('boom');
-      // Bounded by drainTimeout, not by the query: 200 million iterations of
-      // that CTE run far longer than this budget.
-      expect(performance.now() - started).toBeLessThan(15_000);
     } finally {
       await db.close();
     }

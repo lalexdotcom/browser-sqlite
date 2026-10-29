@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, interceptWorkers, scaled } from '../helpers';
+import {
+  createTestClient,
+  interceptWorkers,
+  scaled,
+  theQueryIsRunning,
+} from '../helpers';
 
 /**
  * docs/superpowers/specs/2026-09-11-tx-savepoint-design.md: a statement the
@@ -49,11 +54,10 @@ const abortAfter = (ms: number, reason: unknown) => {
 const bigCount = async (db: Db) =>
   (await db.all<{ n: number }>('SELECT count(*) AS n FROM big'))[0]?.n;
 
-/** Milliseconds `fn` takes. */
-const timed = async (fn: () => Promise<unknown>) => {
-  const t0 = performance.now();
-  await fn();
-  return performance.now() - t0;
+/** The debug records of these statements, in the client's request history. */
+const queriesOf = (db: Db, sqls: string[]) => {
+  const all = (db.debug?.requests ?? []).flatMap((r) => r.queries);
+  return sqls.map((sql) => all.findLast((q) => q.sql === sql));
 };
 
 describe('an SQL error the callback catches (spec 2026-09-11 §1)', () => {
@@ -114,13 +118,18 @@ describe('an SQL error the callback catches (spec 2026-09-11 §1)', () => {
 });
 
 /** A 3 000 000-row insert: long enough on Chromium for a timing bound to discriminate. */
-const HUGE_INSERT =
-  'INSERT INTO big WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 3000000) SELECT x FROM c';
+/**
+ * One INSERT whose single step() computes for minutes before it writes its one
+ * row: run to its end it outlives the test's timeout, which is the bound, and
+ * a cut leaves nothing written.
+ */
+const ENDLESS_INSERT =
+  'INSERT INTO big SELECT count(*) FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 2000000000) SELECT x FROM c)';
 
 describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R3)', () => {
   // Falsifiable: in `settled`, `await worker.quiesce()` before rethrowing the
-  // own abort — the rejection then arrives when the write ends, and the next
-  // statement waits for nothing. Holds on every build: the promise rejects at
+  // own abort — the rejection then arrives when the write ends, when it is no
+  // longer running. Holds on every build: the promise rejects at
   // the deadline whether or not the underlying step can be cut, so this no
   // longer loops over VFS (spec 2026-09-15, A5).
   it(
@@ -128,17 +137,24 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
     async () => {
       const db = await setUp();
       try {
-        let rejectedAfter = 0;
-        let nextWaited = 0;
+        let runningAtRejection = false;
         await db.transaction(async (tx) => {
-          const t0 = performance.now();
           await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-          const t1 = performance.now();
+          // Rejected at the deadline: the write is still running.
+          runningAtRejection = theQueryIsRunning(db, BIG_INSERT)();
           await tx.run('INSERT INTO t VALUES (1)');
-          rejectedAfter = t1 - t0;
-          nextWaited = performance.now() - t1;
         });
-        expect(nextWaited).toBeGreaterThan(rejectedAfter);
+        expect(runningAtRejection).toBe(true);
+        // And the next statement paid for the rest: it started once the
+        // abandoned write had ended.
+        const [big, next] = queriesOf(db, [
+          BIG_INSERT,
+          'INSERT INTO t VALUES (1)',
+        ]);
+        expect(big?.endTime).toBeDefined();
+        expect(next?.startTime).toBeGreaterThanOrEqual(
+          big?.endTime ?? Infinity,
+        );
         expect(await bigCount(db)).toBe(0);
         expect(await rowsOf(db)).toEqual([0, 1]);
       } finally {
@@ -151,9 +167,9 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // Falsifiable: in `entryWait`, await `abandoned` without racing the
   // waiting statement's own signal — the rejection still arrives (`own`'s
   // pre-checked `throwIfAborted()` catches it once the wait ends), but only
-  // once the abandoned write itself has finished: `rejectedAfter` then costs
-  // the whole remaining run and `nextWaited` costs nothing, so the timing
-  // assertion below inverts instead of the outcome silently staying green.
+  // once the abandoned write itself has finished, so the write is no longer
+  // running when it rejects, and the assertion on that state goes red instead
+  // of the outcome silently staying green.
   // Holds on every build (see T2's note).
   it(
     'rejects a statement that times out behind an abandoned write, alone (T5)',
@@ -161,25 +177,22 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
       const db = await setUp();
       try {
         let second: unknown;
-        let rejectedAfter = 0;
-        let nextWaited = 0;
+        let runningAtRejection = false;
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
           await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-          const t0 = performance.now();
           second = await tx
             .run('INSERT INTO t VALUES (9)', [], { timeout: 20 })
             .catch((e) => e);
-          const t1 = performance.now();
-          rejectedAfter = t1 - t0;
+          // Rejected while the abandoned write still runs, alone.
+          runningAtRejection = theQueryIsRunning(db, BIG_INSERT)();
           await tx.run('INSERT INTO t VALUES (2)');
-          nextWaited = performance.now() - t1;
         });
         expect(second).toMatchObject({
           code: 'OPERATION_TIMEOUT',
           timeout: 20,
         });
-        expect(rejectedAfter).toBeLessThan(nextWaited);
+        expect(runningAtRejection).toBe(true);
         expect(await rowsOf(db)).toEqual([0, 1, 2]);
         expect(await bigCount(db)).toBe(0);
       } finally {
@@ -221,27 +234,20 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   }, async () => {
     const db = await setUp();
     try {
-      const natural = await timed(() => db.run(HUGE_INSERT));
-      await db.run('DELETE FROM big');
       const before = workerIdentity(db);
       const reason = new Error('abandon the write');
       let seen!: AbortSignal;
-      const took = await timed(() =>
-        expect(
-          db.transaction(async (tx) => {
-            seen = tx.signal;
-            await tx.run('INSERT INTO t VALUES (1)');
-            await tx.run(HUGE_INSERT, [], {
-              signal: abortAfter(30, reason),
-            });
-          }),
-        ).rejects.toBe(reason),
-      );
-      // A write that is not cut runs to about `natural` (ratio ≈ 1.0); one
-      // that is cut ends before it. The latest cut measured is IDBMirrorVFS's,
-      // ≤ 0.39 (CUT-RATIO, 2026-09-25). The subject is that the write is cut,
-      // not how fast.
-      expect(took).toBeLessThan(natural * 0.6);
+      // A write that is not cut runs to its end, past the test's timeout:
+      // transaction() settling at all is what shows the write was cut.
+      await expect(
+        db.transaction(async (tx) => {
+          seen = tx.signal;
+          await tx.run('INSERT INTO t VALUES (1)');
+          await tx.run(ENDLESS_INSERT, [], {
+            signal: abortAfter(30, reason),
+          });
+        }),
+      ).rejects.toBe(reason);
       expect(seen.aborted).toBe(true);
       expect(seen.reason).toBe(reason);
       expect(await rowsOf(db)).toEqual([0]);
@@ -252,42 +258,33 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
     }
   });
 
-  // No falsifier known. T3's was run here on 2026-09-15 and refuted: with the
-  // need dropped, on the uninterruptible OPFSWriteAheadVFS/sync pair, T4
-  // stayed green on both Chromium projects. Its `took` bound measures how fast
-  // the transaction rejects against its own 150 ms timeout, not whether the
-  // background write was cut. `requires:interruptible` stays: the subject is
-  // a build that can cut a step.
+  // Falsifiable: a worker that never interrupts a step (its progress handler
+  // always returning 0) — the write then runs to its end, past the test's
+  // timeout (2026-10-29). Until the write outlived the timeout this had no
+  // falsifier: its bound was a duration against the write's natural run, and
+  // measured how fast the transaction rejects at its own 150 ms timeout.
+  // `requires:interruptible` stays: the subject is a build that can cut a step.
   it("cuts an abandoned write when the transaction's own timeout expires (T4)", {
     tags: ['requires:interruptible'],
     timeout: scaled(120_000),
   }, async () => {
     const db = await setUp();
     try {
-      const natural = await timed(() => db.run(HUGE_INSERT));
-      await db.run('DELETE FROM big');
-      let outcome: unknown;
-      const took = await timed(async () => {
-        outcome = await db
-          .transaction(
-            async (tx) => {
-              await tx.run('INSERT INTO t VALUES (1)');
-              await tx.run(HUGE_INSERT, [], { timeout: 30 }).catch(() => {});
-              await tx.run('INSERT INTO t VALUES (2)');
-            },
-            { timeout: 150 },
-          )
-          .catch((e) => e);
-      });
+      // A write that is not cut runs to its end, past the test's timeout.
+      const outcome = await db
+        .transaction(
+          async (tx) => {
+            await tx.run('INSERT INTO t VALUES (1)');
+            await tx.run(ENDLESS_INSERT, [], { timeout: 30 }).catch(() => {});
+            await tx.run('INSERT INTO t VALUES (2)');
+          },
+          { timeout: 150 },
+        )
+        .catch((e) => e);
       expect(outcome).toMatchObject({
         code: 'OPERATION_TIMEOUT',
         timeout: 150,
       });
-      // A write that is not cut runs to about `natural` (ratio ≈ 1.0); one
-      // that is cut ends before it. The latest cut measured is IDBMirrorVFS's,
-      // ≤ 0.39 (CUT-RATIO, 2026-09-25). The subject is that the write is cut,
-      // not how fast.
-      expect(took).toBeLessThan(natural * 0.6);
       expect(await rowsOf(db)).toEqual([0]);
       expect(await bigCount(db)).toBe(0);
     } finally {

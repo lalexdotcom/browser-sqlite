@@ -8,28 +8,27 @@ describe('query timeout', () => {
     // Needs interruptible: without it the next read would wait out the whole
     // query — 4 s on Chromium, 22 s on Firefox, past this test's 30 s on a CI
     // runner (mem:measurements, CI-QUERY-TIMEOUT).
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
     try {
-      const slow = longQuery(20_000_000);
+      // Run to its end, minutes on either engine: past this test's timeout,
+      // which is the bound when the statement is not stopped.
+      const slow = longQuery(2_000_000_000);
       // A fresh client's first call can time out while it waits for the worker
       // to start, and then no statement ever runs. Start the worker, then warm
       // the statement, so the timeout below lands inside step() (mem:lessons,
       // 2026-09-05).
       await db.all('SELECT 1');
       await db.all(slow, [], { timeout: 50 }).catch(() => {});
-      const started = performance.now();
       await expect(db.all(slow, [], { timeout: 200 })).rejects.toMatchObject({
         code: 'OPERATION_TIMEOUT',
       });
-      // The rejection is immediate by contract, whether the statement stopped or
-      // not; this bounds only the contract.
-      expect(performance.now() - started).toBeLessThan(1500);
+      // Immediate by contract, whether the statement stopped or not: rejected
+      // before the worker has answered, which only a later message can report.
+      expect(db.debug?.workers[0]?.status).not.toBe('READY');
       // What proves the statement stopped: the next read does not wait it out.
       // Falsifiable: create this client on the `sync` build — the read then
-      // waits for the query's natural end, seconds on either engine.
-      const next = performance.now();
+      // waits for the query's natural end, past the test's timeout.
       expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      expect(performance.now() - next).toBeLessThan(2000);
     } finally {
       await db.close();
     }
@@ -112,16 +111,25 @@ describe('query timeout', () => {
       // the lease acquisition and this goes green for the wrong reason — the
       // clock must run during the wait, which is what the assertion pins.
       const holder = new AbortController();
+      let longSettled = false;
       const long = db.all(longQuery(20_000_000), [], {
         signal: holder.signal,
       });
-      long.catch(() => {});
+      long.then(
+        () => {
+          longSettled = true;
+        },
+        () => {
+          longSettled = true;
+        },
+      );
       try {
-        const started = performance.now();
         await expect(
           db.all('SELECT 1 AS one', [], { timeout: 150 }),
         ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
-        expect(performance.now() - started).toBeLessThan(1000);
+        // While the holder still runs: the timeout fired during the wait, not
+        // once the worker came free.
+        expect(longSettled).toBe(false);
       } finally {
         holder.abort();
       }

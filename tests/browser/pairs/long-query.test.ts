@@ -17,25 +17,24 @@ describe('a long single step', () => {
     expect(rows[0]?.n).toBe(2_000_000);
   });
 
-  // Falsifiable: drop the abort from the race in chunk() and go back to testing
-  // `aborted` after the await — the rejection then waits for the sort to finish
-  // and this exceeds its budget.
+  // Falsifiable: a worker that never interrupts a step (its progress handler
+  // always returning 0) — the rejection then waits for the sort to finish,
+  // minutes at 2 G, and the test fails on its timeout. Dropping the abort from
+  // `drain`'s race is not enough on its own (2026-10-29): `chunk()`'s reclaim
+  // listener interrupts the step at the abort, so the wait ends at once.
   it('gives the caller back control at the moment the signal fires', {
     tags: ['requires:two-workers', 'requires:interruptible'],
   }, async () => {
     // A second worker must be free to answer while the first is inside the
     // long sort, so the pair has to keep two. Interruptible too: uncut, the
-    // teardown drains the whole 20M-row query.
+    // teardown drains the whole query.
     const db = await createTestClient({ poolSize: 2 });
-    // Booted first: the bound is on the abort, not on the pool's startup.
     await db.all('SELECT 1');
-    const started = performance.now();
     await expect(
-      db.all(longQuery(20_000_000), [], {
+      db.all(longQuery(2_000_000_000), [], {
         signal: AbortSignal.timeout(200),
       }),
     ).rejects.toThrow();
-    expect(performance.now() - started).toBeLessThan(3000);
   });
 
   // Falsifiable: remove both `interrupt()` calls, in reclaim() and in drain()'s

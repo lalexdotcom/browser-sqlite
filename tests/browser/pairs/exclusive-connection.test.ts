@@ -2,7 +2,12 @@ import { SQLiteError } from 'browser-sqlite';
 import { describe, expect, it } from 'vitest';
 import { connectionLockName } from '../../../src/locks';
 import { databasePath } from '../../../src/utils';
-import { createTestClient, sharedDatabase, TEST_TARGET } from '../helpers';
+import {
+  createTestClient,
+  scaled,
+  sharedDatabase,
+  TEST_TARGET,
+} from '../helpers';
 
 /**
  * Guard against AHP-2TAB: two clients on `AccessHandlePoolVFS` silently break
@@ -62,25 +67,21 @@ describe('the exclusive connection guard', () => {
   }, async () => {
     const db = sharedDatabase();
     const a = db.open({ poolSize: 1 });
-    const b = db.open({ poolSize: 1 });
+    // An open timeout past the test's own: the stall this rules out then
+    // fails the test on its timeout, whatever a slow runner's boot costs.
+    const b = db.open({ poolSize: 1, openTimeout: scaled(120_000) });
 
     await a.run('CREATE TABLE t (n)');
 
-    const start = Date.now();
     let error: unknown;
     try {
       await b.all('SELECT 1');
     } catch (e) {
       error = e;
     }
-    const elapsed = Date.now() - start;
 
     expect(error).toBeInstanceOf(SQLiteError);
     expect((error as SQLiteError).code).toBe('DATABASE_IN_USE');
-    // Must be fast — well under the default 30-second open timeout. The span
-    // includes the second client's worker boot, which alone has taken ~3 s on
-    // a CI runner: the bound sits between that and the stall it rules out.
-    expect(elapsed).toBeLessThan(10_000);
   });
 
   // -------------------------------------------------------------------------

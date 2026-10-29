@@ -3,7 +3,6 @@ import {
   createTestClient,
   LONG_QUERY,
   longQuery,
-  scaled,
   sleep,
   theQueryIsRunning,
   waitUntil,
@@ -12,7 +11,6 @@ import {
 describe('aborting a running statement', () => {
   it('frees the worker, so the next query does not wait it out', {
     tags: ['requires:interruptible'],
-    timeout: scaled(90_000),
   }, async () => {
     // poolSize 1: the next query MUST land on the worker that was interrupted.
     const db = await createTestClient({
@@ -26,13 +24,12 @@ describe('aborting a running statement', () => {
       // caches the same statement the long run reuses.
       await db.all(LONG_QUERY, [1_000]);
 
-      // N=40_000_000: the full step takes ~8 s on Chromium async (4x the
-      // ~2 082 ms measured for 10 M on 2026-09-05 under the
-      // feature-neutralising mutation), far past the bound below; Firefox runs
-      // it 4-5x slower still. The abort interrupts mid-step regardless of N
-      // when the feature works, so only the broken case pays for it.
+      // N=2 G: run to its end, the step takes minutes on either engine (40 M
+      // took ~8 s on Chromium async), past this test's timeout, which is the
+      // bound. The abort interrupts mid-step regardless of N when the feature
+      // works, so only the broken case pays for it.
       const controller = new AbortController();
-      const long = db.all(LONG_QUERY, [40_000_000], {
+      const long = db.all(LONG_QUERY, [2_000_000_000], {
         signal: controller.signal,
       });
       long.catch(() => {});
@@ -40,28 +37,17 @@ describe('aborting a running statement', () => {
         theQueryIsRunning(db, LONG_QUERY),
         'the query to be running',
       );
-      // `started` is before the abort so the timer captures abort → worker drain
-      // → SELECT 1. On the working path the async progress handler yields via
-      // gate.tick() and checks gate.isStopped(), interrupting the step at the
-      // first handler call. A broken interrupt channel lets the step run to
-      // completion, pushing the total far past the bound.
-      const started = performance.now();
+      // On the working path the async progress handler yields via gate.tick()
+      // and checks gate.isStopped(), interrupting the step at the first handler
+      // call, so the read below is served at once. A broken interrupt channel
+      // lets the step run to completion, and the read waits it out past the
+      // test's timeout.
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
-      // In isolation the short read takes ~10-20 ms on both engines; ~900 ms
-      // was observed on Firefox under full-suite contention, and the bound
-      // sits between that and the broken path's seconds. Anything over ~100 ms
-      // in isolation means a structural problem — likely two gate.tick()
-      // roundtrips instead of one — and should be investigated.
-      expect(performance.now() - started).toBeLessThan(3000);
     } finally {
       await db.close();
     }
-    // 90 s, against the project's 30 s default: the broken case runs the
-    // 40 M step to its end, tens of seconds on Firefox, and a test that
-    // exceeds its timeout does not fail, it expires mutely without naming
-    // what it was waiting for.
   });
 
   it('still rejects immediately, without waiting for the worker', {
@@ -102,12 +88,11 @@ describe('aborting a running statement', () => {
         theQueryIsRunning(db, longQuery(20_000_000)),
         'the query to be running',
       );
-      const asked = performance.now();
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
-      // Immediate by contract; the bound leaves room for a loaded runner and
-      // stays far below the seconds a rejection waiting for the worker takes.
-      expect(performance.now() - asked).toBeLessThan(1000);
+      // Immediate by contract: rejected before the worker has answered the
+      // stop, which only a message — a later task — can report.
+      expect(db.debug?.workers[0]?.status).not.toBe('READY');
     } finally {
       await db.close();
     }
