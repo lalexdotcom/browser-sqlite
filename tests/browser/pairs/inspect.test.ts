@@ -6,7 +6,7 @@ import {
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { clientMarkerName } from '../../../src/locks';
 import { databasePath } from '../../../src/utils';
-import { TEST_TARGET } from '../helpers';
+import { TEST_TARGET, waitUntil } from '../helpers';
 import { holdIn, makeRealm } from '../helpers/realm';
 
 // `inspectDatabase` needs a database that outlives the worker holding it, and
@@ -86,7 +86,11 @@ describe('inspectDatabase', {
     // The browser reclaiming the lock is the whole reason this is a lock and
     // not a registry entry with a timestamp.
     realm.frameElement?.remove();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitUntil(
+      async () =>
+        (await inspectDatabase(file, { vfs: VFS })).clients.length === 0,
+      "the removed frame's client lock reclaimed",
+    ).catch(() => {});
 
     expect((await inspectDatabase(file, { vfs: VFS })).clients).toHaveLength(0);
   });

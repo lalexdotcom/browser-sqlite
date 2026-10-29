@@ -34,7 +34,7 @@ been work on nothing.
 | `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10) |
 | `matrix-windows-macos` | The matrix on Windows and macOS | OPEN — later (user, 2026-10-15) |
 | `macos-ci-instability` | macOS workflows fail without a library cause: timers ~5× slower in Chrome and Firefox than on Linux (not in Safari), a lost Safari session | OPEN — low priority: the runner's, not macOS's (user's Mac fast); `BSQ_TIME_SCALE=2` on macOS since 2026-10-26; runner cause and Safari sessions open |
-| `time-based-tests` | Tests waiting on time where an event or a state would do; time only as a timeout (user) | OPEN — inventory 2026-10-29; yields done, groups A-E and the elapsed-time bounds to do |
+| `time-based-tests` | Tests waiting on time where an event or a state would do; time only as a timeout (user) | CLOSED — 2026-10-29, `test/next-task-yields` and `test/time-based-a-b`: waits on states, time only as timeouts, each step re-falsified |
 | `stale-falsifiers` | Three browser tests no mutation of their subject turns red (`abandon`, `abandon-transaction`, `chunk-delivery`) | CLOSED — 2026-10-29, `test/stale-falsifiers`: falsifiers diagnosed and written, one test added |
 | `ci-live-progress` | Reading a GitHub run's progress from `gh` while it runs (logs come only at job end) | OPEN — not designed; recommended: a progress check run the planner updates |
 

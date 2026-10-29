@@ -4,6 +4,7 @@ import {
   interceptWorkers,
   killSilently,
   sleep,
+  waitUntil,
 } from '../helpers';
 
 /** 5000 rows, one column — enough chunks that running ahead is obvious. */
@@ -48,7 +49,11 @@ describe('back-pressure', () => {
   // drainTimeout, is presumed dead, and is replaced. Pins spec §5.1.
   it('does not restart the worker when a stream is abandoned', async () => {
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1, drainTimeout: 1000 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: 1000,
+      debug: true,
+    });
     await seed(db);
 
     for await (const _rows of db.chunk('SELECT id FROM t', [], {
@@ -57,7 +62,12 @@ describe('back-pressure', () => {
       break;
     }
 
-    await sleep(1500); // past drainTimeout, plus a replacement's boot
+    // Idle again: the worker answered the stop, so the drain is over and no
+    // drainTimeout is left to expire. Unanswered, the slot is replaced first.
+    await waitUntil(
+      () => db.debug?.workers[0]?.status === 'READY',
+      'worker 0 idle again',
+    );
     expect(records.length).toBe(1);
 
     const rows = await db.all<{ n: number }>('SELECT 1 AS n');
@@ -76,9 +86,10 @@ describe('back-pressure', () => {
     const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
     await seed(db);
 
+    const caller = new AbortController();
     const streaming = db.chunk('SELECT id FROM t', [], {
       chunkSize: 1,
-      signal: AbortSignal.timeout(200),
+      signal: caller.signal,
     });
     const consuming = (async () => {
       for await (const _rows of streaming) {
@@ -86,11 +97,26 @@ describe('back-pressure', () => {
       }
     })();
 
-    await sleep(100);
+    // The credit window full: the worker has sent all it may and waits for a
+    // credit, not inside a step.
+    await waitUntil(
+      () => chunksPosted(records[0]) >= 2,
+      'the worker parked on a credit',
+    );
     killSilently(records[0].worker); // silent death: no event of any kind
+    // Then the caller gives up, in that order: an abort on a timer could land
+    // before the kill on a slow runner, and stop a live worker instead.
+    caller.abort(new Error('the caller gives up'));
 
     await expect(consuming).rejects.toThrow();
-    await sleep(1500); // past drainTimeout (500 ms), plus a replacement's boot
+    // Past drainTimeout (500 ms), then the replacement's boot. Bounded as the
+    // library's open is: on Safari a worker that instantiates its wasm after
+    // another ran hot wasm can stall for seconds (see lifecycle.test.ts).
+    await waitUntil(
+      () => records[1]?.received.includes('ready') ?? false,
+      'the replacement to be ready',
+      30_000,
+    );
     const rows = await db.all<{ n: number }>('SELECT 1 AS n');
     expect(rows[0]?.n).toBe(1);
     expect(records.length).toBe(2); // the dead one was replaced
@@ -112,7 +138,11 @@ describe('first()', () => {
   // replaced and records.length grows. Pins spec §4.1 and §5.1.
   it('costs exactly one row, and never restarts its worker', async () => {
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1, drainTimeout: 1000 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: 1000,
+      debug: true,
+    });
     await seed(db);
 
     for (let call = 0; call < 10; call += 1) {
@@ -123,7 +153,11 @@ describe('first()', () => {
     // 1 chunk from the commit-propagation barrier (fires on the first acquisition
     // whose worker is behind the epoch) + 10 from first() calls.
     expect(chunksPosted(records[0])).toBe(11);
-    await sleep(1500);
+    // Idle again after the last stop: nothing is left to time out.
+    await waitUntil(
+      () => db.debug?.workers[0]?.status === 'READY',
+      'worker 0 idle again',
+    );
     expect(records.length).toBe(1);
   });
 });
@@ -137,6 +171,7 @@ describe('close() during a query', () => {
     const db = await createTestClient({ poolSize: 1, drainTimeout: 300 });
     await seed(db);
 
+    let received = 0;
     const streaming = (async () => {
       const collected: number[] = [];
       for await (const rows of db.chunk<{ id: number }>(
@@ -144,18 +179,19 @@ describe('close() during a query', () => {
         [],
         { chunkSize: 1 },
       )) {
+        received += 1;
         collected.push(rows[0]?.id ?? -1);
         await sleep(5);
       }
       return collected;
     })().catch(() => 'rejected' as const);
 
-    await sleep(100);
-    const started = performance.now();
-    await db.close();
+    // The query is in flight: its first row has reached the consumer.
+    await waitUntil(() => received > 0, 'the first row');
     // Bounded by drainTimeout (300 ms); with a slow consumer the drain runs to
-    // drainTimeout — that is the wave-2 contract. We assert well below 3 s.
-    expect(performance.now() - started).toBeLessThan(3000);
+    // drainTimeout — that is the wave-2 contract. A close that does not settle
+    // fails the test on its timeout.
+    await db.close();
 
     expect(await streaming).toBe('rejected');
     await expect(db.all('SELECT 1 AS n')).rejects.toThrow();

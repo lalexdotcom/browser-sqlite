@@ -287,7 +287,9 @@ describe('one converted params array, sent twice', () => {
       file: databasePath(TEST_TARGET.vfs, file),
       vfs: TEST_TARGET.vfs,
       build: TEST_TARGET.build,
-      drainTimeout: 20_000,
+      // Past the test's own timeout: a send that posted before throwing would
+      // leave a drain to wait out, and the test then fails on its timeout.
+      drainTimeout: scaled(120_000),
       logger: createLogger('test', false),
     });
     if ('declined' in opened)
@@ -302,10 +304,8 @@ describe('one converted params array, sent twice', () => {
     try {
       const encoded = encodeParams([1]);
       expect(await drain(encoded)).toEqual([{ a: 1 }]);
-      const started = performance.now();
       // A second send makes `toMessage()` throw, before anything is posted.
       await expect(drain(encoded)).rejects.toThrow(/already sent/);
-      expect(performance.now() - started).toBeLessThan(5000);
       expect(await drain([2])).toEqual([{ a: 2 }]);
     } finally {
       await worker.close();

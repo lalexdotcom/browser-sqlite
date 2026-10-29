@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { createTestClient, sleep } from '../helpers';
+import { createTestClient, waitUntil } from '../helpers';
 
 /**
  * `createVfsInstance` retries `create()` in the same worker while the VFS's
@@ -10,11 +10,8 @@ import { createTestClient, sleep } from '../helpers';
  * that acquires its files at creation, and its pool is a directory named after
  * it.
  */
-/** Between the attempt seen and the release, so that attempt has failed. */
-const GRACE_MS = 30;
-/** No attempt seen: release anyway rather than hang the test. */
+/** No attempt seen, or none seen failing: release anyway rather than hang. */
 const WITNESS_TIMEOUT_MS = 3_000;
-const WITNESS_POLL_MS = 5;
 /** How long to wait out the handles of the client just closed. */
 const SETTLE_BUDGET_MS = 3_000;
 
@@ -125,15 +122,18 @@ describe('creating a VFS whose files are partly held', () => {
     read.catch(() => {});
 
     // An attempt takes the pool's other files while it fails on the held one,
-    // so the witness held is that attempt seen.
-    const giveUp = performance.now() + WITNESS_TIMEOUT_MS;
-    while (
-      (await holder.probe(witness)) === 'free' &&
-      performance.now() < giveUp
-    ) {
-      await sleep(WITNESS_POLL_MS);
-    }
-    await sleep(GRACE_MS);
+    // so the witness held is that attempt seen, and the witness free again is
+    // that attempt failed. Either wait gives up rather than hang the test.
+    await waitUntil(
+      async () => (await holder.probe(witness)) !== 'free',
+      'an attempt holding the witness',
+      WITNESS_TIMEOUT_MS,
+    ).catch(() => {});
+    await waitUntil(
+      async () => (await holder.probe(witness)) === 'free',
+      'that attempt failed',
+      WITNESS_TIMEOUT_MS,
+    ).catch(() => {});
     await holder.release(heldFile);
 
     expect((await read)[0]?.n).toBe(1);

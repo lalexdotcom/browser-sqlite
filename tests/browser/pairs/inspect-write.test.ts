@@ -4,8 +4,8 @@ import {
   interceptWorkers,
   scaled,
   sharedDatabase,
-  sleep,
   TEST_TARGET,
+  waitUntil,
 } from '../helpers';
 
 // The write-lock accounting `inspectDatabase` reports is generic — nothing
@@ -50,11 +50,10 @@ describe('inspectDatabase write', () => {
       // poll to guard against any browser that defers the registration slightly.
       queued = b.run('INSERT INTO t VALUES (2)');
 
-      for (let attempt = 0; attempt < 50; attempt++) {
+      await waitUntil(async () => {
         seen = await inspectDatabase(shared.name, { vfs: TEST_TARGET.vfs });
-        if (seen.write.waiting >= 1) break;
-        await new Promise<void>((r) => setTimeout(r, 20));
-      }
+        return seen.write.waiting >= 1;
+      }, 'a write waiting on the lock').catch(() => {});
 
       // Do NOT return or await `queued` here: the transaction holds the write lock
       // that `queued` is waiting for, so returning it would deadlock. Let the
@@ -198,11 +197,11 @@ describe('a verdict that gives up says who was holding', () => {
     // b queues on the write lock behind a's transaction, or the case is not
     // exercised.
     let queued = 0;
-    for (let attempt = 0; attempt < 50 && queued < 1; attempt++) {
+    await waitUntil(async () => {
       queued = (await inspectDatabase(shared.name, { vfs: TEST_TARGET.vfs }))
         .write.waiting;
-      if (queued < 1) await sleep(20);
-    }
+      return queued >= 1;
+    }, 'b queued on the write lock').catch(() => {});
     expect(queued).toBe(1);
     const reason = new SQLiteError('OPERATION_TIMEOUT', 'the caller gave up');
     ctl.abort(reason);

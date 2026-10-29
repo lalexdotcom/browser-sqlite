@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, sharedDatabase } from '../helpers';
+import { createTestClient, sharedDatabase, waitUntil } from '../helpers';
 
 /**
  * Characterization tests for `db.output()` — the schema-driven staging-table
@@ -326,13 +326,13 @@ describe('output() atomicity and sweep', () => {
     // Poll until A's staging table appears in sqlite_master. At that point A's
     // staging lock has been held since the output() call above.
     let stagingName: string | undefined;
-    for (let i = 0; i < 100 && !stagingName; i++) {
-      await new Promise<void>((r) => setTimeout(r, 20));
+    await waitUntil(async () => {
       const rows = await dbA.all<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '__bsq_staging_%'",
       );
-      if (rows.length) stagingName = rows[0].name;
-    }
+      stagingName = rows[0]?.name;
+      return stagingName !== undefined;
+    }, "A's staging table").catch(() => {});
     expect(stagingName).toBeDefined();
 
     // B does its own output — its sweep runs and must leave A's live staging

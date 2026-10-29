@@ -3,7 +3,6 @@ import {
   createTestClient,
   interceptWorkers,
   sharedDatabase,
-  sleep,
   waitUntil,
 } from '../helpers';
 
@@ -125,10 +124,12 @@ describe('close()', () => {
     // transaction rather than leaving it pending for ever: an abandoned
     // rejection escapes the test file and fails the RUN while every test in it
     // passes.
+    const entered = Promise.withResolvers<void>();
     db.transaction(async () => {
+      entered.resolve();
       await new Promise(() => {}); // never settles
     }).catch(() => {});
-    await sleep(100);
+    await entered.promise;
     await db.close(); // must settle, not hang
   });
 

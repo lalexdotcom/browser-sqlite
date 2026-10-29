@@ -2,7 +2,7 @@ import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { connectionLockName } from '../../../src/locks';
 import { databasePath } from '../../../src/utils';
-import { interceptWorkers, sleep, TEST_TARGET, waitUntil } from '../helpers';
+import { interceptWorkers, TEST_TARGET, waitUntil } from '../helpers';
 
 /**
  * A client that failed holds nothing: its workers are terminated and nothing
@@ -125,10 +125,9 @@ describe('a client that failed', () => {
     const lockName = connectionLockName(pair.vfs, databasePath(pair.vfs, name));
     const heldNames = async () =>
       ((await navigator.locks.query()).held ?? []).map((lock) => lock.name);
-    const deadline = Date.now() + 2000;
-    while ((await heldNames()).includes(lockName) && Date.now() < deadline) {
-      await sleep(10);
-    }
-    expect(await heldNames()).not.toContain(lockName);
+    await waitUntil(
+      async () => !(await heldNames()).includes(lockName),
+      'the connection lock released',
+    );
   });
 });

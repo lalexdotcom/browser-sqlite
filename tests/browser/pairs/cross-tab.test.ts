@@ -2,7 +2,7 @@ import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { BARRIER_SQL, epochLockName } from '../../../src/epochs';
 import { databasePath } from '../../../src/utils';
-import { TEST_TARGET } from '../helpers';
+import { TEST_TARGET, waitUntil } from '../helpers';
 import { poolFor } from '../helpers/environment';
 import { heldNamesIn, holdIn, makeRealm } from '../helpers/realm';
 
@@ -199,15 +199,22 @@ describe('an epoch published by another realm', {
     await Promise.race([lockHeld, txDone]);
 
     try {
-      // 400 ms is far longer than the write round-trip. If transaction() has
-      // not resolved by then it is genuinely waiting for the lock grant.
+      // The marker's shared request queued behind the exclusive hold, and
+      // transaction() still unresolved: it is waiting for that grant.
+      const pending = waitUntil(
+        async () =>
+          ((await navigator.locks.query()).pending ?? []).some(
+            (lock) => lock.name === marker,
+          ),
+        'the marker request pending',
+      ).then(() => 'pending' as const);
       const winner = await Promise.race([
         txDone.then(() => 'tx' as const),
-        new Promise<'timeout'>((r) => setTimeout(r, 400, 'timeout')),
+        pending,
       ]);
-      // With fix: transaction blocked → timeout wins.
+      // With fix: transaction blocked → its request is seen pending.
       // Without fix: transaction resolves early → tx wins.
-      expect(winner).toBe('timeout');
+      expect(winner).toBe('pending');
       expect(txResolved).toBe(false);
     } finally {
       releaseExclusive?.();

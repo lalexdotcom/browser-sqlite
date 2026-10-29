@@ -7,6 +7,7 @@ import {
   sharedDatabase,
   sleep,
   TEST_TARGET,
+  theQueryIsRunning,
   waitUntil,
 } from '../helpers';
 import { poolFor } from '../helpers/environment';
@@ -144,8 +145,9 @@ describe('the pool-level request history', () => {
     const db = await createTestClient({ poolSize: 1, debug: true });
     await db.run('CREATE TABLE t (a)');
 
-    const running = db.all(longQuery(20_000_000));
-    await sleep(100);
+    const sql = longQuery(20_000_000);
+    const running = db.all(sql);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     const record = records[0];
     if (!record) throw new Error('no worker record');
     record.worker.dispatchEvent(new ErrorEvent('error'));

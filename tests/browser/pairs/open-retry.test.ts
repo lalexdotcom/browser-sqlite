@@ -6,8 +6,9 @@ import {
   killSilently,
   longQuery,
   scaled,
-  sleep,
   TEST_TARGET,
+  theQueryIsRunning,
+  waitUntil,
 } from '../helpers';
 import { removeOpfsPath } from '../helpers/environment';
 
@@ -312,12 +313,9 @@ describe('opening a database whose file is momentarily held', () => {
 
 describe('opening a database whose file is refused for another reason', () => {
   // Falsifiable: make a first open retry whatever the refusal — it then waits
-  // out OPEN_RETRY_BUDGET_MS (2.5 s) before reporting what was never transient.
-  //
-  // Timed from the worker's `opening the database` to the rejection: the
-  // worker's boot before it is the engine's, not the subject, and on a CI
-  // runner it alone has gone past a whole-call bound. A failure prints the
-  // boot, so it says where the time went.
+  // out OPEN_RETRY_BUDGET_MS (2.5 s) before reporting what was never transient,
+  // and announces that wait with the boot stage `waiting for a held file`,
+  // which is what this asserts absent. A failure prints the boot timeline.
   it('fails without waiting out the retry budget', {
     tags: ['requires:opfs-file', 'requires:exclusive-file-handle'],
   }, async () => {
@@ -363,7 +361,6 @@ describe('opening a database whose file is refused for another reason', () => {
       () => undefined,
       (e: unknown) => e,
     );
-    const ended = performance.now();
 
     expect(error).toMatchObject({ code: 'WORKER_CRASHED' });
     const opening = boot.find((b) => b.stage === 'opening the database');
@@ -371,10 +368,11 @@ describe('opening a database whose file is refused for another reason', () => {
       .map((b) => `w${b.worker} ${b.stage} @${Math.round(b.t - started)}`)
       .join(', ');
     expect(opening, `no open began: ${timeline}`).toBeDefined();
+    // A retry announces itself before its first wait: no wait was begun.
     expect(
-      ended - (opening?.t ?? started),
-      `open to rejection, ms (boot: ${timeline}, rejected @${Math.round(ended - started)})`,
-    ).toBeLessThan(2_000);
+      boot.some((b) => b.stage === 'waiting for a held file'),
+      `a retry began (boot: ${timeline})`,
+    ).toBe(false);
   });
 });
 
@@ -480,10 +478,11 @@ describe('reopening a database after its worker died', () => {
 
     await step('db.write', db.run('CREATE TABLE t (a)'));
     const [first] = records;
-    const running = db.all(longQuery(20_000_000));
+    const sql = longQuery(20_000_000);
+    const running = db.all(sql);
     // Rejected later than it is awaited; keep it from being unhandled.
     running.catch(() => {});
-    await sleep(100);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     if (first) killSilently(first.worker);
     expect(
       await step(

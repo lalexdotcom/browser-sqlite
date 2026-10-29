@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, sleep } from '../helpers';
+import { createTestClient, waitUntil } from '../helpers';
 
 /**
  * Characterization tests for `db.bulkWrite()`.
@@ -175,7 +175,10 @@ describe('bulkWrite() and output() abort (ABORT-1)', () => {
 
     // Wait for the first batch to actually land, so the abort below falls
     // BETWEEN batches. Without this the test measures the previous case.
-    for (let i = 0; i < 200 && (await countRows()) === 0; i++) await sleep(20);
+    await waitUntil(
+      async () => (await countRows()) > 0,
+      'the first batch committed',
+    ).catch(() => {});
     expect(await countRows()).toBe(WIDE_FLUSH_AT);
 
     for (let i = 1; i <= 10; i++) bulk.enqueue(wideRow(WIDE_FLUSH_AT + i));

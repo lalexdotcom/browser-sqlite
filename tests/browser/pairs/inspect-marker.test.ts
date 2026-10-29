@@ -10,9 +10,7 @@ import { databasePath } from '../../../src/utils';
 import {
   createTestClient,
   interceptWorkers,
-  scaled,
   sharedDatabase,
-  sleep,
   TEST_TARGET,
   waitUntil,
 } from '../helpers';
@@ -45,12 +43,12 @@ const markersFor = async (file: string, vfs: SQLiteVFS) => {
  * marker at all, leak or not.
  */
 const markersAfterRelease = async (file: string, vfs: SQLiteVFS) => {
-  const deadline = Date.now() + scaled(5_000);
-  for (;;) {
-    const markers = await markersFor(file, vfs);
-    if (markers.length === 0 || Date.now() >= deadline) return markers;
-    await sleep(10);
-  }
+  let markers = await markersFor(file, vfs);
+  await waitUntil(async () => {
+    markers = await markersFor(file, vfs);
+    return markers.length === 0;
+  }, 'every marker released').catch(() => {});
+  return markers;
 };
 
 describe('the client liveness marker', () => {

@@ -11,7 +11,7 @@
  */
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { scaled, TEST_TARGET } from '../helpers';
+import { scaled, TEST_TARGET, theQueryIsRunning, waitUntil } from '../helpers';
 
 const ROWS = 6000;
 const FILL = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${ROWS}) INSERT INTO t (s) SELECT printf('%0100d', x) FROM c`;
@@ -30,7 +30,12 @@ describe('IDBBatchAtomicVFS during a long statement', {
     async () => {
       const { vfs, build } = TEST_TARGET;
       const file = `idb-long-read-${crypto.randomUUID()}`;
-      const db = createSQLiteClient(file, { vfs, build, poolSize: 2 });
+      const db = createSQLiteClient(file, {
+        vfs,
+        build,
+        poolSize: 2,
+        debug: true,
+      });
       onTestFinished(async () => {
         await db.close();
         await deleteDatabase(file, { vfs });
@@ -47,7 +52,10 @@ describe('IDBBatchAtomicVFS during a long statement', {
       const long = db.all(LONG).finally(() => {
         longSettled = true;
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await waitUntil(
+        theQueryIsRunning(db, LONG),
+        'the long statement running',
+      );
       // A long statement already over would prove nothing either way.
       expect(longSettled).toBe(false);
 

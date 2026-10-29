@@ -12,8 +12,9 @@ import {
   longQuery,
   scaled,
   sharedDatabase,
-  sleep,
   TEST_TARGET,
+  theQueryIsRunning,
+  waitUntil,
 } from '../helpers';
 
 /**
@@ -108,7 +109,7 @@ describe('deleteDatabase', () => {
     const release = Promise.withResolvers<void>();
     const held = Promise.withResolvers<void>();
 
-    void navigator.locks.request(
+    const lock = navigator.locks.request(
       initLockName(vfs, databasePath(vfs, file)),
       () => {
         held.resolve();
@@ -121,11 +122,9 @@ describe('deleteDatabase', () => {
     });
     release.resolve();
 
-    // No real caller releases a lock and retries in the same turn, but this
-    // test does exactly that. Yield to the task queue (stronger than a single
-    // microtask) so the Web Locks API has a chance to process the release
-    // before the next ifAvailable check.
-    await new Promise((r) => setTimeout(r, 0));
+    // The request settles once the lock is released, so the retry below never
+    // races the release.
+    await lock;
 
     await expect(deleteDatabase(file, { vfs, build })).resolves.toBeUndefined();
   });
@@ -369,13 +368,18 @@ describe('deleting after a worker died inside a statement', () => {
     timeout: scaled(60_000),
   }, async () => {
     const { vfs, build } = TEST_TARGET;
-    const db = await createTestClient({ poolSize: 1, drainTimeout: 200 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: 200,
+      debug: true,
+    });
     await db.run('CREATE TABLE t (a)');
 
     // Abandoned on purpose: close() bounds the drain and terminates the worker
     // while it is still inside the statement.
-    const running = db.all(longQuery(20_000_000)).catch(() => {});
-    await sleep(100);
+    const sql = longQuery(20_000_000);
+    const running = db.all(sql).catch(() => {});
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     await db.close();
     await running;
 

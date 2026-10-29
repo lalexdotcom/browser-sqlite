@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, scaled } from '../helpers';
+import { createTestClient, scaled, waitUntil } from '../helpers';
 
 /**
  * Characterization tests for `db.transaction()`.
@@ -166,9 +166,13 @@ describe('transaction() worker exclusivity (B1)', () => {
    * which makes `it.fails` fail. That is the signal to drop `.fails`.
    */
   it('does not leak the transaction worker to a concurrent read', async () => {
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
 
     await db.run('CREATE TABLE tx_leak (id INTEGER)');
+    // Its verdict known beforehand: otherwise the read below waits for one
+    // behind the transaction and never asks the scheduler for a worker, which
+    // is the request a leaking pool would grant.
+    await db.all('SELECT id FROM tx_leak');
 
     let outsideRead: Promise<{ id: number }[]> | undefined;
 
@@ -178,8 +182,18 @@ describe('transaction() worker exclusivity (B1)', () => {
       // Launched from OUTSIDE the transaction, while it is still open.
       outsideRead = db.all<{ id: number }>('SELECT id FROM tx_leak');
 
-      // Give the scheduler a chance to dispatch it.
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // At the scheduler, asking for a worker: a leaking pool would hand it the
+      // transaction's own.
+      await waitUntil(
+        () =>
+          db.debug?.requests.some(
+            (r) =>
+              r.kind === 'read' &&
+              r.acquireTime === undefined &&
+              r.endTime === undefined,
+          ) ?? false,
+        'the outside read at the scheduler',
+      );
 
       await tx.rollback();
     });

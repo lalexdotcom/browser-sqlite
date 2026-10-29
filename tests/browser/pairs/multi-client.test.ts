@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, sharedDatabase, TEST_TARGET } from '../helpers';
+import {
+  createTestClient,
+  sharedDatabase,
+  TEST_TARGET,
+  waitUntil,
+} from '../helpers';
 import { poolFor } from '../helpers/environment';
 
 /**
@@ -153,11 +158,11 @@ describe('two clients writing at once', {
     for (let i = 0; i < batch; i += 1) await writer.enqueue(row(i));
 
     let committed = 0;
-    for (let poll = 0; poll < 100 && committed === 0; poll += 1) {
+    await waitUntil(async () => {
       const [count] = await a.all<{ n: number }>('SELECT count(*) AS n FROM t');
       committed = count?.n ?? 0;
-      if (committed === 0) await new Promise((r) => setTimeout(r, 50));
-    }
+      return committed > 0;
+    }, 'the first batch visible to the other client').catch(() => {});
     expect(committed).toBe(batch);
 
     await a.run(`INSERT INTO t (${keys[0]}) VALUES (-1)`);
