@@ -1,4 +1,5 @@
 import { describe, expect, it, onTestFinished } from 'vitest';
+import { waitUntil } from '../helpers';
 import { heldNamesIn, holdIn, makeRealm } from '../helpers/realm';
 
 const KEY_NAME = 'browser-sqlite.epochs.v1';
@@ -53,7 +54,14 @@ describe('a same-origin iframe as a second realm', {
       granted = true;
       release();
     });
-    await new Promise((r) => setTimeout(r, 250));
+    // The realm's request is queued behind the parent's hold, not granted.
+    await waitUntil(
+      async () =>
+        ((await navigator.locks.query()).pending ?? []).some(
+          (lock) => lock.name === 'bsq:test:contended',
+        ),
+      'the contender pending',
+    );
     expect(granted).toBe(false);
 
     held();

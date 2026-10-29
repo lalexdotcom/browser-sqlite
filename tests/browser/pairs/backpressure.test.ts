@@ -49,7 +49,11 @@ describe('back-pressure', () => {
   // drainTimeout, is presumed dead, and is replaced. Pins spec §5.1.
   it('does not restart the worker when a stream is abandoned', async () => {
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1, drainTimeout: 1000 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: 1000,
+      debug: true,
+    });
     await seed(db);
 
     for await (const _rows of db.chunk('SELECT id FROM t', [], {
@@ -58,7 +62,12 @@ describe('back-pressure', () => {
       break;
     }
 
-    await sleep(1500); // past drainTimeout, plus a replacement's boot
+    // Idle again: the worker answered the stop, so the drain is over and no
+    // drainTimeout is left to expire. Unanswered, the slot is replaced first.
+    await waitUntil(
+      () => db.debug?.workers[0]?.status === 'READY',
+      'worker 0 idle again',
+    );
     expect(records.length).toBe(1);
 
     const rows = await db.all<{ n: number }>('SELECT 1 AS n');
@@ -125,7 +134,11 @@ describe('first()', () => {
   // replaced and records.length grows. Pins spec §4.1 and §5.1.
   it('costs exactly one row, and never restarts its worker', async () => {
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1, drainTimeout: 1000 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: 1000,
+      debug: true,
+    });
     await seed(db);
 
     for (let call = 0; call < 10; call += 1) {
@@ -136,7 +149,11 @@ describe('first()', () => {
     // 1 chunk from the commit-propagation barrier (fires on the first acquisition
     // whose worker is behind the epoch) + 10 from first() calls.
     expect(chunksPosted(records[0])).toBe(11);
-    await sleep(1500);
+    // Idle again after the last stop: nothing is left to time out.
+    await waitUntil(
+      () => db.debug?.workers[0]?.status === 'READY',
+      'worker 0 idle again',
+    );
     expect(records.length).toBe(1);
   });
 });
