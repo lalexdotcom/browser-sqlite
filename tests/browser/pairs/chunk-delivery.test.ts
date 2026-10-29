@@ -52,6 +52,24 @@ const seed = async (
  */
 const MANY = 20_000;
 
+/**
+ * A slow `chunk()` consumer: it pauses on every chunk, so the worker stays
+ * ahead and the delivery loop never runs dry — the case where only the failure
+ * flag, not the wait, can report an event. The pause is the subject (a slow
+ * consumer), not a guess; `firstChunk` tells the test when the consumer is
+ * suspended between chunks.
+ */
+const slowConsumer = (db: Awaited<ReturnType<typeof createTestClient>>) => {
+  const first = Promise.withResolvers<void>();
+  const consuming = (async () => {
+    for await (const _chunk of db.chunk<{ a: number }>('SELECT a FROM t')) {
+      first.resolve();
+      await sleep(50);
+    }
+  })();
+  return { consuming, firstChunk: first.promise };
+};
+
 describe('chunk delivery', () => {
   it('delivers every chunk to a consumer that pauses between them', async () => {
     const db = await createTestClient({ poolSize: 1 });
@@ -151,14 +169,9 @@ describe('chunk delivery', () => {
       const db = await createTestClient({ poolSize: 1 });
       try {
         await seed(db, MANY);
-        const consuming = (async () => {
-          for await (const _chunk of db.chunk<{ a: number }>(
-            'SELECT a FROM t',
-          )) {
-            await sleep(50);
-          }
-        })();
-        await sleep(120); // inside the first pause, after the first chunk
+        const { consuming, firstChunk } = slowConsumer(db);
+        // Suspended between chunks, the query still in flight.
+        await firstChunk;
         records[0]?.worker.dispatchEvent(new MessageEvent('messageerror'));
         await expect(consuming).rejects.toMatchObject({
           code: 'PROTOCOL_ERROR',
@@ -173,14 +186,8 @@ describe('chunk delivery', () => {
       const db = await createTestClient({ poolSize: 1 });
       try {
         await seed(db, MANY);
-        const consuming = (async () => {
-          for await (const _chunk of db.chunk<{ a: number }>(
-            'SELECT a FROM t',
-          )) {
-            await sleep(50);
-          }
-        })();
-        await sleep(120);
+        const { consuming, firstChunk } = slowConsumer(db);
+        await firstChunk;
         records[0]?.worker.dispatchEvent(new ErrorEvent('error'));
         await expect(consuming).rejects.toMatchObject({
           code: 'WORKER_CRASHED',
