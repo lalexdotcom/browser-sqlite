@@ -56,4 +56,16 @@ The whole first-open branch removed, every pair of both VFS (`sync`/`jspi`/`asyn
 | `OPFSWriteAheadVFS` | no OPFS call at all | 1 / 0.1 |
 | `AccessHandlePoolVFS` · `exclusive` + `wal` (the library's default) / `delete` | none / 6 `flush` + 1 `truncate` of pool files | 0-1 / 0-0.1 |
 
-The one-transaction phase made the same calls as one autocommit write: the cost is per commit, not per row. Firefox's timer rounds to 1 ms. **Reading:** without `readwrite-unsafe` (Firefox, Safari), `OPFSAdaptiveVFS` creates, opens, closes and removes its `-journal` at every write transaction — exactly the cycle of Mozilla bug 2072928; at OPFS-PROBE's Windows costs that is 420-660 ms per commit before the two lookups, which matches `results.test.ts`'s ~630 ms per commit there (`mem:follow-ups/firefox-opfs-fsync`). The other VFS keep every file and handle they use between commits.
+The one-transaction phase made the same calls as one autocommit write: the cost is per commit, not per row. Firefox's timer rounds to 1 ms.
+
+**On `windows-latest` (2026-10-29, run 40968323465, throwaway `scripts/probe-journal/` at `1881cd87` on the local branch `probe/journal-windows`, the same page; the `truncate`/`persist` rows fell back to `delete` on Firefox, so `OPFSAdaptiveVFS · delete` was measured three times):** the same calls per commit as on Linux, every VFS and engine.
+
+| ms per commit, median (mean) | Firefox | Chrome |
+|---|---|---|
+| `OPFSAdaptiveVFS` · `delete` | **150-164 (150-306)** | 22.7 (22.8) |
+| `OPFSAdaptiveVFS` · `memory` | 9 (15) | 6.6 (6.8) |
+| `OPFSCoopSyncVFS` · `delete` | 13-15 (15-23) | 11.2 (12) |
+| `OPFSWriteAheadVFS` | 2 (1.8) | 0.6 (0.7) |
+| `AccessHandlePoolVFS` · `exclusive` + `wal` / `delete` | 1 (0.6) / 21 (22) | 0.2 / 17.2 |
+
+Firefox's cycle on `-journal`, mean ms each over the three runs: `getFileHandle(create)` 17-34, `createSyncAccessHandle` 38-72, `close` 32-69, `removeEntry` 42-86 — about half OPFS-PROBE's 2026-10-14 figures on another runner; the `getFileHandle` lookups without create 0.4. A `flush` costs 3-13 ms on both engines there, which is what Chrome's and CoopSync's per-commit times are made of. **Reading:** without `readwrite-unsafe` (Firefox, Safari), `OPFSAdaptiveVFS` creates, opens, closes and removes its `-journal` at every write transaction — exactly the cycle of Mozilla bug 2072928 — and on Windows Firefox that cycle is ~95 % of a commit (`memory` takes it from 150-164 to 9 ms). `results.test.ts`'s ~630 ms per commit there ran under the suite's parallel jobs (`mem:follow-ups/firefox-opfs-fsync`). The other VFS keep every file and handle they use between commits. Seen on the way, not investigated: `OPFSWriteAheadVFS` and `AccessHandlePoolVFS` in `wal` called no `flush` at all per commit, on both engines and OSes.

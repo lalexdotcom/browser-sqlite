@@ -98,7 +98,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - COOPSYNC-381-WINDOWS — two CoopSync clients on Windows Firefox with #381 carried: no failed statement, 25-60 s an attempt
 - ADAPTIVE-382 — `OPFSAdaptiveVFS` after a terminated holder: B hangs and the lock stays held on Firefox, 0 with the change
 - POST-381 — the library's first-open retry never made a second attempt once #381 retried inside the VFS: removed
-- JOURNAL-PROBE — OPFS calls per autocommit write: `OPFSAdaptiveVFS` without `readwrite-unsafe` creates and removes its `-journal` at every commit (`persist`/`truncate` refused there), the other VFS make no metadata call
+- JOURNAL-PROBE — OPFS calls per autocommit write: `OPFSAdaptiveVFS` without `readwrite-unsafe` creates and removes its `-journal` at every commit (`persist`/`truncate` refused there), 150-164 ms per commit on Windows Firefox against 9 ms in `memory`; the other VFS make no metadata call
 
 ## `mem:measurements/transactions` — transactions
 
