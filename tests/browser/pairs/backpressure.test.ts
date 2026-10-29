@@ -86,9 +86,10 @@ describe('back-pressure', () => {
     const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
     await seed(db);
 
+    const caller = new AbortController();
     const streaming = db.chunk('SELECT id FROM t', [], {
       chunkSize: 1,
-      signal: AbortSignal.timeout(200),
+      signal: caller.signal,
     });
     const consuming = (async () => {
       for await (const _rows of streaming) {
@@ -103,6 +104,9 @@ describe('back-pressure', () => {
       'the worker parked on a credit',
     );
     killSilently(records[0].worker); // silent death: no event of any kind
+    // Then the caller gives up, in that order: an abort on a timer could land
+    // before the kill on a slow runner, and stop a live worker instead.
+    caller.abort(new Error('the caller gives up'));
 
     await expect(consuming).rejects.toThrow();
     // Past drainTimeout (500 ms), then the replacement's boot. Bounded as the
