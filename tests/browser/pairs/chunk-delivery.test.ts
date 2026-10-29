@@ -23,6 +23,11 @@ import {
  * `run()`, `all()` and `first()` never lost a row and still must not: they
  * accumulate inside the library without handing control back between chunks,
  * which is exactly why the defect stayed invisible for four releases.
+ *
+ * Falsifiable: in src/pool.ts, queue a `chunk` message in `inbox` only while
+ * the delivery loop is awaiting `deferredChunk` (a flag set around its
+ * `Promise.race`) — the defect as it was. The first two tests below then
+ * receive a fraction of the rows, on both engines.
  */
 const ROWS = 1001;
 

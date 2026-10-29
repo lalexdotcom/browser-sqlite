@@ -1,6 +1,8 @@
 # Follow-up — three browser tests that no mutation of their subject turns red
 
-**Status: OPEN** — found 2026-10-29 by the falsification campaign of `test/next-task-yields`; the user wants them dealt with (to do: 2, then 1, then 3).
+**Status: CLOSED** — 2026-10-29, `test/stale-falsifiers`. Each one diagnosed by mutation: (1) confirmed — red only with the `interrupt()` guard AND both `closeOpenStatements()` calls removed; kept, comment corrected (closeOpenStatements detaches the listener first, the guard is the second line). (2) the first hypothesis was wrong — red only with `worker.interrupt(transport)` removed AND the transaction's signal dropped from the statements' options in `withSignal` (`die(e)` aborts it before `closeOpenStatements()`, so `drain`'s `raceAbort` and finally stop the `next()`); comment corrected, and a new test where the callback returns (signal alive) pins the interrupt alone — its query is 2 G iterations, since 200 M ends by itself in ~25 s on Chrome's sync build and a missing interrupt passed late. (3) the one-slot mutation was not the defect; replaying the lost wake-up of `3ef05cb2` (queue a chunk only while the loop awaits) turns the file's first two tests red on both engines; written as its falsifier.
+
+Found 2026-10-29 by the falsification campaign of `test/next-task-yields`.
 
 Part of `mem:follow-ups`.
 
