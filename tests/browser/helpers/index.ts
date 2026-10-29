@@ -375,7 +375,7 @@ export const sleep = (ms: number) =>
  * a worker's messages arrive at once (SAFARI27-TIMER-1HZ): a `setTimeout(0)`
  * poll then missed a statement that started and ended between two seconds.
  */
-const nextTask = (() => {
+export const nextTask = (() => {
   let channel: MessageChannel | undefined;
   const waiting: (() => void)[] = [];
   return () =>

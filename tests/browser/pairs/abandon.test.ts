@@ -4,6 +4,7 @@ import type { PoolWorker } from '../../../src/pool';
 import { databasePath } from '../../../src/utils';
 import {
   createTestClient,
+  nextTask,
   removeDatabaseFiles,
   scaled,
   sleep,
@@ -50,7 +51,7 @@ const abandon = async (make: () => AsyncGenerator<unknown>) => {
   const rows = make();
   held.add(rows);
   await rows.next();
-  await sleep(0);
+  await nextTask();
 };
 
 describe('an abandoned generator gives its worker back', () => {
@@ -121,7 +122,7 @@ describe('an abandoned generator gives its worker back', () => {
           seen += rows.length;
           // A streaming test must await in its loop body: consuming at full
           // speed exercises only the transport's happy interleaving.
-          await sleep(0);
+          await nextTask();
         }
         expect(seen).toBe(ROWS);
         expect(await servesWithin(db, 8000)).toBe(true);
@@ -182,7 +183,7 @@ describe('a reclaim that arrives late', () => {
         )) {
           seen += rows.length;
           // A streaming test must await in its loop body.
-          await sleep(1);
+          await nextTask();
           if (seen === 100)
             controller.abort(new Error('the caller tidies up its controller'));
         }

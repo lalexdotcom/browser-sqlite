@@ -10,6 +10,7 @@ import { databasePath } from '../../../src/utils';
 import {
   interceptWorkers,
   killSilently,
+  scaled,
   sharedDatabase,
   sleep,
   TEST_TARGET,
@@ -32,7 +33,7 @@ import { AVAILABLE_FEATURES } from '../helpers/environment';
  */
 
 /** A refusal is fast or it is not one: AHP-2TAB's broken client looked healthy. */
-const REFUSED_WITHIN = 3000;
+const REFUSED_WITHIN = scaled(3000);
 
 const values = (rows: { n: number }[]) => rows.map((row) => row.n);
 

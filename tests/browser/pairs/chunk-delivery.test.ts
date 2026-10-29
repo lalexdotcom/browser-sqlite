@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, interceptWorkers, sleep } from '../helpers';
+import {
+  createTestClient,
+  interceptWorkers,
+  nextTask,
+  sleep,
+} from '../helpers';
 
 /**
  * A consumer that awaits between chunks must still receive every row.
@@ -68,7 +73,7 @@ describe('chunk delivery', () => {
       const seen: number[] = [];
       for await (const row of db.stream<{ a: number }>('SELECT a FROM t')) {
         seen.push(row.a);
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await nextTask();
       }
       expect(seen.length).toBe(ROWS);
       // Order matters as much as the count: a dropped chunk leaves a gap

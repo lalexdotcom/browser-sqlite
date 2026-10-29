@@ -5,6 +5,7 @@ import {
   createTestClient,
   interceptWorkers,
   killSilently,
+  nextTask,
   scaled,
   sleep,
   type WorkerRecord,
@@ -198,7 +199,7 @@ describe('run() and all()', () => {
     const controller = new AbortController();
     const reason = new Error('given up');
     const waiting = db.run('SELECT 5 AS x', [], { signal: controller.signal });
-    await sleep(0);
+    await nextTask();
     controller.abort(reason);
     await expect(waiting).rejects.toBe(reason);
     await held.return(undefined);
@@ -214,7 +215,7 @@ describe('run() and all()', () => {
     const { db } = await setUp();
     const held = await holdWorker(db);
     const waiting = db.run('SELECT 8 AS x');
-    await sleep(0);
+    await nextTask();
     const closing = db.close();
     await expect(waiting).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
     await held.return(undefined);
