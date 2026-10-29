@@ -5,7 +5,8 @@ import {
   killedStatementRuns,
   killSilently,
   longQuery,
-  sleep,
+  theQueryIsRunning,
+  waitUntil,
 } from '../helpers';
 
 describe('a long single step', () => {
@@ -81,17 +82,29 @@ describe('a worker killed silently', () => {
     const webkit = killedStatementRuns();
     if (webkit) return skip(webkit);
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: 500,
+      debug: true,
+    });
     await db.run('CREATE TABLE t (a)');
 
-    const running = db.all(longQuery(20_000_000), [], {
+    const sql = longQuery(20_000_000);
+    const running = db.all(sql, [], {
       signal: AbortSignal.timeout(200),
     });
-    await sleep(100);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     killSilently(records[0].worker); // silent death: no event of any kind
 
     await expect(running).rejects.toThrow();
-    await sleep(2000); // drainTimeout, then the replacement's boot
+    // drainTimeout, then the replacement's boot. Bounded as the library's open
+    // is: on Safari a worker that instantiates its wasm after another ran hot
+    // wasm can stall for seconds (see lifecycle.test.ts).
+    await waitUntil(
+      () => records[1]?.received.includes('ready') ?? false,
+      'the replacement to be ready',
+      30_000,
+    );
     const rows = await db.all<{ n: number }>('SELECT 1 AS n');
     expect(rows[0]?.n).toBe(1);
     expect(records.length).toBe(2);

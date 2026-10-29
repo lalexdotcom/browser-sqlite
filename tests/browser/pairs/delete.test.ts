@@ -12,8 +12,9 @@ import {
   longQuery,
   scaled,
   sharedDatabase,
-  sleep,
   TEST_TARGET,
+  theQueryIsRunning,
+  waitUntil,
 } from '../helpers';
 
 /**
@@ -369,13 +370,18 @@ describe('deleting after a worker died inside a statement', () => {
     timeout: scaled(60_000),
   }, async () => {
     const { vfs, build } = TEST_TARGET;
-    const db = await createTestClient({ poolSize: 1, drainTimeout: 200 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: 200,
+      debug: true,
+    });
     await db.run('CREATE TABLE t (a)');
 
     // Abandoned on purpose: close() bounds the drain and terminates the worker
     // while it is still inside the statement.
-    const running = db.all(longQuery(20_000_000)).catch(() => {});
-    await sleep(100);
+    const sql = longQuery(20_000_000);
+    const running = db.all(sql).catch(() => {});
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     await db.close();
     await running;
 

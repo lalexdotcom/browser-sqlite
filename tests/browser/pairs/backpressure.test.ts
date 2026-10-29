@@ -4,6 +4,7 @@ import {
   interceptWorkers,
   killSilently,
   sleep,
+  waitUntil,
 } from '../helpers';
 
 /** 5000 rows, one column — enough chunks that running ahead is obvious. */
@@ -86,11 +87,23 @@ describe('back-pressure', () => {
       }
     })();
 
-    await sleep(100);
+    // The credit window full: the worker has sent all it may and waits for a
+    // credit, not inside a step.
+    await waitUntil(
+      () => chunksPosted(records[0]) >= 2,
+      'the worker parked on a credit',
+    );
     killSilently(records[0].worker); // silent death: no event of any kind
 
     await expect(consuming).rejects.toThrow();
-    await sleep(1500); // past drainTimeout (500 ms), plus a replacement's boot
+    // Past drainTimeout (500 ms), then the replacement's boot. Bounded as the
+    // library's open is: on Safari a worker that instantiates its wasm after
+    // another ran hot wasm can stall for seconds (see lifecycle.test.ts).
+    await waitUntil(
+      () => records[1]?.received.includes('ready') ?? false,
+      'the replacement to be ready',
+      30_000,
+    );
     const rows = await db.all<{ n: number }>('SELECT 1 AS n');
     expect(rows[0]?.n).toBe(1);
     expect(records.length).toBe(2); // the dead one was replaced
@@ -137,6 +150,7 @@ describe('close() during a query', () => {
     const db = await createTestClient({ poolSize: 1, drainTimeout: 300 });
     await seed(db);
 
+    let received = 0;
     const streaming = (async () => {
       const collected: number[] = [];
       for await (const rows of db.chunk<{ id: number }>(
@@ -144,13 +158,15 @@ describe('close() during a query', () => {
         [],
         { chunkSize: 1 },
       )) {
+        received += 1;
         collected.push(rows[0]?.id ?? -1);
         await sleep(5);
       }
       return collected;
     })().catch(() => 'rejected' as const);
 
-    await sleep(100);
+    // The query is in flight: its first row has reached the consumer.
+    await waitUntil(() => received > 0, 'the first row');
     const started = performance.now();
     await db.close();
     // Bounded by drainTimeout (300 ms); with a slow consumer the drain runs to

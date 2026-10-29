@@ -6,8 +6,9 @@ import {
   killSilently,
   longQuery,
   scaled,
-  sleep,
   TEST_TARGET,
+  theQueryIsRunning,
+  waitUntil,
 } from '../helpers';
 import { removeOpfsPath } from '../helpers/environment';
 
@@ -480,10 +481,11 @@ describe('reopening a database after its worker died', () => {
 
     await step('db.write', db.run('CREATE TABLE t (a)'));
     const [first] = records;
-    const running = db.all(longQuery(20_000_000));
+    const sql = longQuery(20_000_000);
+    const running = db.all(sql);
     // Rejected later than it is awaited; keep it from being unhandled.
     running.catch(() => {});
-    await sleep(100);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     if (first) killSilently(first.worker);
     expect(
       await step(

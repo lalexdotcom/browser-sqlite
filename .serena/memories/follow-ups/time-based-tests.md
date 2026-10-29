@@ -1,6 +1,8 @@
 # Follow-up — tests based on time that could be based on events
 
-**Status: OPEN** — inventory made 2026-10-29 (user: "le temps serait juste pour les timeout"); the yields are done (`test/next-task-yields`), the rest is to do.
+**Status: OPEN** — inventory made 2026-10-29 (user: "le temps serait juste pour les timeout"); the yields are done (`test/next-task-yields`), groups A and B done (`test/time-based-a-b`, 2026-10-29), the rest is to do.
+
+**Done 2026-10-29, A and B:** every "the statement is running" `sleep(100)` waits on `theQueryIsRunning` (`lifecycle` ×8, `debug`, `delete`, `long-query`, `open-retry`, `idb-long-read`; their clients take `debug: true`); `backpressure`'s parked-on-credit kill waits for the credit window to be full (≥ 2 chunks posted) and its close test for the first row; the replacement waits are `records[1]` reaching `ready` (30 s bound, Safari's wasm stall) in `long-query` and `backpressure`; `lifecycle`'s two post-kill sleeps wait for `onWorkerLost` and for worker 0's termination. Falsified: no `worker.onerror` (15 `lifecycle` tests red), no `emitWorkerLost` in the `lost` branch, no drain timer (`long-query` and `backpressure` red). **`backpressure`'s two `sleep(1500)` past `drainTimeout` ("does not restart", `first()` "never restarts") are group E, not B:** the window is what they prove.
 
 Part of `mem:follow-ups`.
 

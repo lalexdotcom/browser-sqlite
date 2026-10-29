@@ -8,6 +8,7 @@ import {
   scaled,
   sharedDatabase,
   sleep,
+  theQueryIsRunning,
   waitUntil,
 } from '../helpers';
 
@@ -16,15 +17,16 @@ describe('worker lifecycle — crash detection', () => {
   // the test timeout instead of rejecting.
   it('rejects the in-flight query when the worker reports an uncaught error', async () => {
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
     await db.run('CREATE TABLE t (a)');
 
     // Long enough to be in flight at the kill, short enough to end soon
     // after: on Safari ≤ 27.0.1 a killed sync worker runs its statement out
     // holding its OPFS files (WebKit 328618), and 20M kept them past the
     // file's storage wipe on Safari 27 (2026-10-23).
-    const running = db.all(longQuery(2_000_000));
-    await sleep(100);
+    const sql = longQuery(2_000_000);
+    const running = db.all(sql);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     records[0].worker.dispatchEvent(
       new ErrorEvent('error', { message: 'simulated worker failure' }),
     );
@@ -38,12 +40,13 @@ describe('worker lifecycle — crash detection', () => {
     const webkit = killedStatementRuns();
     if (webkit) return skip(webkit);
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
     await db.run('CREATE TABLE t (a)');
     expect(records.length).toBe(1);
 
-    const running = db.all(longQuery(20_000_000));
-    await sleep(100);
+    const sql = longQuery(20_000_000);
+    const running = db.all(sql);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     records[0].worker.dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
 
@@ -61,12 +64,17 @@ describe('worker lifecycle — crash detection', () => {
     const webkit = killedStatementRuns();
     if (webkit) return skip(webkit);
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 1 });
+    const db = await createTestClient({
+      poolSize: 1,
+      debug: true,
+      maxWorkerRestarts: 1,
+    });
     await db.run('CREATE TABLE t (a)');
 
     for (const attempt of [0, 1]) {
-      const running = db.all(longQuery(20_000_000));
-      await sleep(100);
+      const sql = longQuery(20_000_000);
+      const running = db.all(sql);
+      await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
       records[attempt].worker.dispatchEvent(new ErrorEvent('error'));
       await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
       // Killing the replacement before its ready leaves the open lock to its
@@ -118,13 +126,18 @@ describe('worker lifecycle — crash detection', () => {
   // for a worker that will never exist and the test dies on its timeout.
   it('fails the client when the replacement never boots', async () => {
     const created = failWorkersFrom(1);
-    const db = await createTestClient({ poolSize: 1, maxWorkerRestarts: 1 });
+    const db = await createTestClient({
+      poolSize: 1,
+      debug: true,
+      maxWorkerRestarts: 1,
+    });
     await db.run('CREATE TABLE t (a)');
     expect(created.length).toBe(1);
 
     // 2M, not 20M: in flight at the kill, over soon after — see the first test.
-    const running = db.all(longQuery(2_000_000));
-    await sleep(100);
+    const sql = longQuery(2_000_000);
+    const running = db.all(sql);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     created[0].dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
 
@@ -171,7 +184,7 @@ describe('worker lifecycle — crash detection', () => {
   // into it.
   it('rejects the in-flight query on a deserialization failure, and keeps the worker', async () => {
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
     await db.run('CREATE TABLE t (a)');
 
     // Long enough to still be in flight after the sleep below, and no longer:
@@ -179,8 +192,9 @@ describe('worker lifecycle — crash detection', () => {
     // the test lost three times out of three — for a margin of 300× over what
     // it needs. At 2 000 000 the query still runs for seconds on the slowest
     // engine measured, twenty times the sleep.
-    const running = db.all(longQuery(2_000_000));
-    await sleep(100);
+    const sql = longQuery(2_000_000);
+    const running = db.all(sql);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     records[0].worker.dispatchEvent(new MessageEvent('messageerror'));
 
     await expect(running).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' });
@@ -227,18 +241,19 @@ describe('worker lifecycle — onWorkerLost callback', () => {
       // (spec 2026-09-15, A5).
       poolSize: 2,
       maxWorkerRestarts: 0,
+      debug: true,
       onWorkerLost: ({ index }) => events.push(index),
     });
     await db.run('CREATE TABLE t (a)');
 
     // Kill worker 0 — budget is 0, so it goes directly to 'lost'.
-    const running = db.all(longQuery(20_000_000));
-    await sleep(100);
+    const sql = longQuery(20_000_000);
+    const running = db.all(sql);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     records[0].worker.dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
 
-    await sleep(100);
-    expect(events).toContain(0);
+    await waitUntil(() => events.includes(0), 'onWorkerLost for slot 0');
   });
 
   // Falsifiable: call failClient() before emitWorkerLost() in the fail-client
@@ -251,13 +266,15 @@ describe('worker lifecycle — onWorkerLost callback', () => {
     const db = await createTestClient({
       poolSize: 1,
       maxWorkerRestarts: 0,
+      debug: true,
       onWorkerLost: () => callOrder.push('callback'),
     });
     await db.run('CREATE TABLE t (a)');
 
     // 2M, not 20M: in flight at the kill, over soon after — see the first test.
-    const running = db.all(longQuery(2_000_000));
-    await sleep(100);
+    const sql = longQuery(2_000_000);
+    const running = db.all(sql);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     records[0].worker.dispatchEvent(new ErrorEvent('error'));
 
     // The read rejects because the client is failed.
@@ -276,6 +293,7 @@ describe('worker lifecycle — onWorkerLost callback', () => {
       // Worker 1 must still be alive after worker 0 crashes (spec 2026-09-15, A5).
       poolSize: 2,
       maxWorkerRestarts: 0,
+      debug: true,
       onWorkerLost: () => {
         throw new Error('callback exploded');
       },
@@ -283,13 +301,15 @@ describe('worker lifecycle — onWorkerLost callback', () => {
     await db.run('CREATE TABLE t (a)');
 
     // Kill worker 0 — callback throws, must be swallowed.
-    const running = db.all(longQuery(20_000_000));
-    await sleep(100);
+    const sql = longQuery(20_000_000);
+    const running = db.all(sql);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     records[0].worker.dispatchEvent(new ErrorEvent('error'));
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
 
-    // Worker 1 is still alive and can serve queries.
-    await sleep(100);
+    // Worker 1 is still alive and can serve queries, once worker 0's death
+    // has been handled.
+    await waitUntil(() => records[0].terminated, 'worker 0 to be terminated');
     const rows = await db.all<{ n: number }>('SELECT 1 AS n');
     expect(rows[0]?.n).toBe(1);
   });
