@@ -626,6 +626,35 @@ describe('transaction — what else kills it (spec R1)', () => {
     ]);
   });
 
+  // An abort raised while the write is being posted lands before the caller
+  // races its signal. Falsifiable: drop the `signal.aborted` test of
+  // `makeAbortRace` in src/queries.ts — the write then resolves and is kept.
+  it('rolls back a write whose own signal fires while it is posted', async () => {
+    const own = new AbortController();
+    const reason = new Error('this write only');
+    const worker = fakeWorker([], {
+      'INSERT INTO t VALUES (1)': () => own.abort(reason),
+    });
+    const { transaction } = harness(worker);
+    let caught: unknown;
+    await transaction(async (tx) => {
+      caught = await tx
+        .run('INSERT INTO t VALUES (1)', [], { signal: own.signal })
+        .catch((e) => e);
+      await tx.run('INSERT INTO t VALUES (2)');
+    });
+    expect(caught).toBe(reason);
+    expect(worker.executed).toEqual([
+      'BEGIN IMMEDIATE',
+      'SAVEPOINT __bsq_sp',
+      'INSERT INTO t VALUES (1)',
+      'ROLLBACK TO __bsq_sp',
+      'RELEASE __bsq_sp',
+      'INSERT INTO t VALUES (2)',
+      'COMMIT',
+    ]);
+  });
+
   // Falsifiable: drop the offerIfIdle() of `abandon`'s finally in
   // src/transaction.ts — nothing lends the idle worker to a waiting verdict.
   it('lends its worker to a verdict once a write abandoned by its own signal is judged', async () => {

@@ -39,6 +39,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **On `AccessHandlePoolVFS` in Safari, `deleteDatabase()` and a worker opening the database no longer fail when a worker that died moments before still holds its files** (`WORKER_CRASHED`, `InvalidStateError`): they wait for those files, as on Chrome and Firefox.
 - **On Safari, `IDBBatchAtomicVFS` and `IDBMirrorVFS` no longer leave their IndexedDB database held open after `close()` or `deleteDatabase()`,** which made `indexedDB.deleteDatabase()` and upgrades of that database wait indefinitely, even across page reloads.
 - **On `IDBBatchAtomicVFS` and `IDBMirrorVFS`, a worker terminated after a crash, a timeout or a client failure no longer leaves its IndexedDB database held open on Safari:** the worker is first given up to 300 ms to let its IndexedDB transactions finish.
+- **In a transaction, a statement aborted by its own `signal` while it is being sent to its worker rejects and its write is undone,** where it could resolve and keep the write.
+- **A call aborted just as it obtains a worker rejects at once,** where it could first wait for that worker to answer, indefinitely if it never did.
 
 ## [1.0.0-rc.10] - 2026-10-09
 

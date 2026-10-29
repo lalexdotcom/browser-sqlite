@@ -1,6 +1,6 @@
 # Follow-up — an abort fired during a savepointed statement's post is missed
 
-**Status: OPEN** — found 2026-10-28 by the fix wave of `feat/sqlite-routing`'s final review, confirmed by its re-review; predates the branch, not made more reachable by it.
+**Status: CLOSED** — fixed 2026-10-29 on `fix/tx-abort-race-window`: `makeAbortRace` rejects at once when `signal.aborted`, as `raceAbort` does, which closes the window for every caller. The unit test aborting from a synchronous `fakeWorker` hook (`tests/unit/lib/transaction.test.ts`, "rolls back a write whose own signal fires while it is posted") was red before the fix — the window IS reachable that way: `start()` runs the transport up to the hook synchronously. Of the other callers, `waitFor` and the transaction body test the signal just before (no change); `acquireLease` (src/client.ts) had the same window between the lease and the barrier race, where the call waited for the barrier before rejecting (forever on a worker that never answers); every query path after it (`runWorker`, `drain`) tests `signal.aborted` before posting, so only the latency changes there. Found 2026-10-28 by the fix wave of `feat/sqlite-routing`'s final review, confirmed by its re-review; predates the branch (present in `1.0.0-rc.10`), not made more reachable by it.
 
 Part of `mem:follow-ups`.
 
