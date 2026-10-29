@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient } from '../helpers';
+import { createTestClient, waitUntil } from '../helpers';
 
 type TestClient = Awaited<ReturnType<typeof createTestClient>>;
 
@@ -22,18 +22,14 @@ const WRITE_SQL = /^\s*(CREATE|INSERT|ALTER|DROP|UPDATE|DELETE)/i;
  * as ONE of them is ready. Every test below reasons about which worker is free,
  * so the whole pool has to be up before the first statement.
  */
-const poolReady = async (db: TestClient, size: number) => {
-  for (let attempt = 0; attempt < 300; attempt += 1) {
+const poolReady = (db: TestClient, size: number) =>
+  waitUntil(() => {
     const workers = db.debug?.workers ?? [];
-    if (
+    return (
       workers.length === size &&
       workers.every((worker) => worker.status === 'READY')
-    )
-      return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('pool never reached READY');
-};
+    );
+  }, 'every worker READY');
 
 describe('writer spread', {
   tags: ['requires:two-workers'],

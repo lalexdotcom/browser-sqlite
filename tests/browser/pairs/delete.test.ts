@@ -109,7 +109,7 @@ describe('deleteDatabase', () => {
     const release = Promise.withResolvers<void>();
     const held = Promise.withResolvers<void>();
 
-    void navigator.locks.request(
+    const lock = navigator.locks.request(
       initLockName(vfs, databasePath(vfs, file)),
       () => {
         held.resolve();
@@ -122,11 +122,9 @@ describe('deleteDatabase', () => {
     });
     release.resolve();
 
-    // No real caller releases a lock and retries in the same turn, but this
-    // test does exactly that. Yield to the task queue (stronger than a single
-    // microtask) so the Web Locks API has a chance to process the release
-    // before the next ifAvailable check.
-    await new Promise((r) => setTimeout(r, 0));
+    // The request settles once the lock is released, so the retry below never
+    // races the release.
+    await lock;
 
     await expect(deleteDatabase(file, { vfs, build })).resolves.toBeUndefined();
   });

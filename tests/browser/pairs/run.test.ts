@@ -7,8 +7,8 @@ import {
   killSilently,
   nextTask,
   scaled,
-  sleep,
   type WorkerRecord,
+  waitUntil,
 } from '../helpers';
 
 /**
@@ -77,18 +77,14 @@ const onFirstVerdict = (
 };
 
 /** Every worker READY: the tests below reason about which one is free. */
-const poolReady = async (db: TestClient, size: number) => {
-  for (let attempt = 0; attempt < 300; attempt += 1) {
+const poolReady = (db: TestClient, size: number) =>
+  waitUntil(() => {
     const workers = db.debug?.workers ?? [];
-    if (
+    return (
       workers.length === size &&
       workers.every((worker) => worker.status === 'READY')
-    )
-      return;
-    await sleep(10);
-  }
-  throw new Error('pool never reached READY');
-};
+    );
+  }, 'every worker READY');
 
 describe('run() and all()', () => {
   // Falsifiable: route every verdict to the read path in run().
@@ -313,8 +309,7 @@ describe('run() and all() on two workers', {
         records.some(
           (r) => slotOf(r) === txWorker && r.posted.includes('verdict'),
         );
-      for (let i = 0; i < 500 && !posted(); i++) await sleep(5);
-      expect(posted()).toBe(true);
+      await waitUntil(posted, "the verdict posted to the transaction's worker");
       await tx.run('INSERT INTO t VALUES (2, 2)');
     });
     expect(txWorker).toBeDefined();

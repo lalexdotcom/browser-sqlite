@@ -471,7 +471,7 @@ describe('worker lifecycle — startup readiness gate', () => {
     });
 
     // Slot 0 (real) and slot 1 (silent, round 1) have both been constructed.
-    while (created.length < 2) await sleep(10);
+    await waitUntil(() => created.length >= 2, 'the workers constructed');
     await booted(created[1]);
     created[1].dispatchEvent(
       new ErrorEvent('error', { message: 'slot 1 failed round 1' }),
@@ -479,7 +479,7 @@ describe('worker lifecycle — startup readiness gate', () => {
 
     // Round 1 settles only once slot 0 has genuinely opened — only then does
     // the retry spawn slot 1's silent replacement (worker index 2).
-    while (created.length < 3) await sleep(10);
+    await waitUntil(() => created.length >= 3, 'the workers constructed');
     await booted(created[2]);
 
     created[0].dispatchEvent(
@@ -581,7 +581,7 @@ describe('worker lifecycle — startup readiness gate', () => {
     });
 
     // Slot 0 (real) and slot 1 (silent, round 1) have both been constructed.
-    while (created.length < 2) await sleep(10);
+    await waitUntil(() => created.length >= 2, 'the workers constructed');
     await booted(created[1]);
     created[1].dispatchEvent(
       new ErrorEvent('error', { message: 'slot 1 failed round 1' }),
@@ -589,7 +589,7 @@ describe('worker lifecycle — startup readiness gate', () => {
 
     // Round 1 settles only once slot 0 has genuinely opened — only then does
     // the retry spawn slot 1's silent replacement (worker index 2).
-    while (created.length < 3) await sleep(10);
+    await waitUntil(() => created.length >= 3, 'the workers constructed');
     await booted(created[2]);
 
     // Kill slot 0 while the retry round is still open.

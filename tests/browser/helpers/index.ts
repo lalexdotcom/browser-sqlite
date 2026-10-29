@@ -399,13 +399,13 @@ export const nextTask = (() => {
  * thing named is the difference between a diagnosis and a mystery.
  */
 export const waitUntil = async (
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   what: string,
   timeoutMs = 5000,
 ): Promise<void> => {
   const bound = scaled(timeoutMs);
   const deadline = Date.now() + bound;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() > deadline) {
       throw new Error(`timed out after ${bound} ms waiting for ${what}`);
     }
