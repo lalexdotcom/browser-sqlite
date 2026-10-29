@@ -82,14 +82,16 @@ describe('an abandoned generator inside a transaction', {
     }
   });
 
-  // C1. Falsifiable: delete `worker.interrupt(transport)` from
-  // closeOpenStatements() in src/transaction.ts. A method call on an async
-  // generator is QUEUED behind a next() already in flight, so without the
-  // interrupt the close-out's `return()` waits for a chunk that this query
-  // will not produce for minutes. BEGIN, COMMIT and ROLLBACK carry no signal
-  // and no timeout is passed here, so nothing else cuts it: the transaction
-  // never rejects, the lease never goes back, and the origin-wide write lock
-  // is held throughout. This times out instead of finishing in seconds.
+  // C1. Two paths stop the next() left in flight, and either one is enough:
+  // the callback's throw makes the transaction die() first, which aborts the
+  // signal every statement carries, so `drain` rejects the next() and its
+  // finally interrupts the worker; then closeOpenStatements() interrupts the
+  // transport itself. Falsifiable only by removing both: drop the transaction's
+  // signal from the statements' options in `withSignal`, and delete
+  // `worker.interrupt(transport)` from closeOpenStatements(), both in
+  // src/transaction.ts — the close-out's `return()` then waits behind a next()
+  // this query will not answer for minutes, and the test times out. The test
+  // below pins the interrupt alone.
   it('rejects when the callback leaves a next() in flight', {
     timeout: scaled(30_000),
   }, async () => {
@@ -118,6 +120,37 @@ describe('an abandoned generator inside a transaction', {
       // Bounded by drainTimeout, not by the query: 200 million iterations of
       // that CTE run far longer than this budget.
       expect(performance.now() - started).toBeLessThan(15_000);
+    } finally {
+      await db.close();
+    }
+  });
+
+  // Falsifiable: delete `worker.interrupt(transport)` from
+  // closeOpenStatements() in src/transaction.ts. A callback that returns
+  // leaves the transaction's signal alive, so nothing else stops the next() in
+  // flight: the close-out's `return()` waits behind it, the transaction never
+  // settles and the test times out.
+  it('settles when the callback returns with a next() in flight', {
+    timeout: scaled(30_000),
+  }, async () => {
+    const db = await createTestClient({
+      ...TWO_WORKERS,
+      drainTimeout: 2000,
+    });
+    try {
+      // Committed where the step can be cut, rejected where the worker had to
+      // be stopped: either way it settles, which is the subject.
+      await db
+        .transaction(async (tx) => {
+          // Ten times the test above's: uncut, 200 M ends by itself in ~25 s
+          // on Chrome's sync build, inside this test's timeout, and a missing
+          // interrupt would pass late instead of failing.
+          const rows = tx.chunk(longQuery(2_000_000_000));
+          void rows.next().catch(() => {});
+          await nextTask();
+        })
+        .catch(() => {});
+      expect(await db.all('SELECT 1 AS ok')).toEqual([{ ok: 1 }]);
     } finally {
       await db.close();
     }

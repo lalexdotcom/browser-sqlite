@@ -141,14 +141,20 @@ describe('a reclaim that arrives late', () => {
    *
    * The transaction below abandons a generator whose query has already sent
    * `done`, so `deferredChunk` is clear and the reuse guard is NOT tripped:
-   * the next statement runs, the transaction commits, and the lease goes back
-   * to the pool with a stale transport still suspended at its `yield` and the
-   * caller's abort listener still armed. When the caller later tidies up its
-   * own controller, the cleanup that fires belongs to a query that ended long
-   * ago — and the worker is serving somebody else.
+   * the next statement runs and the transaction commits. Then the caller tidies
+   * up its own controller, and that abort belongs to a query that ended long
+   * ago while the worker is serving somebody else.
    *
-   * Before the fix the abort reached the live query: `interrupt()` broke its
-   * loop and the consumer received `done` with 100 of 4000 rows and no error.
+   * Two things keep it off the live query. closeOpenStatements() returns the
+   * abandoned generator before COMMIT, which detaches its abort listener, so
+   * the late abort finds nothing armed; and were it armed, `interrupt()`
+   * ignores a transport the worker is not serving. Before the second existed
+   * the abort reached the live query: `interrupt()` broke its loop and the
+   * consumer received `done` with 100 of 4000 rows and no error.
+   *
+   * Falsifiable only by removing both: the two closeOpenStatements() calls in
+   * src/transaction.ts and the `on !== servingQuery` return of `interrupt()`
+   * in src/pool.ts. The guard alone is pinned by the next describe.
    */
   it(
     'does not truncate the query the worker has moved on to',
