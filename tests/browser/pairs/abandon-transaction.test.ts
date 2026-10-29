@@ -3,8 +3,8 @@ import {
   createTestClient,
   interceptWorkers,
   longQuery,
+  nextTask,
   scaled,
-  sleep,
 } from '../helpers';
 
 /**
@@ -42,7 +42,7 @@ describe('an abandoned generator inside a transaction', {
         await tx.run('INSERT INTO t (n) VALUES (99999)');
         const rows = tx.chunk('SELECT n FROM t', [], { chunkSize: 10 });
         await rows.next();
-        await sleep(0);
+        await nextTask();
         // The generator is abandoned here. The transaction closes it before
         // COMMIT, so the auto-COMMIT never meets an in-flight query and the
         // transaction commits normally instead of failing.
@@ -72,7 +72,7 @@ describe('an abandoned generator inside a transaction', {
         let count = 0;
         for await (const rows of tx.chunk<{ n: number }>('SELECT n FROM t')) {
           count += rows.length;
-          await sleep(0);
+          await nextTask();
         }
         return count;
       });
@@ -111,7 +111,7 @@ describe('an abandoned generator inside a transaction', {
           // In flight and never awaited — the shape a `Promise.race` that
           // lost its own timer leaves behind.
           void rows.next().catch(() => {});
-          await sleep(0);
+          await nextTask();
           throw new Error('boom');
         }),
       ).rejects.toThrow('boom');

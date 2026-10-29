@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient } from '../helpers';
+import { createTestClient, nextTask } from '../helpers';
 
 /**
  * Chunks a consumer has taken must be collectable while the query still runs.
@@ -39,7 +39,7 @@ const collectUntil = async (done: () => boolean) => {
   while (!done() && performance.now() < deadline) {
     recent.push(Array.from({ length: 50_000 }, (_, j) => ({ j, s: `x${j}` })));
     if (recent.length > 4) recent.shift();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await nextTask();
   }
 };
 

@@ -20,7 +20,7 @@
 // Firefox, which has no --expose-gc. The falsifier is what tells a future
 // reader this test is worth re-running at all.
 import { describe, expect, it } from 'vitest';
-import { createTestClient, scaled, sleep } from '../helpers';
+import { createTestClient, nextTask, scaled, sleep } from '../helpers';
 
 const forceGC = (globalThis as { gc?: () => void }).gc;
 
@@ -44,7 +44,7 @@ describe('an abandoned generator is recovered at collection', () => {
         await (async () => {
           const rows = db.chunk('SELECT n FROM t', [], { chunkSize: 10 });
           await rows.next();
-          await sleep(0);
+          await nextTask();
         })();
 
         // Bounded retry: one collection is not a guarantee, and a hang is not
@@ -94,7 +94,7 @@ describe('an abandoned generator is recovered at collection', () => {
             signal: controller.signal,
           });
           await rows.next();
-          await sleep(0);
+          await nextTask();
         })();
 
         let served = false;
@@ -130,7 +130,7 @@ describe('an abandoned generator is recovered at collection', () => {
         await (async () => {
           const rows = db.stream('SELECT n FROM t', [], { chunkSize: 10 });
           await rows.next();
-          await sleep(0);
+          await nextTask();
         })();
 
         // Bounded retry: one collection is not a guarantee, and a hang is not
@@ -180,7 +180,7 @@ describe('an abandoned generator is recovered at collection', () => {
             signal: controller.signal,
           });
           await rows.next();
-          await sleep(0);
+          await nextTask();
         })();
 
         let served = false;
