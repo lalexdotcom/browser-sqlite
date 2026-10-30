@@ -69,6 +69,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - Counting a component's activity names the stuck party; a hypothesis about load does not (2026-10-08, Safari 26)
 - A failure seen only on one platform is looped there, with every process's trace, before it is explained (2026-10-19, the browser-install lock on macOS)
 - A per-row cost on one engine that dead code reproduces is a JIT heuristic: prove it through the engine's own knob (2026-10-25, wa-sqlite #388)
+- Arms that import the same ES module share its JIT: give each arm its own module (2026-10-30, wa-sqlite #388)
 
 ## `mem:lessons/claims-and-docs` — claims, documentation, upstream
 
