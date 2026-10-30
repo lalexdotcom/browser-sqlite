@@ -58,5 +58,5 @@ PR [#389][pr389], opened 2026-10-30 from `lalexdotcom:opfsadaptive-keep-journal`
 
 ## What stays ours
 
-- **Not carried in `patches/` yet.** Carrying it is the next step `mem:conventions/upstream` orders after the PR, with a CHANGELOG entry that leaves at the repin that brings it.
+- **Carried in `patches/` since 2026-10-30** (`perf/adaptive-keep-journal`), with a CHANGELOG entry under *Changed* that leaves at the repin that brings it.
 - **The library's follow-up stays open** on the 30 s default open timeout on Windows Firefox, unrelated to this change.
