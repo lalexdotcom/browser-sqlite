@@ -21,7 +21,7 @@ been work on nothing.
 | `bulkwrite-types` | More `types` values for `bulkWrite()` | OPEN — not designed |
 | `jspi-before-sync` | `jspi` before `sync` in the build order | OPEN — to examine; measurements owed |
 | `temp-store-anycontext` | `temp_store = MEMORY` by default on `OPFSAnyContextVFS` | OPEN — to weigh; WASM heap unmeasured |
-| `firefox-opfs-fsync` | Firefox + OPFS metadata fsyncs; the 30 s default open timeout on Windows Firefox | OPEN — counted 2026-10-29: `OPFSAdaptiveVFS` without `readwrite-unsafe` creates and removes `-journal` per commit, the others pay nothing per commit; 150-164 ms per commit on Windows Firefox; fix sent upstream as wa-sqlite #389 (2026-10-30), not yet carried; timeout decision owed |
+| `firefox-opfs-fsync` | Firefox + OPFS metadata fsyncs; the 30 s default open timeout on Windows Firefox | OPEN — counted 2026-10-29: `OPFSAdaptiveVFS` without `readwrite-unsafe` creates and removes `-journal` per commit, the others pay nothing per commit; 150-164 ms per commit on Windows Firefox; fix sent upstream as wa-sqlite #389 and carried in the patch (2026-10-30); timeout decision owed |
 | `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21); Safari open (WebKit 328618); WriteAhead on Firefox untested |
 | `safari-async-slowdown` | Safari's `async` build slows after long statements | OPEN — an upstream report (wa-sqlite or WebKit) owed |
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |

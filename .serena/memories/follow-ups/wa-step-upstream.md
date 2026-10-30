@@ -1,6 +1,6 @@
 # Follow-up — proposals to wa-sqlite for a cheaper `step()`
 
-**Status: OPEN** — PR #388 open; its revision is committed locally and waits for rhashimoto's answer.
+**Status: OPEN** — PR #388 open; its revision (`cba3a633`) pushed on 2026-10-30 after rhashimoto's verdicts, review re-requested, carried in the patch with its rebuilt glue. At the repin that merges it: drop its hunks and the three `.mjs` from the patch.
 
 Part of `mem:follow-ups`, opened 2026-10-16 (user) when the library-side fast step merged (`src/worker/step.ts`, `mem:history/2026-10-12-to-18`). **Optional, and upstream's to take or not**: the library already has the gain. It may start as a GitHub Discussion or an enhancement issue on wa-sqlite (user, 2026-10-16). Upstream is not preferred by this project (`mem:conventions`); what an upstream change would buy the library is the deletion of `src/worker/step.ts` and of its fingerprints in `tests/unit/lib/wa-sqlite-pin.test.ts`.
 

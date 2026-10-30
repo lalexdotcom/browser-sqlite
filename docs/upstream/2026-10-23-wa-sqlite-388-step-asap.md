@@ -127,7 +127,7 @@ No cost of the revision on Safari within its ±5 % precision, and no difference 
 
 **Why Safari's times vary so much** (a variance run on macOS 26: 8 pages alternating 1 and 5 instances, the head measured 12 times each beside a calibration loop, the host sampled after each page): instance count is not it (k=1 and k=5 alike, Safari at 840 MB and 1.5 GB); the runner's load average was 16-42 on 3 cores, falling through the job; the step loop varies ±20-30 % within a page where the calibration (a typed-array sum) varies ±8 %. The runner's noise, which a pass over 4 000 000 rows of wasm memory feels more than a small CPU loop (not verified further). Per-page pairing keeps it to about ±5 %.
 
-## The revision prepared (2026-10-25, not pushed)
+## The revision prepared (2026-10-25, sent on 2026-10-30 with the next section)
 
 In `.work/wa-sqlite-step-asap`, committed locally on `step-asap` as `34d46069` and not pushed, the PR left as is until rhashimoto answers (user). Built on the assumption that our suggestions are accepted:
 
@@ -140,8 +140,40 @@ In `.work/wa-sqlite-step-asap`, committed locally on `step-asap` as `34d46069` a
 
 Upstream suite on Chrome with it: 16/16 files, 8 006 passed. To send: adjust to his verdicts, push, a reply on the JSPI path (with the three engines' gains); then regenerate the patch with the rebuilt glue.
 
+## His verdicts and the revision sent (2026-10-30)
+
+rhashimoto answered the numbers on 2026-10-30. He usually prefers readability to micro-optimizations and is "not particularly swayed by performance arguments specific to Firefox with its single-digit market share", but `step()` is one of the library's most used calls, so: **ignore all his code change requests, with comments saying why; make the other comment edits; no `ccall` on JSPI, "maybe test for Asyncify" so those blocks can be deleted if Asyncify is removed; and reimplement `exec()` on `step_asap()`.** His message also mused that "future me, equipped with powerful AI tools", may no longer read code; the user read it as reluctant, not bitter, and answered with empathy (below).
+
+**The revision, `cba3a633`** on top of `34d46069` (the previous section), user-validated:
+
+- `step_asap()` takes `ccall` only when `Module.asyncMode === 'asyncify'` ("This branch goes when Asyncify does"); a build without `asyncMode` now calls the export directly, which is safe because `dist/` is rebuilt and every `Makefile` build includes `libadapters.js`.
+- `exec()` steps with `step_asap()`, awaiting only a Promise (the `index.d.ts` example's shape); `await callback(...)` unchanged.
+- `allowed` created only on the error path, in a small `fail()` that `done` calls: his `allowed` request met without the +7 % (user: "on garde cette option"). The function form is what SpiderMonkey's inlining limit needs; **no browser is named in the code or comments (user)**: "small enough for the JIT to inline it".
+- A comment on why the statement goes through `retry()` to `done` instead of closures.
+- Upstream suite on Chrome 156: 16/16 files, 8 006 passed.
+
+### Measured, and a benchmark trap
+
+Same setup as 2026-10-25 (Chrome 153 / Firefox 155 headless, `MemoryVFS`, 4 000 000 rows, 2 passes per page, medians of per-page ratios). Scripts in `.scratchpad/step-asap-bench/` (`site/rev2x-worker.js`, `site/failx-worker.js`, `run-rev2x.sh`, `run-failx.sh`, results `rev2x.jsonl`, `failx.jsonl`).
+
+**Trap: arms that import the same ES module share its JIT feedback.** Two instances built from one `sqlite-api*.js` or one glue `.mjs` share its compiled functions and inline caches; with two `Module` objects flowing through them they go polymorphic and slow down. Found when a control (`rev2b`, an exact copy of `rev2` importing the same file) came out +4 to +43 % slower than `rev2` while `fail()`, in its own file, looked 10 % faster. It also explained a 6-11 % "gain" on Asyncify for code identical between head and revision: head shared `wa-sqlite-async.mjs` with `master`, the revision had its own `-rev.mjs` (an `async` control with `head2` and the revision on the old glue pointed at the glue; a shape-of-`Module` hypothesis was withdrawn). **Fix: one module per arm, `import(\`${path}?arm=${name}\`)`.** With it the control stays within ±3 %. The 2026-10-25 JSPI figures are unaffected (head and revision each had their own glue); the review arms shared one glue, equally.
+
+Revision against the PR head (`947a3996`), one module per arm, 6 pages × 3 builds × 2 engines, Firefox / Chrome:
+
+| build | `step()` | `step_asap()` | `exec()` | `exec()` with a callback |
+|---|---|---|---|---|
+| `sync` | +1 % / 0 % | +1 % / +2 % | −42 % / −34 % | −22 % / −10 % |
+| `async` | +2 % / +2 % | −1 % / 0 % | −21 % / −22 % | −9 % / −9 % |
+| `jspi` | −6 % / −16 % | −5 % / −12 % | −11 % / −14 % | −11 % / −8 % |
+
+`exec()` against `master` on `sync`: 3 440 → 270 ms / 927 → 260 ms. `fail()` against the revision without it, same design with the control: within ±2 % on every build, engine and loop (`step_asap()`, `exec()`, `exec()` with a callback).
+
+### Posted
+
+`step-asap` pushed `947a3996..cba3a633` (fast-forward; the PR now has three commits; `34d46069`'s message still says a build without `asyncMode` is taken for Asyncify, corrected by `cba3a633`, history not rewritten). Reply [issuecomment-6524327972](https://github.com/rhashimoto/wa-sqlite/pull/388#issuecomment-6524327972), the user's text translated (draft `.scratchpad/388-reply-2026-10-30.md`): the list of changes with `exec()`'s range "11 to 42 % … 8 to 22 % with a callback, Chrome included"; on Firefox, that it is the easiest to measure in the user's dev environment, that most such gains are on the path without `readwrite-unsafe` where Safari behaves alike and every iOS browser runs on Safari's WebKit (checked: the EU since iOS 17.4 and Japan since December 2025 allow other engines, none shipped as of 2026), that `fail()` being a function is pure SpiderMonkey JIT; a joke about Windows and Firefox; and empathy on handing one's code to an agent, the PRs having to suit him. Review re-requested by the user.
+
 ## What stays ours
 
 - **Not carried in the patch**: `src/worker/step.ts` already gives the library the gain.
 - **At the repin that brings it**: the worker's two call sites call `step_asap()`; `step.ts` and its fingerprints in `tests/unit/lib/wa-sqlite-pin.test.ts` are deleted.
-- **Since 2026-10-23 the patch carries #388** (`mem:stack-and-build/wa-sqlite`), and the two items above are done. The revision regenerates it; with the JSPI path it also carries whichever `dist/` glue the `libadapters.js` change rebuilds, until the merge, as for #375 (clear the rspack caches after).
+- **Since 2026-10-23 the patch carries #388** (`mem:stack-and-build/wa-sqlite`), and the two items above are done. **Since 2026-10-30 it carries `cba3a633` with the three rebuilt `.mjs` glues**: they must travel together, since without `Module.asyncMode` the revised `step_asap()` would call the bare export on Asyncify. `libadapters.js` is not in the npm package and is not carried.
