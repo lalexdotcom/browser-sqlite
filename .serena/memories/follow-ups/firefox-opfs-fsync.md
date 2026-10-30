@@ -1,6 +1,8 @@
 # Follow-up — Firefox + OPFS: every file create/open/close/delete costs fsyncs — what the library can avoid (user, 2026-10-14)
 
-**Status: OPEN** — counted on 2026-10-29 (JOURNAL-PROBE): `OPFSAdaptiveVFS` without `readwrite-unsafe` pays the bug's cycle at every commit, the other VFS do not; on Windows Firefox that is 150-164 ms per commit against 9 ms without a journal file. **The fix is upstream: wa-sqlite [#389](https://github.com/rhashimoto/wa-sqlite/pull/389), opened 2026-10-30** (report `docs/upstream/2026-10-30-wa-sqlite-389-adaptive-keep-journal.md`): `OPFSAdaptiveVFS` keeps the journal's handle with the database's and truncates it, as `OPFSCoopSyncVFS` does — commits 2× to 10× faster depending on browser and OS, Safari included; carried in `patches/` on `perf/adaptive-keep-journal` (2026-10-30). The 30 s default open timeout on Windows Firefox awaits a decision.
+**Status: CLOSED** — 2026-10-30. The per-commit cost is fixed upstream (wa-sqlite #389, carried in the patch; tracked in `mem:follow-ups/wa-sqlite-389-adaptive-journal`). The 30 s default open timeout stays (user): a second `OPFSCoopSyncVFS` client opens in 0.9-3.2 s on Windows Firefox under it, 10× under the bound (COOPSYNC-OPEN-DEFAULT, `mem:measurements/held-handles`); the one `TIMEOUT` seen came from the suite's parallel load. History below as written.
+
+Before closure: counted on 2026-10-29 (JOURNAL-PROBE): `OPFSAdaptiveVFS` without `readwrite-unsafe` pays the bug's cycle at every commit, the other VFS do not; on Windows Firefox that is 150-164 ms per commit against 9 ms without a journal file.
 
 Part of `mem:follow-ups`; moved out of it on 2026-10-26.
 

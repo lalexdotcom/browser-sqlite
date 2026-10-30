@@ -99,6 +99,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - ADAPTIVE-382 — `OPFSAdaptiveVFS` after a terminated holder: B hangs and the lock stays held on Firefox, 0 with the change
 - POST-381 — the library's first-open retry never made a second attempt once #381 retried inside the VFS: removed
 - JOURNAL-PROBE — OPFS calls per autocommit write: `OPFSAdaptiveVFS` without `readwrite-unsafe` creates and removes its `-journal` at every commit (`persist`/`truncate` refused there), 150-164 ms per commit on Windows Firefox against 9 ms in `memory`; the other VFS make no metadata call
+- COOPSYNC-OPEN-DEFAULT — a second `OPFSCoopSyncVFS` client on Windows Firefox opens in 0.9-3.2 s under the 30 s default open timeout, the first idle or writing; a hand-over ~100 ms each way there
 
 ## `mem:measurements/transactions` — transactions
 
