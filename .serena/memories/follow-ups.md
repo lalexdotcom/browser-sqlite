@@ -29,7 +29,6 @@ been work on nothing.
 | `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10) |
 | `matrix-windows-macos` | The matrix on Windows and macOS | OPEN — later (user, 2026-10-15) |
 | `macos-ci-instability` | macOS workflows fail without a library cause: timers ~5× slower in Chrome and Firefox than on Linux (not in Safari), a lost Safari session | OPEN — low priority: the runner's, not macOS's (user's Mac fast); `BSQ_TIME_SCALE=2` on macOS since 2026-10-26; runner cause and Safari sessions open |
-| `test-plan-windows-file-arg` | On Windows `scripts/test-plan.ts` rejects every file argument (backslashed `relative()` against Vitest's posix paths) | OPEN — seen once 2026-10-30, cause read, not fixed |
 | `ci-live-progress` | Reading a GitHub run's progress from `gh` while it runs (logs come only at job end) | OPEN — not designed; recommended: a progress check run the planner updates |
 
 ## Open — upstream (wa-sqlite)
@@ -71,6 +70,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
+| `test-plan-windows-file-arg` | On Windows `scripts/test-plan.ts` rejects every file argument (`collectFamily` compared `resolve()`'s `\` with Vitest's `/`) | CLOSED — 2026-11-02, `fix/test-plan-windows-file-arg`: compared as relative paths, unit-tested under `path.win32`, verified on `windows-latest` (run 41459385537) |
 | `wa-step-upstream` | A cheaper `step()` upstream (#383, PR #388) | CLOSED — 2026-11-02, `build/repin-wa-sqlite-e4f54a0`: #388 merged upstream (`e4f54a05`), repinned, dropped from the patch |
 | `firefox-opfs-fsync` | Firefox + OPFS metadata fsyncs; the 30 s default open timeout on Windows Firefox | CLOSED — 2026-10-30: the per-commit journal cycle fixed upstream (wa-sqlite #389, carried); the 30 s default open timeout kept, a second CoopSync client opening in 0.9-3.2 s on Windows Firefox |
 | `tx-abort-race-window` | An abort fired during a savepointed statement's post is missed (`makeAbortRace` never tests `aborted`) | CLOSED — 2026-10-29, `fix/tx-abort-race-window`: `makeAbortRace` rejects at once on a fired signal |

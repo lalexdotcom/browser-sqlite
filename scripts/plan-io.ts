@@ -1,4 +1,4 @@
-import { relative, resolve } from 'node:path';
+import nodePath, { type PlatformPath, relative, resolve } from 'node:path';
 import {
   createVitest,
   experimental_getRunnerTask,
@@ -142,6 +142,23 @@ const referenceProject = (vitest: Vitest, family: Family): TestProject => {
 };
 
 /**
+ * The test files that file arguments name, compared relative to the root:
+ * Vitest globs with `/` on every platform, while `resolve()` gives `\` on
+ * Windows; `relative()` brings both to the platform's form.
+ */
+export function namedTestFiles(
+  testFiles: readonly string[],
+  files: readonly string[],
+  path: Pick<PlatformPath, 'relative' | 'resolve'> = nodePath,
+  root: string = ROOT,
+): string[] {
+  const wanted = files.map((file) =>
+    path.relative(root, path.resolve(root, file)),
+  );
+  return testFiles.filter((file) => wanted.includes(path.relative(root, file)));
+}
+
+/**
  * Every test of the family's files (or of `files`), with its tags, by static
  * parsing; and the repo-relative test files `files` matched in this family
  * (a file with no test still counts, so a typo is told from an empty file).
@@ -152,10 +169,8 @@ export async function collectFamily(
   files: readonly string[] | null,
 ): Promise<{ tests: CollectedTest[]; files: string[] }> {
   const project = referenceProject(vitest, family);
-  const wanted = files?.map((file) => resolve(ROOT, file));
-  const testFiles = (await project.globTestFiles()).testFiles.filter(
-    (file) => wanted === undefined || wanted.includes(file),
-  );
+  const globbed = (await project.globTestFiles()).testFiles;
+  const testFiles = files ? namedTestFiles(globbed, files) : globbed;
   const modules = await vitest.parseSpecifications(
     testFiles.map((file) => project.createSpecification(file)),
   );
