@@ -40,7 +40,7 @@ project_name: "wsqlite"
 # The first language server is the default language and the respective language server will be used as a fallback.
 # Note that when using the JetBrains backend, language servers are not used and this list is correspondingly ignored.
 language_servers:
-- typescript
+- typescript_tsgo
 
 # the encoding used by text files in the project
 # For a list of possible encodings, see https://docs.python.org/3.11/library/codecs.html#standard-encodings
@@ -78,7 +78,10 @@ ignore_all_files_in_gitignore: true
 # Maps the language key to the options.
 # The settings are considered only if the project is trusted (see global configuration to define trusted projects).
 # See https://oraios.github.io/serena/02-usage/050_configuration.html#language-server-specific-settings
-ls_specific_settings: {}
+ls_specific_settings:
+  # The project's own TypeScript 7 rather than the copy Serena installs.
+  typescript_tsgo:
+    ls_path: node_modules/.bin/tsc
 
 # list of workspace folder paths (LSP backend only).
 # These folders will be used to build up Serena's symbol index.
