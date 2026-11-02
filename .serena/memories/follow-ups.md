@@ -70,7 +70,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
-| `test-plan-windows-file-arg` | On Windows `scripts/test-plan.ts` rejects every file argument (`collectFamily` compared `resolve()`'s `\` with Vitest's `/`) | CLOSED — 2026-11-02, `fix/test-plan-windows-file-arg`: compared as relative paths, unit-tested under `path.win32`; not yet run on a Windows runner |
+| `test-plan-windows-file-arg` | On Windows `scripts/test-plan.ts` rejects every file argument (`collectFamily` compared `resolve()`'s `\` with Vitest's `/`) | CLOSED — 2026-11-02, `fix/test-plan-windows-file-arg`: compared as relative paths, unit-tested under `path.win32`, verified on `windows-latest` (run 41459385537) |
 | `wa-step-upstream` | A cheaper `step()` upstream (#383, PR #388) | CLOSED — 2026-11-02, `build/repin-wa-sqlite-e4f54a0`: #388 merged upstream (`e4f54a05`), repinned, dropped from the patch |
 | `firefox-opfs-fsync` | Firefox + OPFS metadata fsyncs; the 30 s default open timeout on Windows Firefox | CLOSED — 2026-10-30: the per-commit journal cycle fixed upstream (wa-sqlite #389, carried); the 30 s default open timeout kept, a second CoopSync client opening in 0.9-3.2 s on Windows Firefox |
 | `tx-abort-race-window` | An abort fired during a savepointed statement's post is missed (`makeAbortRace` never tests `aborted`) | CLOSED — 2026-10-29, `fix/tx-abort-race-window`: `makeAbortRace` rejects at once on a fired signal |
