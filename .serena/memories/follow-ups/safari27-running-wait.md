@@ -1,6 +1,6 @@
 # Follow-up — on Safari 27, a long statement of the routing tests is never seen running
 
-**Status: DONE (2026-10-28, `fix/safari27-wait-yield`)** — found the same day on the first macOS 27 runs after `feat/sqlite-routing`'s merge; a test fault, not a library one: `waitUntil` polled on a timer Safari 27 held to 1 Hz. Fixed in the helper, macOS 27 green twice (§ Fix).
+**Status: CLOSED (2026-10-28, `fix/safari27-wait-yield`)** — found the same day on the first macOS 27 runs after `feat/sqlite-routing`'s merge; a test fault, not a library one: `waitUntil` polled on a timer Safari 27 held to 1 Hz. Fixed in the helper, macOS 27 green twice (§ Fix).
 
 Part of `mem:follow-ups`.
 

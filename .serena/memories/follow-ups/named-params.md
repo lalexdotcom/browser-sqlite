@@ -1,6 +1,6 @@
 # Follow-up — Params as an object, bound by name — not designed (user, 2026-10-09)
 
-**Status: OPEN** — not designed.
+**Status: DEFERRED** — 2026-11-02 (user): a new feature, moved after the current release, which is bugfix only. Not designed.
 
 Part of `mem:follow-ups`; moved out of it on 2026-10-26.
 

@@ -2,7 +2,9 @@
 
 **One follow-up, one memory (user, 2026-10-26).** Every entry lives in its own sub-memory `mem:follow-ups/<name>`, and this file is only the index, so no entry has to fit under another's size limit.
 
-**The status is in both places, and each entry stands on its own (user, 2026-10-26).** The index gives every entry's status, so whether it is done can be read here without opening it; the entry repeats it on a `**Status: …**` line right under its title, so it can be read alone. Change both in the same edit. Statuses: **OPEN**; **IDEA** (not planned for the short or medium term — keep it, do not present it as pending scope or as "the next thing", user 2026-09-03); **DORMANT** (waits for an event and needs no action until it comes; not part of the backlog and not listed when the user asks for it, user 2026-10-03); **RECORD** (notes, nothing to fix); **CLOSED** (with the date and the branch or merge that closed it).
+**The status is in both places, and each entry stands on its own (user, 2026-10-26).** The index gives every entry's status, so whether it is done can be read here without opening it; the entry repeats it on a `**Status: …**` line right under its title, so it can be read alone. Change both in the same edit. Statuses: **OPEN**; **IDEA** (not planned for the short or medium term — keep it, do not present it as pending scope or as "the next thing", user 2026-09-03); **DORMANT** (waits for an event and needs no action until it comes; not part of the backlog and not listed when the user asks for it, user 2026-10-03); **DEFERRED** (moved to a later version, with the date and the reason; not part of the current release's scope, user 2026-11-02); **RECORD** (notes, nothing to fix); **CLOSED** (with the date and the branch or merge that closed it). A closed entry moves to § Closed in the same edit.
+
+**The current release is bugfix only (user, 2026-11-02): no new feature, no new behaviour.** New features and changes of default are DEFERRED to a later version.
 
 **Never delete an entry; mark it (user, 2026-10-26).** A closed follow-up keeps its memory and its row, with the status CLOSED: deleting it breaks the links that point to it. Inside an entry, the text above the status line is what the follow-up was; update the status rather than rewriting the history of it. `CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers, `mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
 
@@ -15,13 +17,6 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
-| `safari27-running-wait` | On Safari 27, routing tests waiting for a long statement to run time out (never seen `RUNNING`) | DONE 2026-10-28 — Safari 27 ran the test page's timers once a second (SAFARI27-TIMER-1HZ); `waitUntil` now polls on a message (`fix/safari27-wait-yield`), macOS 27 green twice; why Safari throttles not known |
-| `tx-abort-race-window` | An abort fired during a savepointed statement's post is missed (`makeAbortRace` never tests `aborted`) | CLOSED — 2026-10-29, `fix/tx-abort-race-window`: `makeAbortRace` rejects at once on a fired signal |
-| `named-params` | Params as an object, bound by name | OPEN — not designed |
-| `bulkwrite-types` | More `types` values for `bulkWrite()` | OPEN — not designed |
-| `jspi-before-sync` | `jspi` before `sync` in the build order | OPEN — to examine; measurements owed |
-| `temp-store-anycontext` | `temp_store = MEMORY` by default on `OPFSAnyContextVFS` | OPEN — to weigh; WASM heap unmeasured |
-| `firefox-opfs-fsync` | Firefox + OPFS metadata fsyncs; the 30 s default open timeout on Windows Firefox | CLOSED — 2026-10-30: the per-commit journal cycle fixed upstream (wa-sqlite #389, carried); the 30 s default open timeout kept, a second CoopSync client opening in 0.9-3.2 s on Windows Firefox |
 | `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21); Safari open (WebKit 328618); WriteAhead on Firefox untested |
 | `safari-async-slowdown` | Safari's `async` build slows after long statements | OPEN — an upstream report (wa-sqlite or WebKit) owed |
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
@@ -34,8 +29,6 @@ been work on nothing.
 | `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10) |
 | `matrix-windows-macos` | The matrix on Windows and macOS | OPEN — later (user, 2026-10-15) |
 | `macos-ci-instability` | macOS workflows fail without a library cause: timers ~5× slower in Chrome and Firefox than on Linux (not in Safari), a lost Safari session | OPEN — low priority: the runner's, not macOS's (user's Mac fast); `BSQ_TIME_SCALE=2` on macOS since 2026-10-26; runner cause and Safari sessions open |
-| `time-based-tests` | Tests waiting on time where an event or a state would do; time only as a timeout (user) | CLOSED — 2026-10-29, `test/next-task-yields` and `test/time-based-a-b`: waits on states, time only as timeouts, each step re-falsified |
-| `stale-falsifiers` | Three browser tests no mutation of their subject turns red (`abandon`, `abandon-transaction`, `chunk-delivery`) | CLOSED — 2026-10-29, `test/stale-falsifiers`: falsifiers diagnosed and written, one test added |
 | `test-plan-windows-file-arg` | On Windows `scripts/test-plan.ts` rejects every file argument (backslashed `relative()` against Vitest's posix paths) | OPEN — seen once 2026-10-30, cause read, not fixed |
 | `ci-live-progress` | Reading a GitHub run's progress from `gh` while it runs (logs come only at job end) | OPEN — not designed; recommended: a progress check run the planner updates |
 
@@ -44,10 +37,18 @@ been work on nothing.
 | Memory | Subject | Status |
 |---|---|---|
 | `wa-sqlite-webdriver-pr` | wa-sqlite's suite on stock browsers (Discussion #373) | OPEN — accepted 2026-10-10; the PR is ours to send |
-| `wa-step-upstream` | A cheaper `step()` upstream (#383, PR #388) | CLOSED — 2026-11-02, `build/repin-wa-sqlite-e4f54a0`: #388 merged upstream (`e4f54a05`), repinned, dropped from the patch |
 | `wa-sqlite-386-coopsync-bfcache` | `OPFSCoopSyncVFS.create()` after a bfcache navigation (#362, PR #386) | OPEN — PR open; a browser test of the real navigation to do |
 | `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | OPEN — PR open, waiting for review |
 | `wa-sqlite-389-adaptive-journal` | `OPFSAdaptiveVFS` keeps its journal's access handle between transactions (PR #389) | OPEN — PR open, waiting for review |
+
+## Deferred — a later version
+
+| Memory | Subject | Status |
+|---|---|---|
+| `named-params` | Params as an object, bound by name | DEFERRED — 2026-11-02 (user): a new feature, after the bugfix release; not designed |
+| `bulkwrite-types` | More `types` values for `bulkWrite()` | DEFERRED — 2026-11-02 (user): a new feature, after the bugfix release; not designed |
+| `jspi-before-sync` | `jspi` before `sync` in the build order | DEFERRED — 2026-11-02 (user): a change of default, after the bugfix release; measurements owed |
+| `temp-store-anycontext` | `temp_store = MEMORY` by default on `OPFSAnyContextVFS` | DEFERRED — 2026-11-02 (user): a change of default, after the bugfix release; WASM heap unmeasured |
 
 ## Ideas
 
@@ -70,6 +71,12 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
+| `wa-step-upstream` | A cheaper `step()` upstream (#383, PR #388) | CLOSED — 2026-11-02, `build/repin-wa-sqlite-e4f54a0`: #388 merged upstream (`e4f54a05`), repinned, dropped from the patch |
+| `firefox-opfs-fsync` | Firefox + OPFS metadata fsyncs; the 30 s default open timeout on Windows Firefox | CLOSED — 2026-10-30: the per-commit journal cycle fixed upstream (wa-sqlite #389, carried); the 30 s default open timeout kept, a second CoopSync client opening in 0.9-3.2 s on Windows Firefox |
+| `tx-abort-race-window` | An abort fired during a savepointed statement's post is missed (`makeAbortRace` never tests `aborted`) | CLOSED — 2026-10-29, `fix/tx-abort-race-window`: `makeAbortRace` rejects at once on a fired signal |
+| `time-based-tests` | Tests waiting on time where an event or a state would do; time only as a timeout (user) | CLOSED — 2026-10-29, `test/next-task-yields` and `test/time-based-a-b`: waits on states, time only as timeouts, each step re-falsified |
+| `stale-falsifiers` | Three browser tests no mutation of their subject turns red (`abandon`, `abandon-transaction`, `chunk-delivery`) | CLOSED — 2026-10-29, `test/stale-falsifiers`: falsifiers diagnosed and written, one test added |
+| `safari27-running-wait` | On Safari 27, routing tests waiting for a long statement to run time out (never seen `RUNNING`) | CLOSED — 2026-10-28, `fix/safari27-wait-yield`: Safari 27 ran the test page's timers once a second (SAFARI27-TIMER-1HZ); `waitUntil` now polls on a message, macOS 27 green twice; why Safari throttles not known |
 | `timeout-start` | When a call's `timeout` starts counting (call vs first `next()`) | CLOSED — 2026-10-26, `fix/timeout-from-call`, merged: from the call everywhere |
 | `tx-validation` | `tx.read()`/`tx.write()`/`tx.first()` threw on a bad argument | CLOSED — 2026-10-26, `fix/tx-api-consistency`, merged |
 | `sqlite-routing` | One `run()` routed by SQLite's own read/write diagnosis, to stream a write's `RETURNING`; holds the `sqlite3_stmt_readonly` entry | CLOSED — 2026-10-28, `feat/sqlite-routing` merged; its parked ideas stay in the entry |
