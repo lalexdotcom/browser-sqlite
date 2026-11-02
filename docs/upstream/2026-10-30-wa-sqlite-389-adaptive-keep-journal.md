@@ -23,7 +23,7 @@
 
 ## Measured
 
-Throwaway probe pages (`.scratchpad/probe-journal-fix/`, then the branch `probe/journal-fix-windows`, commits `d792e592` and `d1fa9819`; the remote branch and its runs deleted on 2026-10-30, user, the branch kept locally): wa-sqlite at `66336807` with the VFS swapped per arm, one connection per worker, OPFS calls counted by wrapping `getFileHandle`, `removeEntry`, `createSyncAccessHandle` and the handle's `close`/`flush`/`truncate`. 40 autocommit single-row `INSERT`s after 3 warm-ups, two passes per arm; median ms per commit.
+Throwaway probe pages (`.scratchpad/probe-journal-fix/`, then the branch `probe/journal-fix-windows`, commits `d792e592` and `d1fa9819`; the branch and its runs deleted on 2026-10-30 and 2026-11-02, user, so these commits are no longer reachable): wa-sqlite at `66336807` with the VFS swapped per arm, one connection per worker, OPFS calls counted by wrapping `getFileHandle`, `removeEntry`, `createSyncAccessHandle` and the handle's `close`/`flush`/`truncate`. 40 autocommit single-row `INSERT`s after 3 warm-ups, two passes per arm; median ms per commit.
 
 | ms per commit (median) | master | change |
 |---|---|---|

@@ -58,7 +58,7 @@ The whole first-open branch removed, every pair of both VFS (`sync`/`jspi`/`asyn
 
 The one-transaction phase made the same calls as one autocommit write: the cost is per commit, not per row. Firefox's timer rounds to 1 ms.
 
-**On `windows-latest` (2026-10-29, run 40968323465, throwaway `scripts/probe-journal/` at `1881cd87` on the local branch `probe/journal-windows`, the same page; the `truncate`/`persist` rows fell back to `delete` on Firefox, so `OPFSAdaptiveVFS · delete` was measured three times):** the same calls per commit as on Linux, every VFS and engine.
+**On `windows-latest` (2026-10-29, run 40968323465, throwaway `scripts/probe-journal/` at `1881cd87` on `probe/journal-windows`, a branch deleted locally too on 2026-11-02 (user), so the commit is no longer reachable, the same page; the `truncate`/`persist` rows fell back to `delete` on Firefox, so `OPFSAdaptiveVFS · delete` was measured three times):** the same calls per commit as on Linux, every VFS and engine.
 
 | ms per commit, median (mean) | Firefox | Chrome |
 |---|---|---|
@@ -74,7 +74,7 @@ Firefox's cycle on `-journal`, mean ms each over the three runs: `getFileHandle(
 
 ## COOPSYNC-OPEN-DEFAULT — a second `OPFSCoopSyncVFS` client under the 30 s default open timeout, Windows Firefox, 2026-10-30, GitHub `windows-latest`
 
-**Method.** Throwaway `tests/browser/pairs/probe-coopsync-open.test.ts` on the branch `probe/coopsync-open-windows` (`31fd21b8`), run 41081561378: Firefox 155, cell `OPFSCoopSyncVFS/sync`, `BSQ_TIME_SCALE` unset so the library's default open timeout stays 30 s, one cell alone (no parallel jobs). Per round, a fresh database: client A opens and writes two rows; client B is created on the same file, timed until it answers `SELECT count(*)`; then ten rounds of A `INSERT` + B `SELECT`. Five rounds with A idle, five with A writing in an autocommit loop while B opens. **On Windows `scripts/test-plan.ts` rejects a file argument** ("not a test file of the selected projects": it compares `relative()`'s backslashed path to Vitest's posix one), so the run called `vitest --project "firefox · OPFSCoopSyncVFS/sync" --silent=false <file>` directly. The branch and its runs were deleted the same day (user).
+**Method.** Throwaway `tests/browser/pairs/probe-coopsync-open.test.ts` on the branch `probe/coopsync-open-windows` (`31fd21b8`), run 41081561378: Firefox 155, cell `OPFSCoopSyncVFS/sync`, `BSQ_TIME_SCALE` unset so the library's default open timeout stays 30 s, one cell alone (no parallel jobs). Per round, a fresh database: client A opens and writes two rows; client B is created on the same file, timed until it answers `SELECT count(*)`; then ten rounds of A `INSERT` + B `SELECT`. Five rounds with A idle, five with A writing in an autocommit loop while B opens. **On Windows `scripts/test-plan.ts` rejects a file argument** ("not a test file of the selected projects": it compares `relative()`'s backslashed path to Vitest's posix one), so the run called `vitest --project "firefox · OPFSCoopSyncVFS/sync" --silent=false <file>` directly. The branch and its runs were deleted the same day, the local branch on 2026-11-02 (user): `31fd21b8` is no longer reachable.
 
 | | A opens | B opens and answers | A write + B read (one hand-over each way) |
 |---|---|---|---|
