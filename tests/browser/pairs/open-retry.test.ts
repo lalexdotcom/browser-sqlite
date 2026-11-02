@@ -98,8 +98,15 @@ const exclusiveHolder = () => {
     };
     step('booted');
     self.onmessage = async (event) => {
-      const { type, file, channelName, graceMs, timeoutMs, takeBudgetMs } =
-        event.data;
+      const {
+        type,
+        file,
+        channelName,
+        lockSuffix,
+        graceMs,
+        timeoutMs,
+        takeBudgetMs,
+      } = event.data;
       if (type !== 'take') return;
       // Retried, because the client the test just closed can still hold this
       // file: its worker is gone, but the engine reclaims OPFS handles a
@@ -132,21 +139,36 @@ const exclusiveHolder = () => {
           await new Promise((r) => setTimeout(r, 25));
         }
       }
-      // The VFS announces that it wants this file on its own channel; let the
-      // announcement land, let its attempt fail, then let go.
-      const channel = new BroadcastChannel(channelName);
+      // The VFS says that it wants this file, on its own channel or by taking
+      // a Web Lock named after it; let that land, let its attempt fail, then
+      // let go.
+      const channel = channelName ? new BroadcastChannel(channelName) : null;
       let armed = false;
-      const arm = () => {
+      const arm = (by) => {
         if (armed) return;
         armed = true;
-        step('armed');
+        step('armed by ' + by);
         setTimeout(() => {
-          channel.close();
+          channel?.close();
           release();
         }, graceMs);
       };
-      channel.onmessage = arm;
-      setTimeout(arm, timeoutMs);
+      if (channel) channel.onmessage = () => arm('channel');
+      if (lockSuffix) {
+        // Each attempt holds the lock only while it fails, so poll often; the
+        // replacement retries, so a missed attempt is followed by another.
+        (async () => {
+          while (!armed) {
+            const { held = [], pending = [] } = await navigator.locks.query();
+            if ([...held, ...pending].some((l) => l.name?.endsWith(lockSuffix))) {
+              arm('lock');
+              return;
+            }
+            await new Promise((r) => setTimeout(r, 2));
+          }
+        })();
+      }
+      setTimeout(() => arm('timeout'), timeoutMs);
       self.postMessage('taken');
     };
   `;
@@ -178,21 +200,24 @@ const exclusiveHolder = () => {
     steps,
     /**
      * `channel`: where the VFS announces that it wants the file —
-     * `OPFSCoopSyncVFS`'s by default. `graceMs`: the pause between that
-     * announcement and the release.
+     * `OPFSCoopSyncVFS`'s by default. `lock`: instead, the end of the name of
+     * the Web Lock the VFS takes before opening it. `graceMs`: the pause
+     * between that signal and the release.
      */
     take: async (
       file: string,
       {
         channel = `ahp:/${file}`,
+        lock,
         graceMs = GRACE_MS,
-      }: { channel?: string; graceMs?: number } = {},
+      }: { channel?: string; lock?: string; graceMs?: number } = {},
     ) => {
       const answer = once();
       worker.postMessage({
         type: 'take',
         file,
-        channelName: channel,
+        channelName: lock === undefined ? channel : undefined,
+        lockSuffix: lock,
         graceMs,
         timeoutMs: ANNOUNCE_TIMEOUT_MS,
         takeBudgetMs: TAKE_BUDGET_MS,
@@ -390,9 +415,11 @@ describe('opening a database whose file is refused for another reason', () => {
  * `RESTART_GRACE_MS` after the VFS announces it wants the file, on
  * `OPFSAdaptiveVFS`'s channel. `OPFSWriteAheadVFS` meets the same window on
  * Firefox: it opens the database and its two write-ahead files with an
- * exclusive handle there, kept for its life. It announces nothing, so the
- * holder lets go at `ANNOUNCE_TIMEOUT_MS`, well after the replacement's first
- * attempt (under 300 ms on Firefox).
+ * exclusive handle there, kept for its life. It announces nothing, but takes
+ * a Web Lock named `<path>#open` around each attempt: the holder lets go
+ * `RESTART_GRACE_MS` after it sees that lock. Not after `ANNOUNCE_TIMEOUT_MS`:
+ * `BSQ_TIME_SCALE` stretches it (4 s on Windows) past the replacement's
+ * unscaled retry budget, 2.5 s, and the test went red there (2026-11-02).
  *
  * Falsifiable: make `openWithRetry` return at once whatever `afterDeath` — the
  * restarted worker's open fails at once with WORKER_CRASHED, and the client
@@ -435,10 +462,12 @@ describe('reopening a database after its worker died', () => {
     expect(
       await step(
         'holder.take',
-        holder.take(path, {
-          channel: `OPFS:/${path}`,
-          graceMs: RESTART_GRACE_MS,
-        }),
+        holder.take(
+          path,
+          TEST_TARGET.vfs === 'OPFSWriteAheadVFS'
+            ? { lock: `${path}#open`, graceMs: RESTART_GRACE_MS }
+            : { channel: `OPFS:/${path}`, graceMs: RESTART_GRACE_MS },
+        ),
       ),
     ).toBe('taken');
     first?.worker.dispatchEvent(new ErrorEvent('error'));
