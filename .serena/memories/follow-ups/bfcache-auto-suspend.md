@@ -25,7 +25,7 @@ The client listens to `pagehide` with `persisted === true`, closes its workers (
 - a Back navigation is no longer instant: the first query waits for the workers (~40-100 ms plus the WASM instantiation);
 - Chrome would change too (today a cached page keeps a live client and restores instantly): opt-in, or Safari-only, to decide;
 - cross-tab coordination must see the client leave and come back;
-- tests need a real top-level navigation on Chrome and Safari — the harness the #386 test needs;
+- tests need a real top-level navigation on Chrome and Safari: the harness was proven on Chrome in a 2026-11-02 spike (`mem:follow-ups/wa-sqlite-386-coopsync-bfcache`, § The harness that works), with its trap — a cached page whose `BroadcastChannel` receives a message is evicted; on Safari it would run through safaridriver, one session per machine;
 - unknown: `close()` called from `pagehide` sufficed in the probe although it is asynchronous and the page freezes right after — whether it terminates the workers at once or won a race is not known.
 
 Meanwhile (2026-11-02, `fix/bfcache-held-database`): `API.md` says to reopen on `pageshow` too, and a first open that meets a held file says so.
