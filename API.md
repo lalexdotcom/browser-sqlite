@@ -398,15 +398,21 @@ await db.close();
 
 **Stored data is not deleted.**<br>`close()` releases workers and connections; it removes nothing. To remove the database itself, use [`deleteDatabase`](#deletedatabase).
 
-**A page reload is not a close, and some engines make you wait for it.**<br>Navigating away or reloading discards the page without running `close()`, and the browser does not always release the underlying connection at once — the next page's open can then exhaust its [`openTimeout`](#opentimeout) and report `TIMEOUT`.<br> **If your application reloads** while a client is open, close it first:
+**A page you leave is not closed, and some engines keep its database held.**<br>Navigating away or reloading leaves the page without running `close()`, and the browser does not always release the database at once. Safari keeps it held for as long as the page sits in its back/forward cache, ready for the Back button. The next page that opens the same database then exhausts its [`openTimeout`](#opentimeout) and reports `TIMEOUT`, or fails at once with `WORKER_CRASHED`, depending on the VFS.<br> **If your application navigates or reloads** while a client is open, close it when the page is hidden, and open a new one when the page comes back from the cache:
 
 ```typescript
+const open = () => createSQLiteClient('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
+let db = open();
+
 window.addEventListener('pagehide', () => {
   void db.close();
 });
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) db = open();
+});
 ```
 
-`pagehide` fires where `unload` no longer does.
+`pagehide` fires where `unload` no longer does; `pageshow` with `persisted` set means the page was restored from the back/forward cache.
 
 ## deleteDatabase
 
@@ -642,7 +648,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `NOT_A_READ_QUERY` | `first()` was called with a statement that writes. |
 | `MULTIPLE_STATEMENTS` | A SQL string held more than one statement. Raised before anything runs, by every method that takes SQL: send each statement in its own call. |
 | `CLIENT_CLOSED` | A query was queued after `close()` was called. |
-| `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. When SQLite refused to open the database — a file that is not a database, a `pragmas` entry it rejected — `sqliteCode` carries its result code. |
+| `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. When SQLite refused to open the database — a file that is not a database, a `pragmas` entry it rejected — `sqliteCode` carries its result code. When another context holds the database file — a page left without `close()`, another tab — the message says so; see [`close()`](#clientclose). |
 | `WORKER_ERROR` | A statement failed in its worker without SQLite reporting it — a JavaScript exception, kept as `cause`. It has no `sqliteCode`, and the worker keeps serving. |
 | `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
 | `OPERATION_TIMEOUT` | The `timeout` set on a call was spent. The error carries it as `error.timeout`. Deliberately not `TIMEOUT`, which means a deadline this library imposed on itself — a worker that never became ready, a deletion that did not complete. |
