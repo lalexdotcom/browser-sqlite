@@ -75,5 +75,6 @@
 	// The window opens on a complete project, once post-create is done, rather
 	// than while pnpm install and the rest still run in its terminal.
 	"waitFor": "postCreateCommand",
+	"postStartCommand": ".devcontainer/post-start.sh",
 	"postAttachCommand": ".devcontainer/post-attach.sh"
 }

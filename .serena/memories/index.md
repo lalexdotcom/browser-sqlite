@@ -6,7 +6,7 @@ Each memory is small enough to read whole. Start with `mem:state`. A name with a
 |---|---|---|
 | `mem:state` | Where the work stands, what is owed, what blocks the next release | every session |
 | `mem:architecture` | Public surface, load-bearing invariants, scheduling rules; the `src/` layout file by file in `mem:architecture/layout`, the barrier and cross-tab in `mem:architecture/cross-tab` | rarely |
-| `mem:stack-and-build` | Toolchain, test suites, rslib/`dist` facts, CI, the packaging traps; the wa-sqlite pin, patch and fork in `mem:stack-and-build/wa-sqlite`, the GitHub workflows in `mem:stack-and-build/ci` | rarely |
+| `mem:stack-and-build` | Toolchain, test suites, rslib/`dist` facts, CI, the packaging traps; the wa-sqlite pin, patch and fork in `mem:stack-and-build/wa-sqlite`, the GitHub workflows in `mem:stack-and-build/ci`, the devcontainer and the shared Serena server in `mem:stack-and-build/devcontainer` | rarely |
 | `mem:vfs` | The nine VFS, the capability table, the default, per-VFS behaviour | per measurement campaign |
 | `mem:measurements` | Every number this project owns, with its date and method — an index of its sub-memories, by theme | per measurement |
 | `mem:follow-ups` | The backlog as an index with each entry's status; every follow-up is its own sub-memory `mem:follow-ups/<name>`, carrying its status too, never deleted — a closed one is marked CLOSED | ongoing |
