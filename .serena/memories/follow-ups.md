@@ -49,6 +49,7 @@ been work on nothing.
 | `named-params` | Params as an object, bound by name | DEFERRED — 2026-11-02 (user): a new feature, after the bugfix release; not designed |
 | `bulkwrite-types` | More `types` values for `bulkWrite()` | DEFERRED — 2026-11-02 (user): a new feature, after the bugfix release; not designed |
 | `jspi-before-sync` | `jspi` before `sync` in the build order | DEFERRED — 2026-11-02 (user): a change of default, after the bugfix release; measurements owed |
+| `bfcache-auto-suspend` | The client closes its workers when the page enters the back/forward cache and restarts them when it comes back (Safari keeps a cached page's locks: the next page times out or crashes) | DEFERRED — 2026-11-02 (user): a new behaviour, after the bugfix release; costs listed, not designed |
 | `temp-store-anycontext` | `temp_store = MEMORY` by default on `OPFSAnyContextVFS` | DEFERRED — 2026-11-02 (user): a change of default, after the bugfix release; WASM heap unmeasured |
 
 ## Ideas

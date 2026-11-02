@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Breaking:** **In a transaction, `tx.first()` refuses a write statement with `NOT_A_READ_QUERY`,** as on the client, instead of running it. A write goes through `tx.run()`, whose `rows` hold its `RETURNING` rows.
 - **A statement that fails in its worker without SQLite reporting it rejects with a `SQLiteError` of code `WORKER_ERROR`,** the original exception as `cause`, where it was a plain `Error` with no code.
 - **An invalid or refused pragma is reported with `INVALID_PRAGMA` before a missing browser feature,** where a browser without OPFS reported the missing OPFS instead.
+- **A first open that finds its database file held by another context fails with a `WORKER_CRASHED` that says so,** where it gave only the browser's `InvalidStateError` or `NoModificationAllowedError` — for instance after a page left for Safari's back/forward cache without `close()`.
 - **A `wasmUrl` callback is no longer called when the client's options are invalid or the browser lacks what the VFS needs,** nor when `deleteDatabase()` is refused before starting its worker.
 - **Reading rows is faster.**
 - **On `OPFSAdaptiveVFS` in Firefox and Safari, each write transaction is faster,** and so is handing the database over between clients.

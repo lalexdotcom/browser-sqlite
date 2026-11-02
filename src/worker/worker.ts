@@ -788,12 +788,20 @@ const open = (file: string, options: OpenOptions) => {
       // carry a numeric legacy `code` that is not SQLite's (e.g. 18 for
       // SecurityError, which reads as SQLITE_CODES.TOOBIG).
       const sqliteCode = sqliteCodeOf(error);
+      // A first open does not wait for a held file (only a replacement does,
+      // `openWithRetry`), so say who may hold it: Safari keeps a page's
+      // workers, and their handles, while the page is in its back/forward
+      // cache (measured 2026-11-02).
+      const held =
+        options.afterDeath === undefined && isHeldElsewhere(vfsError)
+          ? ` — the file is held by another context: a page left without close() (Safari keeps it open while the page is in its back/forward cache), another tab, or a holder outside this library`
+          : '';
       self.postMessage({
         type: 'open-error',
         callId: 0,
         message:
           detail && !(error instanceof HeldByKilledStatement)
-            ? `${base}: ${detail}`
+            ? `${base}: ${detail}${held}`
             : base,
         cause: cloneable(detail ? vfsError : error),
         ...(sqliteCode !== undefined ? { sqliteCode } : {}),

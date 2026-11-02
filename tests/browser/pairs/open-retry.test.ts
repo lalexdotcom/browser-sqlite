@@ -402,6 +402,47 @@ describe('opening a database whose file is refused for another reason', () => {
 });
 
 /**
+ * A first open that meets its file held by another context fails at once
+ * (only a worker that replaces a dead one waits, above), and says why. Seen on
+ * Safari 27.2 (2026-11-02): a page left for the back/forward cache keeps its
+ * workers' handles, so the next page of the same site failed with a bare
+ * `InvalidStateError` on `OPFSWriteAheadVFS`. Reproduced here with a holder
+ * that keeps the database file, where the handle is exclusive (Firefox).
+ *
+ * Falsifiable: drop the hint from the worker's `open-error` message.
+ */
+describe('opening a database whose file another context holds', () => {
+  it('fails naming the likely holders', {
+    tags: ['vfs:OPFSWriteAheadVFS', 'vfs:OPFSAdaptiveVFS', 'browser:firefox'],
+  }, async () => {
+    const dbName = `bsq-test-${crypto.randomUUID()}`;
+    const path = databasePath(TEST_TARGET.vfs, dbName);
+    const holder = exclusiveHolder();
+    onTestFinished(() => {
+      holder.dispose();
+      return removeOpfsPath(path);
+    });
+    // Nothing announces on this channel: the holder keeps the file until it
+    // is disposed, past any open the test makes.
+    expect(
+      await holder.take(path, { channel: `none:/${path}`, graceMs: STALL_MS }),
+    ).toBe('taken');
+
+    const db = createSQLiteClient(dbName, TEST_PAIR());
+    onTestFinished(() => db.close().catch(() => {}));
+    const error = await db.all('SELECT 1').then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+
+    expect(error).toMatchObject({ code: 'WORKER_CRASHED' });
+    expect((error as Error).message).toMatch(
+      /held by another context.*back\/forward cache/,
+    );
+  });
+});
+
+/**
  * A worker that replaces one the pool terminated meets its predecessor's file
  * still held. The terminated worker gives its Web Lock back before its file
  * (wa-sqlite #381), and where `readwrite-unsafe` is missing (Firefox)
