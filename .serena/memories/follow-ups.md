@@ -44,7 +44,7 @@ been work on nothing.
 | Memory | Subject | Status |
 |---|---|---|
 | `wa-sqlite-webdriver-pr` | wa-sqlite's suite on stock browsers (Discussion #373) | OPEN — accepted 2026-10-10; the PR is ours to send |
-| `wa-step-upstream` | A cheaper `step()` upstream (#383, PR #388) | OPEN — #388 open; revision committed locally, waiting for rhashimoto's answer |
+| `wa-step-upstream` | A cheaper `step()` upstream (#383, PR #388) | CLOSED — 2026-11-02, `build/repin-wa-sqlite-e4f54a0`: #388 merged upstream (`e4f54a05`), repinned, dropped from the patch |
 | `wa-sqlite-386-coopsync-bfcache` | `OPFSCoopSyncVFS.create()` after a bfcache navigation (#362, PR #386) | OPEN — PR open; a browser test of the real navigation to do |
 | `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | OPEN — PR open, waiting for review |
 | `wa-sqlite-389-adaptive-journal` | `OPFSAdaptiveVFS` keeps its journal's access handle between transactions (PR #389) | OPEN — PR open, waiting for review |

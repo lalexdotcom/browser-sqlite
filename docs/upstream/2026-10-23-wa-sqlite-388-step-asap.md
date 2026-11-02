@@ -172,8 +172,11 @@ Revision against the PR head (`947a3996`), one module per arm, 6 pages × 3 buil
 
 `step-asap` pushed `947a3996..cba3a633` (fast-forward; the PR now has three commits; `34d46069`'s message still says a build without `asyncMode` is taken for Asyncify, corrected by `cba3a633`, history not rewritten). Reply [issuecomment-6524327972](https://github.com/rhashimoto/wa-sqlite/pull/388#issuecomment-6524327972), the user's text translated (draft `.scratchpad/388-reply-2026-10-30.md`): the list of changes with `exec()`'s range "11 to 42 % … 8 to 22 % with a callback, Chrome included"; on Firefox, that it is the easiest to measure in the user's dev environment, that most such gains are on the path without `readwrite-unsafe` where Safari behaves alike and every iOS browser runs on Safari's WebKit (checked: the EU since iOS 17.4 and Japan since December 2025 allow other engines, none shipped as of 2026), that `fail()` being a function is pure SpiderMonkey JIT; a joke about Windows and Firefox; and empathy on handing one's code to an agent, the PRs having to suit him. Review re-requested by the user.
 
+**Merged 2026-11-01** (`e4f54a05`, squashed; `sqlite-api.js`, `types/index.d.ts`, `libadapters.js` and the three `dist/*.mjs` byte for byte our head `cba3a633`) and pinned on 2026-11-02 with the repin to `e4f54a05`.
+
 ## What stays ours
 
 - **Not carried in the patch**: `src/worker/step.ts` already gives the library the gain.
 - **At the repin that brings it**: the worker's two call sites call `step_asap()`; `step.ts` and its fingerprints in `tests/unit/lib/wa-sqlite-pin.test.ts` are deleted.
 - **Since 2026-10-23 the patch carries #388** (`mem:stack-and-build/wa-sqlite`), and the two items above are done. **Since 2026-10-30 it carries `cba3a633` with the three rebuilt `.mjs` glues**: they must travel together, since without `Module.asyncMode` the revised `step_asap()` would call the bare export on Asyncify. `libadapters.js` is not in the npm package and is not carried.
+- **Since 2026-11-02 (repin to `e4f54a05`) nothing is carried for it**: the worker calls upstream's `step_asap()`, and the built `dist/worker/worker.js` is byte-identical across the repin.
