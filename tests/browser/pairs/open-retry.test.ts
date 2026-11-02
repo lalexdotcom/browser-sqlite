@@ -388,18 +388,22 @@ describe('opening a database whose file is refused for another reason', () => {
  * worker behind the pool's back, holds the file as the corpse would — the
  * handle, no lock — and only then reports the crash. The holder lets go
  * `RESTART_GRACE_MS` after the VFS announces it wants the file, on
- * `OPFSAdaptiveVFS`'s channel.
+ * `OPFSAdaptiveVFS`'s channel. `OPFSWriteAheadVFS` meets the same window on
+ * Firefox: it opens the database and its two write-ahead files with an
+ * exclusive handle there, kept for its life. It announces nothing, so the
+ * holder lets go at `ANNOUNCE_TIMEOUT_MS`, well after the replacement's first
+ * attempt (under 300 ms on Firefox).
  *
  * Falsifiable: make `openWithRetry` return at once whatever `afterDeath` — the
  * restarted worker's open fails at once with WORKER_CRASHED, and the client
- * with it.
+ * with it (`OPFSWriteAheadVFS` `sync` and `async` red, 2026-11-02).
  */
 describe('reopening a database after its worker died', () => {
   /** Far over the first attempt, far under OPEN_RETRY_BUDGET_MS. */
   const RESTART_GRACE_MS = 200;
 
   it('waits out the file its predecessor still holds', {
-    tags: ['vfs:OPFSAdaptiveVFS', 'browser:firefox'],
+    tags: ['vfs:OPFSAdaptiveVFS', 'vfs:OPFSWriteAheadVFS', 'browser:firefox'],
   }, async () => {
     // Before the interception: the holder is a worker, not one of the pool's.
     const holder = exclusiveHolder();

@@ -1,6 +1,6 @@
 # Follow-up — a restarted worker meets the file its crashed predecessor still holds (`lifecycle`, Firefox `OPFSAdaptiveVFS/jspi`)
 
-**Status: OPEN** — fixed for Firefox (2026-10-21); Safari open (WebKit 328618); `OPFSWriteAheadVFS` on Firefox untested.
+**Status: OPEN** — fixed for Firefox (2026-10-21), `OPFSWriteAheadVFS` on Firefox tested 2026-11-02 (`test/restart-held-writeahead`); Safari open (WebKit 328618).
 
 Part of `mem:follow-ups`, opened 2026-10-21. **Fixed on `fix/restart-held-file` (2026-10-21, the user's option A); what stays open is Safari, below.**
 
@@ -12,5 +12,5 @@ Part of `mem:follow-ups`, opened 2026-10-21. **Fixed on `fix/restart-held-file` 
 
 **Still open:**
 - **Safari:** WebKit's `InvalidStateError` is matched since `fix/safari-held-file` (2026-10-22, `src/worker/held.ts`), so the `afterDeath` retry runs there too. What still keeps a Safari restart from opening is a killed worker inside a long statement that keeps running (WebKit 328618; `mem:follow-ups/safari-suite`).
-- **`OPFSWriteAheadVFS` on Firefox** keeps three exclusive handles for its life without `readwrite-unsafe`, so its restart can meet them too; covered by the fix (every VFS), neither observed nor tested.
+- **`OPFSWriteAheadVFS` on Firefox — tested 2026-11-02 (`test/restart-held-writeahead`):** it opens the database and its two write-ahead files with an exclusive handle on Firefox (no `readwrite-unsafe`), kept for its life, so its restart meets the window too. `open-retry.test.ts` › "waits out the file its predecessor still holds" now also carries `vfs:OPFSWriteAheadVFS`: green on Firefox `sync` and `async` (10/10, ~1.45 s each; the VFS announces nothing on open, so the holder lets go at `ANNOUNCE_TIMEOUT_MS`, the replacement's first attempt coming under 300 ms), red on both with `openWithRetry` returning at once whatever `afterDeath` (`NoModificationAllowedError`, CI's error). No library change: the `afterDeath` retry already covered it.
 - Upstream: `jOpen` could get #382's held retry; not proposed (the user's call).
