@@ -14,7 +14,8 @@ claude plugin marketplace add MemPalace/mempalace
 claude plugin install mempalace@mempalace --scope user
 
 claude mcp remove serena --scope user 2>/dev/null || true
-claude mcp add serena --scope user -- serena start-mcp-server --context=claude-code --project-from-cwd
+# The shared server post-start.sh starts at every container start.
+claude mcp add --transport http serena http://127.0.0.1:9121/mcp --scope user
 
 # chromadb hardcodes its ONNX model cache to ~/.cache/chroma (no env var), and
 # that path is not on the persisted volume: a rebuild re-downloads 79 MB at the
