@@ -4,7 +4,7 @@ set -euo pipefail
 
 sudo chown -R node:node /ai-tools
 
-uv tool install -p 3.13 "serena-agent==1.7.0" --prerelease=allow
+uv tool install -p 3.13 "serena-agent==2.1.0" --prerelease=allow
 uv tool install mempalace
 
 claude plugin marketplace add anthropics/claude-plugins-official
