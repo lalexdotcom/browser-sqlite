@@ -4,6 +4,8 @@
 
 **The status is in both places, and each entry stands on its own (user, 2026-10-26).** The index gives every entry's status, so whether it is done can be read here without opening it; the entry repeats it on a `**Status: …**` line right under its title, so it can be read alone. Change both in the same edit. Statuses: **OPEN**; **IDEA** (not planned for the short or medium term — keep it, do not present it as pending scope or as "the next thing", user 2026-09-03); **DORMANT** (waits for an event and needs no action until it comes; not part of the backlog and not listed when the user asks for it, user 2026-10-03); **DEFERRED** (moved to a later version, with the date and the reason; not part of the current release's scope, user 2026-11-02); **RECORD** (notes, nothing to fix); **CLOSED** (with the date and the branch or merge that closed it). A closed entry moves to § Closed in the same edit.
 
+**An entry waiting on a bug we filed is presented only if that bug has moved (user, 2026-11-02).** Such a row says "bug-gated", names the bug and the state last seen. When listing the backlog, check each gated bug first (e.g. `curl -s "https://bugs.webkit.org/rest/bug/<id>?include_fields=status,resolution,last_change_time"` and its comments): unchanged since the state recorded → leave the entry out of the list; changed (a comment, an assignee, a status, a fix) → present it with what moved, then update the recorded state.
+
 **The current release is bugfix only (user, 2026-11-02): no new feature, no new behaviour.** New features and changes of default are DEFERRED to a later version.
 
 **Never delete an entry; mark it (user, 2026-10-26).** A closed follow-up keeps its memory and its row, with the status CLOSED: deleting it breaks the links that point to it. Inside an entry, the text above the status line is what the follow-up was; update the status rather than rewriting the history of it. `CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers, `mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
@@ -17,7 +19,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
-| `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21), WriteAhead on Firefox tested (2026-11-02); Safari open (WebKit 328618) |
+| `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21), WriteAhead on Firefox tested (2026-11-02); Safari open. **Bug-gated: WebKit 328618**, last seen 2026-11-02: NEW, unassigned, InRadar since 2026-10-30, no comment |
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
 
 ## Open — tests and CI
@@ -25,7 +27,7 @@ been work on nothing.
 | Memory | Subject | Status |
 |---|---|---|
 | `library-stock-browsers` | What stays open after the Vitest + WebdriverIO migration | OPEN — the iOS simulator, the WASM built once |
-| `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10) |
+| `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10). **Bug-gated: WebKit 328618**, last seen 2026-11-02: NEW, unassigned, InRadar since 2026-10-30, no comment |
 | `matrix-windows-macos` | The matrix on Windows and macOS | OPEN — later (user, 2026-10-15) |
 | `macos-ci-instability` | macOS workflows fail without a library cause: timers ~5× slower in Chrome and Firefox than on Linux (not in Safari), a lost Safari session | OPEN — low priority: the runner's, not macOS's (user's Mac fast); `BSQ_TIME_SCALE=2` on macOS since 2026-10-26; runner cause and Safari sessions open |
 | `ci-live-progress` | Reading a GitHub run's progress from `gh` while it runs (logs come only at job end) | OPEN — not designed; recommended: a progress check run the planner updates |
@@ -37,7 +39,7 @@ been work on nothing.
 | `wa-sqlite-webdriver-pr` | wa-sqlite's suite on stock browsers (Discussion #373) | OPEN — accepted 2026-10-10; the PR is ours to send |
 | `wa-sqlite-386-coopsync-bfcache` | `OPFSCoopSyncVFS.create()` after a bfcache navigation (#362, PR #386) | OPEN — PR open; a browser test of the real navigation to do |
 | `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | OPEN — PR open, waiting for review |
-| `safari-async-slowdown` | Safari's `async` build slows down after a few seconds of work | OPEN — waiting on WebKit 329813 (filed 2026-11-02; cause: JSC's OMG tier on the Asyncify `sqlite3VdbeExec`); kept in the backlog until WebKit answers (user) |
+| `safari-async-slowdown` | Safari's `async` build slows down after a few seconds of work | OPEN — cause: JSC's OMG tier on the Asyncify `sqlite3VdbeExec`. **Bug-gated: WebKit 329813**, last seen 2026-11-02: NEW, filed that day, no comment |
 | `wa-sqlite-389-adaptive-journal` | `OPFSAdaptiveVFS` keeps its journal's access handle between transactions (PR #389) | OPEN — PR open, waiting for review |
 
 ## Deferred — a later version
