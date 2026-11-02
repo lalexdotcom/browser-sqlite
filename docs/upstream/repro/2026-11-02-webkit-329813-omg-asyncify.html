@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>OMG tier slows down an Asyncify-instrumented WebAssembly function</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 2em; max-width: 60em; }
+  pre { background: #f4f4f4; padding: 1em; white-space: pre-wrap; }
+</style>
+<h1>OMG tier slows down an Asyncify-instrumented WebAssembly function</h1>
+<p>
+  SQLite compiled to WebAssembly by Emscripten (wa-sqlite, loaded from jsDelivr), in three builds of
+  the same C code: <b>sync</b> (no Asyncify), <b>async</b> (Asyncify) and <b>jspi</b> (JSPI). Each
+  build runs in its own worker and repeats the same query 400 times: a full scan of a 200,000-row
+  in-memory table (one <code>sqlite3_step()</code> call, no I/O, nothing ever suspends). The page prints
+  the mean time of every 25 queries.
+</p>
+<p>Expected: each build stays flat. Observed: <b>async</b> runs at ~14 ms per query, then, after a few
+  seconds of work, jumps to ~180 ms and stays there; <b>sync</b> and <b>jspi</b> stay flat.</p>
+<button id="run">Run (about 40 seconds)</button>
+<pre id="out"></pre>
+<script type="module">
+const BASE = 'https://cdn.jsdelivr.net/gh/rhashimoto/wa-sqlite@e4f54a0554f2ff1ee2af2cc3be1fb16fb2320310';
+const out = document.getElementById('out');
+const print = (s) => { out.textContent += s + '\n'; console.log(s); };
+
+// The worker: open an in-memory database, fill it, time the scan 400 times.
+const workerSource = `
+const BASE = ${JSON.stringify(BASE)};
+self.onmessage = async ({ data: { build } }) => {
+  try {
+    const glue = { sync: 'wa-sqlite.mjs', async: 'wa-sqlite-async.mjs', jspi: 'wa-sqlite-jspi.mjs' }[build];
+    const { default: Factory } = await import(BASE + '/dist/' + glue);
+    const module = await Factory();
+    const sqlite3 = (await import(BASE + '/src/sqlite-api.js')).Factory(module);
+    const { MemoryVFS } = await import(BASE + '/src/examples/MemoryVFS.js');
+    sqlite3.vfs_register(new MemoryVFS('mem', module), true);
+    const db = await sqlite3.open_v2('t.db');
+    await sqlite3.exec(db, 'CREATE TABLE t (a INTEGER, b INTEGER);' +
+      'WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM r WHERE i < 200000) ' +
+      'INSERT INTO t SELECT i, i * 7 FROM r;');
+    let sum = 0;
+    for (let i = 1; i <= 400; i++) {
+      const t0 = performance.now();
+      await sqlite3.exec(db, 'SELECT sum(a + b) FROM t');
+      sum += performance.now() - t0;
+      if (i % 25 === 0) { postMessage({ line: 'queries ' + (i - 24) + '-' + i + ': ' + (sum / 25).toFixed(1) + ' ms' }); sum = 0; }
+    }
+    postMessage({ done: true });
+  } catch (e) {
+    postMessage({ line: 'error: ' + (e && e.stack || e), done: true });
+  }
+};`;
+const workerUrl = URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' }));
+
+const runBuild = (build) =>
+  new Promise((resolve) => {
+    print(`--- ${build}`);
+    const worker = new Worker(workerUrl, { type: 'module' });
+    worker.onmessage = ({ data }) => {
+      if (data.line) print(`${build}: ${data.line}`);
+      if (data.done) { worker.terminate(); resolve(); }
+    };
+    worker.onerror = (e) => { print(`${build}: worker error ${e.message}`); worker.terminate(); resolve(); };
+    worker.postMessage({ build });
+  });
+
+document.getElementById('run').onclick = async () => {
+  document.getElementById('run').disabled = true;
+  out.textContent = '';
+  print(navigator.userAgent);
+  for (const build of ['async', 'sync', 'jspi']) await runBuild(build);
+  print('done');
+  document.getElementById('run').disabled = false;
+};
+</script>

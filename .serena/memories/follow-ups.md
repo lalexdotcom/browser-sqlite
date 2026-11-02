@@ -18,7 +18,7 @@ been work on nothing.
 | Memory | Subject | Status |
 |---|---|---|
 | `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21), WriteAhead on Firefox tested (2026-11-02); Safari open (WebKit 328618) |
-| `safari-async-slowdown` | Safari's `async` build slows after long statements | OPEN — an upstream report (wa-sqlite or WebKit) owed |
+| `safari-async-slowdown` | Safari's `async` build slows after long statements | OPEN — cause located (JSC's OMG tier on the Asyncify `sqlite3VdbeExec`), reported as WebKit 329813 on 2026-11-02; a note to wa-sqlite not yet sent |
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
 
 ## Open — tests and CI
