@@ -54,4 +54,4 @@ Title: *OMG at the default optimization level makes a large Asyncify-instrumente
 
 ## What follows for the library
 
-Nothing to change in the code: `jspi` is already the default where Safari has it. `VFS.md`'s note on Safari and `async` describes the trigger as "a few statements of a second or more"; any few seconds of work trigger it.
+Nothing to change in the code: `jspi` is already the default where Safari has it. `VFS.md`'s note on Safari and `async` (generated from `BUILD_NOTE` in `scripts/render-vfs-matrix.ts`) said "a few statements of a second or more" trigger it; corrected the same day to any few seconds of work, with this bug's link.
