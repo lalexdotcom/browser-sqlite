@@ -226,3 +226,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - GETDIR-HANG closed
 - LIFECYCLE-SEGV
 - WORKER-LEAK
+
+## `mem:measurements/devcontainer` — the devcontainer's memory
+
+- DEVCONTAINER-MEMORY — per Claude session with one stdio Serena each (~1 GB) against one shared server (~270 MB per extra session); `typescript` against `typescript_tsgo`; what else weighs (VS Code ~1.26 GB)
