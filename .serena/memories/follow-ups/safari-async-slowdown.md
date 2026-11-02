@@ -1,6 +1,6 @@
 # Follow-up — What the `IDBBatchAtomicVFS` long-statement fix left open (2026-09-14)
 
-**Status: OPEN** — reported to WebKit as [329813](https://bugs.webkit.org/show_bug.cgi?id=329813) on 2026-11-02 (report `docs/upstream/2026-11-02-webkit-329813-omg-asyncify.md`); kept in the backlog, waiting for WebKit's answer (user, 2026-11-02). Nothing to do until then; a note to wa-sqlite was not sent.
+**Status: OPEN** — reported to WebKit as [329813](https://bugs.webkit.org/show_bug.cgi?id=329813) on 2026-11-02 (report `docs/upstream/2026-11-02-webkit-329813-omg-asyncify.md`); kept in the backlog, waiting for WebKit's answer (user, 2026-11-02). Nothing to do until then; a note to wa-sqlite was not sent. Tracked for consumers in [issue #11](https://github.com/lalexdotcom/browser-sqlite/issues/11) (2026-11-02, on #10's model); close it when a Safari release ships WebKit's fix and the `async` build's repeated query stays flat on it.
 
 Part of `mem:follow-ups`; moved out of it on 2026-10-26.
 
