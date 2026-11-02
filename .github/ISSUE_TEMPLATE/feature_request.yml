@@ -1,0 +1,29 @@
+name: Feature request
+description: Something the library does not do yet.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you are trying to do
+      description: The use case, and where the library gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: The behaviour or API you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: sketch
+    attributes:
+      label: Code sketch
+      description: How you would call it, if it helps.
+      render: typescript
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: Workarounds you use or considered.

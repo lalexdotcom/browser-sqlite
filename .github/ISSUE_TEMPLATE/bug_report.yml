@@ -1,0 +1,132 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Some browser bugs are tracked here already, with their workaround: check the open issues first (for instance #10 and #11 for Safari).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you did and what went wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: The smallest code that shows it, with the options passed to `createSQLiteClient()`.
+      render: typescript
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error
+      description: The error's `code`, `message` and `cause`, if there is one.
+      render: text
+  - type: textarea
+    id: debug
+    attributes:
+      label: Debug log
+      description: "The console output with `debug: true` in the client's options."
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: browser-sqlite version
+      description: "`npm ls browser-sqlite` prints it (`pnpm ls browser-sqlite`, `yarn why browser-sqlite`)."
+      placeholder: 1.0.0-rc.10
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        **Environment.** Paste this in the browser console of the page that shows the bug, then paste what it prints below:
+
+        ```js
+        (async () => {
+          const inWorker = await new Promise((resolve) => {
+            try {
+              const src = `postMessage({
+                syncAccessHandle: typeof FileSystemSyncAccessHandle === 'function',
+                readwriteUnsafe: typeof FileSystemSyncAccessHandle === 'function' && 'mode' in FileSystemSyncAccessHandle.prototype,
+              })`;
+              const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+              w.onmessage = (e) => { resolve(e.data); w.terminate(); };
+              w.onerror = (e) => { resolve(`error: ${e.message}`); w.terminate(); };
+            } catch (e) { resolve(`error: ${e}`); }
+          });
+          let indexedDb;
+          try { indexedDb = typeof indexedDB !== 'undefined' && indexedDB !== null; } catch { indexedDb = false; }
+          const info = {
+            userAgent: navigator.userAgent,
+            secureContext: isSecureContext,
+            crossOriginIsolated,
+            opfs: typeof navigator.storage?.getDirectory === 'function',
+            webLocks: typeof navigator.locks?.request === 'function',
+            indexedDb,
+            jspi: typeof WebAssembly.Suspending === 'function',
+            worker: inWorker,
+            storage: await navigator.storage?.estimate?.().then(({ usage, quota }) => ({ usage, quota }), () => 'unavailable'),
+            persisted: await navigator.storage?.persisted?.().catch(() => 'unavailable'),
+          };
+          console.log(JSON.stringify(info, null, 2));
+        })();
+        ```
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: What the script above prints.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 27.0.1
+    validations:
+      required: true
+  - type: dropdown
+    id: vfs
+    attributes:
+      label: VFS
+      options:
+        - OPFSWriteAheadVFS
+        - OPFSAdaptiveVFS
+        - OPFSCoopSyncVFS
+        - AccessHandlePoolVFS
+        - IDBBatchAtomicVFS
+        - IDBMirrorVFS
+        - OPFSAnyContextVFS
+        - MemoryVFS
+        - MemoryAsyncVFS
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build
+      description: The `build` option, or `client.build` when it was left to its default.
+      options:
+        - default
+        - sync
+        - async
+        - jspi
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Other tabs open on the same database, navigation between pages, how often it happens.
