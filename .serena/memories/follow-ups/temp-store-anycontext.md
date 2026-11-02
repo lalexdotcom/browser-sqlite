@@ -1,6 +1,6 @@
 # Follow-up — `temp_store` on `OPFSAnyContextVFS` — a default pragma to weigh (user, 2026-10-14)
 
-**Status: OPEN** — to weigh; the WASM heap is unmeasured.
+**Status: DEFERRED** — 2026-11-02 (user): a change of default, moved after the current release, which is bugfix only. To weigh; the WASM heap is unmeasured.
 
 Part of `mem:follow-ups`; moved out of it on 2026-10-26.
 

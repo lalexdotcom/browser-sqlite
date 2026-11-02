@@ -1,6 +1,6 @@
 # Follow-up — `jspi` before `sync` in the build order — to examine (user, 2026-10-05)
 
-**Status: OPEN** — to examine; measurements owed.
+**Status: DEFERRED** — 2026-11-02 (user): a change of default, moved after the current release, which is bugfix only. To examine; measurements owed.
 
 Part of `mem:follow-ups`; moved out of it on 2026-10-26.
 
