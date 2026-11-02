@@ -352,7 +352,7 @@ const BUILD_NOTE: Record<SQLiteBuild, string> = {
   // It was first written by hand into VFS.md, where the next render erased it.
   async:
     'Asyncify: the WASM stack is unwound and rewound around asynchronous file operations. Also needs nothing beyond baseline WASM. Every VFS here can run on it.\n\n' +
-    '**On Safari it slows down as it works.** After a few statements of a second or more, a worker on this build runs several times slower — up to twenty times on Safari 26 — and stays slow; Chromium and Firefox do not. Where the browser has JSPI — Safari 27+ — a VFS without `sync` loads [`jspi`](#build-jspi) by default, which avoids it. Safari 26 has no JSPI, so there a VFS without a `sync` build has no way around it.',
+    '**On Safari it slows down as it works.**<br>After a few seconds of work, whatever the statements, a worker on this build runs about ten times slower or more, and stays slow (bug [WebKit 329813](https://bugs.webkit.org/show_bug.cgi?id=329813)).',
   jspi: 'JavaScript Promise Integration — the same asynchrony handled by the engine rather than by Asyncify. Every VFS lists it before `async`, so a VFS without `sync` loads it by default where the browser has JSPI, and `async` elsewhere: its narrower availability constrains nobody.',
 };
 

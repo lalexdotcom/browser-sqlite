@@ -18,7 +18,6 @@ been work on nothing.
 | Memory | Subject | Status |
 |---|---|---|
 | `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21), WriteAhead on Firefox tested (2026-11-02); Safari open (WebKit 328618) |
-| `safari-async-slowdown` | Safari's `async` build slows after long statements | OPEN — an upstream report (wa-sqlite or WebKit) owed |
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
 
 ## Open — tests and CI
@@ -38,6 +37,7 @@ been work on nothing.
 | `wa-sqlite-webdriver-pr` | wa-sqlite's suite on stock browsers (Discussion #373) | OPEN — accepted 2026-10-10; the PR is ours to send |
 | `wa-sqlite-386-coopsync-bfcache` | `OPFSCoopSyncVFS.create()` after a bfcache navigation (#362, PR #386) | OPEN — PR open; a browser test of the real navigation to do |
 | `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | OPEN — PR open, waiting for review |
+| `safari-async-slowdown` | Safari's `async` build slows down after a few seconds of work | OPEN — waiting on WebKit 329813 (filed 2026-11-02; cause: JSC's OMG tier on the Asyncify `sqlite3VdbeExec`); kept in the backlog until WebKit answers (user) |
 | `wa-sqlite-389-adaptive-journal` | `OPFSAdaptiveVFS` keeps its journal's access handle between transactions (PR #389) | OPEN — PR open, waiting for review |
 
 ## Deferred — a later version
