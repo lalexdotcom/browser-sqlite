@@ -29,10 +29,11 @@ jobs:
       # Firefox started by their WebDriver, against 4.5-6 ms on Linux and on a
       # Mac's foreground tab: a test built on timers runs ~4 times slower here.
       time-scale: '2'
-      # The planner bounds each cell at 900 s × 2 = 30 min, runs Chrome's and
-      # Firefox's cells in parallel and Safari's two one after the other (one
-      # session per machine): at most ~60 min, so a hang ends there as a
-      # failure that uploads its report, inside the job's bound.
-      timeout-minutes: 90
+      # The planner bounds each cell at 900 s × 2 = 30 min and runs as many
+      # cells at once as the runner has cores less one (2 of 3 here), Safari.s
+      # one at a time: a pair of 6 cells takes at most three rounds, 90 min,
+      # plus the probes. Above that, a hang ends in the planner as a failure
+      # that uploads its report.
+      timeout-minutes: 120
       # Probing three browsers in both modes, Safari's one at a time.
       plan-timeout-minutes: 30

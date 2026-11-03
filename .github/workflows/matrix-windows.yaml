@@ -27,9 +27,10 @@ jobs:
       # delete on Windows (Mozilla bug 2072928): its OPFS tests run 7-16 times
       # slower than Chrome's there.
       time-scale: '4'
-      # The planner bounds each cell at 900 s × 4 = 60 min and runs a pair's
-      # cells in parallel: a hang ends there as a failure that uploads its
-      # report, inside the job's bound.
-      timeout-minutes: 100
+      # The planner bounds each cell at 900 s × 4 = 60 min and runs as many
+      # cells at once as the runner has cores less one (3 of 4 here): a pair
+      # of 4 cells takes at most two rounds, 120 min, plus the probes. Above
+      # that, a hang ends in the planner as a failure that uploads its report.
+      timeout-minutes: 150
       # Probing both browsers in both modes, at Windows' pace.
       plan-timeout-minutes: 60
