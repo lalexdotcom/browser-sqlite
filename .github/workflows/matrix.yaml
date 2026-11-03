@@ -56,6 +56,11 @@ jobs:
   cells:
     needs: plan
     runs-on: ubuntu-latest
+    # checks: write lets the pair's planner publish its live progress check run
+    # (scripts/ci-progress.ts); the release's call grants it too.
+    permissions:
+      contents: read
+      checks: write
     # The default is six hours, and Firefox has an uncured hang here:
     # navigator.storage.getDirectory() can fail to settle in a worker.
     timeout-minutes: 25
@@ -69,6 +74,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
       - name: Matrix ${{ matrix.pair }}
+        # The live progress check run: its link is printed in this step.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BSQ_PROGRESS_SHA: ${{ github.sha }}
+          BSQ_PROGRESS_LABEL: ${{ matrix.pair }}
         run: node scripts/test-matrix.ts --pair ${{ matrix.pair }}
       # The planner writes each cell's report and log to .matrix/ and prints the
       # last lines of a red cell's log, but a log tail may not say enough — and
@@ -86,3 +96,13 @@ jobs:
           # refusal came back with an empty artifact list.
           include-hidden-files: true
           if-no-files-found: error
+      # A pair cancelled by fail-fast or a timeout leaves its progress check
+      # run open: close it as the job ended.
+      - name: Close progress
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CONCLUSION: ${{ job.status }}
+        run: |
+          [ -s "$RUNNER_TEMP/bsq-progress-ids" ] || exit 0
+          node scripts/ci-progress.ts close "$CONCLUSION"

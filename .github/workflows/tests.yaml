@@ -27,6 +27,11 @@ jobs:
   test:
     runs-on: ${{ inputs.runs-on }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
+    # checks: write lets each planner publish its live progress check run
+    # (scripts/ci-progress.ts); every caller grants it too.
+    permissions:
+      contents: read
+      checks: write
     env:
       BSQ_TIME_SCALE: ${{ inputs.time-scale }}
       BROWSERS: ${{ inputs.browsers }}
@@ -52,6 +57,12 @@ jobs:
       # the pool against a rotating exclusive OPFS handle, so a reduced-mode
       # regression lands there first and a single failure is signal, not noise.
       - name: Test
+        # The live progress check run: its link is printed at the top of the
+        # step. On a pull request it goes on the head, the commit the PR shows.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BSQ_PROGRESS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BSQ_PROGRESS_LABEL: ${{ inputs.runs-on }}
         run: |
           IFS=, read -ra list <<< "$BROWSERS"
           args=()
@@ -65,6 +76,10 @@ jobs:
       # is how HANDLE-1 was found. `pnpm test:conformance` selects Chrome's and
       # Firefox's projects, so the list is given here, under its same bound.
       - name: Conformance
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BSQ_PROGRESS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BSQ_PROGRESS_LABEL: ${{ inputs.runs-on }}
         run: |
           IFS=, read -ra list <<< "$BROWSERS"
           args=()
@@ -83,3 +98,13 @@ jobs:
           # succeed having uploaded nothing.
           include-hidden-files: true
           if-no-files-found: error
+      # A cancelled or timed-out job, or a planner killed by bounded.ts, leaves
+      # its progress check run open: close it as the job ended.
+      - name: Close progress
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CONCLUSION: ${{ job.status }}
+        run: |
+          [ -s "$RUNNER_TEMP/bsq-progress-ids" ] || exit 0
+          node scripts/ci-progress.ts close "$CONCLUSION"

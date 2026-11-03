@@ -50,16 +50,20 @@ jobs:
   verify:
     needs: prior
     if: needs.prior.outputs.ci != 'success'
+    # checks: write for the live progress check runs of the called jobs.
     permissions:
       contents: read
+      checks: write
     uses: ./.github/workflows/ci.yaml
 
   # The 22 pairs, in matrix.yaml so that they can also be run by hand.
   matrix:
     needs: prior
     if: needs.prior.outputs.matrix != 'success'
+    # checks: write for the live progress check runs of the called jobs.
     permissions:
       contents: read
+      checks: write
     uses: ./.github/workflows/matrix.yaml
 
   # The packed tarball, statically (publint, Are the Types Wrong?) and through
