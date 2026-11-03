@@ -7,8 +7,9 @@
  *
  * Each planner of the run publishes a check run named `progress · …`
  * (scripts/ci-progress.ts); this polls them through `gh api` and prints each
- * new failure and `[n/N]` line once, one event per line, then each run's
- * conclusion, and exits once the runs and their check runs are completed.
+ * new failure and `[n/N]` line once, one event per line, and each run's
+ * conclusion as soon as that run completes; it exits once the runs and their
+ * check runs are completed.
  * Meant for a background monitor. GitHub may file those check runs under
  * another workflow of the commit, so they are found by name and by
  * `external_id` (`<run id>/<attempt>`), never by check suite.
@@ -55,6 +56,19 @@ export function newEvents(seen: Set<string>, snapshot: Snapshot): string[] {
       : []),
   ];
   const fresh = events.filter((e) => !seen.has(e));
+  for (const event of fresh) seen.add(event);
+  return fresh;
+}
+
+/** Each run's conclusion once, as soon as it completes: not when all have. */
+export function runEvents(
+  seen: Set<string>,
+  runs: readonly Pick<Run, 'id' | 'name' | 'status' | 'conclusion'>[],
+): string[] {
+  const fresh = runs
+    .filter((r) => r.status === 'completed')
+    .map((r) => `run ${r.id} (${r.name}): ${r.conclusion}`)
+    .filter((e) => !seen.has(e));
   for (const event of fresh) seen.add(event);
   return fresh;
 }
@@ -178,6 +192,7 @@ async function main() {
       for (const check of checks) {
         for (const event of newEvents(seen, check)) console.log(event);
       }
+      for (const event of runEvents(seen, runs)) console.log(event);
       step = nextStep(state, {
         ok: true,
         runsCompleted:
@@ -193,11 +208,6 @@ async function main() {
     if (step.exit) {
       for (const name of step.exit.stragglers) {
         console.log(`${name}: still open, its run has ended`);
-      }
-      if (step.exit.code === 0) {
-        for (const r of runs) {
-          console.log(`run ${r.id} (${r.name}): ${r.conclusion}`);
-        }
       }
       process.exitCode = step.exit.code;
       return;

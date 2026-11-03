@@ -8,6 +8,7 @@ import {
   newEvents,
   nextStep,
   parseSummary,
+  runEvents,
   type Snapshot,
   type WatchState,
 } from '../../../scripts/ci-watch.ts';
@@ -159,5 +160,40 @@ describe('nextStep', () => {
       code: 2,
       stragglers: [],
     });
+  });
+});
+
+describe('runEvents', () => {
+  const run = (id: number, status: string, conclusion: string | null) => ({
+    id,
+    name: `W${id}`,
+    status,
+    conclusion,
+  });
+
+  it('prints a run as soon as it completes, while the others go on', () => {
+    // Falsifiable: print the runs only once every run has ended and the first
+    // poll returns nothing for run 1.
+    const seen = new Set<string>();
+    expect(
+      runEvents(seen, [
+        run(1, 'completed', 'success'),
+        run(2, 'in_progress', null),
+      ]),
+    ).toEqual(['run 1 (W1): success']);
+  });
+
+  it('prints each run once', () => {
+    const seen = new Set<string>();
+    runEvents(seen, [
+      run(1, 'completed', 'success'),
+      run(2, 'in_progress', null),
+    ]);
+    expect(
+      runEvents(seen, [
+        run(1, 'completed', 'success'),
+        run(2, 'completed', 'failure'),
+      ]),
+    ).toEqual(['run 2 (W2): failure']);
   });
 });
