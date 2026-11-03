@@ -423,8 +423,16 @@ describe('worker lifecycle — startup readiness gate', () => {
     // task. Polling for it instead lost the race on a fast machine (macOS
     // runner, 2026-10-14): worker 2 opened between two 10 ms polls and closed
     // the round, so the death was an ordinary one.
-    const created = failWorkerAtIndex(1, (index, workers) => {
+    //
+    // The test waits for that creation itself, not by polling `created`
+    // (2026-11-03): the retry round starts once worker 0 has opened, and an
+    // open over 10 s on GitHub's macOS 26 runner outlasted waitUntil's bound
+    // (an `open` delayed 11 s fails it locally). The test's own timeout
+    // bounds it.
+    const retryStarted = Promise.withResolvers<void>();
+    failWorkerAtIndex(1, (index, workers) => {
       if (index !== 2) return;
+      retryStarted.resolve();
       queueMicrotask(() =>
         workers[0]?.dispatchEvent(
           new ErrorEvent('error', { message: 'killed during retry' }),
@@ -437,7 +445,7 @@ describe('worker lifecycle — startup readiness gate', () => {
       poolSize: 2,
       onWorkerLost: ({ index }) => lostIndices.push(index),
     });
-    await waitUntil(() => created.length >= 3, 'the retry round to start');
+    await retryStarted.promise;
 
     // The gate opens when slot 1 retry (worker 2) settles.  After that the
     // client has one live worker (slot 1) and one permanent startup loss (slot 0).

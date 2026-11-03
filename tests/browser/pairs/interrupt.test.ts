@@ -65,6 +65,13 @@ describe('aborting a running statement', () => {
       // the pool resolves the promise on abort regardless of whether the
       // progress handler is installed, so removing the handler leaves the
       // 200 ms assertion unchanged. Use "frees the worker" to pin that feature.
+      //
+      // The pool started first, awaited (2026-11-03): this is the client's
+      // first statement, so polling for the prime to run also waited out the
+      // worker's startup, under waitUntil's short bound — a worker over 10 s
+      // to open on GitHub's macOS 26 runner failed it there, and an `open`
+      // delayed 11 s fails it locally. The test's own timeout bounds startup.
+      await db.ready;
       {
         const primeCtrl = new AbortController();
         const prime = db.all(longQuery(20_000_000), [], {
