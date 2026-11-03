@@ -4,6 +4,7 @@ import {
   interceptWorkers,
   scaled,
   theQueryIsRunning,
+  waitUntil,
 } from '../helpers';
 
 /**
@@ -264,26 +265,54 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // falsifier: its bound was a duration against the write's natural run, and
   // measured how fast the transaction rejects at its own 150 ms timeout.
   // `requires:interruptible` stays: the subject is a build that can cut a step.
+  //
+  // The write is abandoned once it is SEEN running, not after 30 ms
+  // (2026-11-03): a statement with its own signal first asks the worker
+  // whether it writes, and a deadline that expires during that question
+  // rejects it before it is posted — nothing is abandoned, the next statement
+  // runs and the transaction commits. Chrome on GitHub's macOS 26 runner
+  // answered after 30 ms (red in the first macOS matrix); a verdict delayed
+  // 60 ms reproduced it locally. `abandonedRunning` keeps the subject: a
+  // transaction timeout that cut the write while it was still the awaited
+  // statement would be T3's case, not this one.
   it("cuts an abandoned write when the transaction's own timeout expires (T4)", {
     tags: ['requires:interruptible'],
     timeout: scaled(120_000),
   }, async () => {
     const db = await setUp();
+    // Long enough for the write to be seen running first on any runner.
+    const TX_TIMEOUT = scaled(2000);
+    let abandonedRunning = false;
     try {
       // A write that is not cut runs to its end, past the test's timeout.
       const outcome = await db
         .transaction(
           async (tx) => {
             await tx.run('INSERT INTO t VALUES (1)');
-            await tx.run(ENDLESS_INSERT, [], { timeout: 30 }).catch(() => {});
+            const abandon = new AbortController();
+            waitUntil(
+              theQueryIsRunning(db, ENDLESS_INSERT),
+              'the endless write to run',
+              2000,
+            ).then(
+              () => {
+                abandonedRunning = true;
+                abandon.abort(new Error('abandon the running write'));
+              },
+              () => {},
+            );
+            await tx
+              .run(ENDLESS_INSERT, [], { signal: abandon.signal })
+              .catch(() => {});
             await tx.run('INSERT INTO t VALUES (2)');
           },
-          { timeout: 150 },
+          { timeout: TX_TIMEOUT },
         )
         .catch((e) => e);
+      expect(abandonedRunning).toBe(true);
       expect(outcome).toMatchObject({
         code: 'OPERATION_TIMEOUT',
-        timeout: 150,
+        timeout: TX_TIMEOUT,
       });
       expect(await rowsOf(db)).toEqual([0]);
       expect(await bigCount(db)).toBe(0);

@@ -202,6 +202,8 @@ one browser running one project's files (`mem:lessons`). `scripts/matrix-triage.
 
 ## Working with the user
 
+- **Monitoring a CI run means relaying its progress, not only its failures (user, 2026-11-03).** The live progress check runs exist so the user sees a run advance: while a run is watched (`node scripts/ci-watch.ts`, `mem:stack-and-build/ci`), relay each pair or job that ends and each run that completes, as it happens, and a short status at each monitor expiry even when all is green. A filter that surfaces only failures leaves the user in silence for hours.
+
 - **The trap behind `AGENTS.md`'s French rule (user, 2026-10-23).** The rule is loaded every session; it was broken three times in one session anyway, always after a long run of tool calls in English (CI polling, logs, memories, commits): the next message to the user, report or progress note, came out in English. Check the first sentence of every message to the user before sending it.
 - **Batch diagnostic probes.** When the user has to run probes by hand, send a whole
   battery in one paste, each written for the case where the previous came back clean. Four
