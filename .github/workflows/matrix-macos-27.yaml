@@ -5,10 +5,6 @@ name: Matrix (macOS 27)
 # Safari sessions, and one such pair would otherwise cancel the others.
 on:
   workflow_dispatch:
-  # TEMPORARY (ci/matrix-os): a workflow on a branch alone cannot be dispatched.
-  push:
-    branches:
-      - ci/matrix-os
 
 concurrency:
   group: matrix-macos-27-${{ github.ref }}
