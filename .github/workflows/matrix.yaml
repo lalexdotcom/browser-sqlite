@@ -1,85 +1,133 @@
 name: Matrix
 
-# Every declared VFS/build pair through the four columns of the matrix, one job
-# per pair. Every push of `main` runs it, so a pair that regresses is seen at
-# the merge; a release reuses that run, and calls this workflow only when the
-# tagged commit has no passing one. workflow_dispatch runs it by hand on any
-# branch, publishing nothing.
+# Every declared VFS/build pair through every column of the given browsers
+# (each browser, not isolated and cross-origin isolated), one job per pair, on
+# the given runner. A module, as tests.yaml is: ci.yaml calls it on Linux
+# whenever CI runs (and so does the release, through ci.yaml), and each
+# matrix-<os>.yaml calls it by hand with its runner.
 on:
   workflow_call:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-# A new push of `main` supersedes the previous run. A called workflow takes the
-# caller's `github.ref`, so a release's run is grouped under its tag and never
-# under `main`.
-concurrency:
-  group: matrix-${{ github.ref }}
-  cancel-in-progress: true
+    inputs:
+      runs-on:
+        description: The runner label, e.g. windows-latest.
+        required: true
+        type: string
+      browsers:
+        description: The browsers to install and test, comma-separated; safari only when named, on macOS.
+        default: chrome,firefox
+        type: string
+      time-scale:
+        description: How many times Linux's bounds this platform needs (BSQ_TIME_SCALE).
+        default: '1'
+        type: string
+      timeout-minutes:
+        description: The bound of each pair's job.
+        default: 25
+        type: number
+      plan-timeout-minutes:
+        description: The bound of the plan job.
+        default: 15
+        type: number
+      fail-fast:
+        description: Whether one red pair cancels the others; the callers that gate pass true.
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   # Plans the whole matrix once, before any pair job starts: the planner
-  # (scripts/test-plan.ts) probes both browsers, parses the tests, and prints
-  # the plan. A test that no pair of any browser can run fails this job, once,
-  # instead of failing every pair job; the pairs that have at least one test to
-  # run become the matrix of `cells`. test-plan.ts also builds tests/build/ once,
-  # before probing; the probe projects' global setup then skips its build.
+  # (scripts/test-plan.ts) probes the browsers, parses the tests, and prints
+  # the plan. It runs on the target runner with the target browsers, since the
+  # probed features depend on both. A test that no pair of any browser can run
+  # fails this job, once, instead of failing every pair job; the pairs that
+  # have at least one test to run become the matrix of `cells`. test-plan.ts
+  # also builds tests/build/ once, before probing; the probe projects' global
+  # setup then skips its build.
   plan:
-    runs-on: ubuntu-latest
-    # The default is six hours; a stuck WebDriver session while probing both
+    runs-on: ${{ inputs.runs-on }}
+    # The default is six hours; a stuck WebDriver session while probing the
     # browsers in both modes would hold the release gate that long.
-    timeout-minutes: 15
+    timeout-minutes: ${{ inputs.plan-timeout-minutes }}
+    env:
+      BSQ_TIME_SCALE: ${{ inputs.time-scale }}
+      BROWSERS: ${{ inputs.browsers }}
+    defaults:
+      run:
+        shell: bash
     outputs:
       list: ${{ steps.list.outputs.pairs }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
+        with:
+          browsers: ${{ inputs.browsers }}
       # --plan-only stops after the plan and its checks, and exits 1 naming any
       # dead test (always fatal in an all-pairs run). pairs.json is a one-line
       # JSON array of "vfs/build", the pairs with a non-empty cell.
       - id: list
         run: |
-          node scripts/test-plan.ts --mode all-pairs --plan-only --pairs-out pairs.json
+          IFS=, read -ra list <<< "$BROWSERS"
+          args=()
+          for browser in "${list[@]}"; do args+=(--browser "$browser"); done
+          node scripts/test-plan.ts --mode all-pairs --plan-only --pairs-out pairs.json "${args[@]}"
           echo "pairs=$(cat pairs.json)" >> "$GITHUB_OUTPUT"
 
   # One job per pair of the plan, each running only that pair's non-empty cells
-  # of the four columns (chrome, firefox, isolated chrome, isolated firefox) —
-  # 263 s measured locally for one pair. Each goes through test-matrix.ts, which
-  # hands the pair to the test planner: it runs each cell as its own process,
-  # bounded by its own timer. `pnpm test` runs the start pairs and their
-  # complement cells; the other combinations are only seen here.
+  # of every column (each browser, not isolated and isolated) — 263 s measured
+  # locally for one pair on Chrome and Firefox. Each goes through
+  # test-matrix.ts, which hands the pair to the test planner: it runs each cell
+  # as its own process, bounded by its own timer, Safari's one at a time.
+  # `pnpm test` runs the start pairs and their complement cells; the other
+  # combinations are only seen here.
   cells:
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
+    # The default is six hours, and Firefox has an uncured hang here:
+    # navigator.storage.getDirectory() can fail to settle in a worker.
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     # checks: write lets the pair's planner publish its live progress check run
-    # (scripts/ci-progress.ts); the release's call grants it too.
+    # (scripts/ci-progress.ts); every caller grants it too.
     permissions:
       contents: read
       checks: write
-    # The default is six hours, and Firefox has an uncured hang here:
-    # navigator.storage.getDirectory() can fail to settle in a worker.
-    timeout-minutes: 25
+    env:
+      BSQ_TIME_SCALE: ${{ inputs.time-scale }}
+      BROWSERS: ${{ inputs.browsers }}
+    defaults:
+      run:
+        shell: bash
     strategy:
-      # A gate, not a triage tool (user, 2026-09-22): one red is enough to
-      # refuse, and diagnosis happens in a local run, not in 22 job logs.
-      fail-fast: true
+      # Where the matrix is a gate (CI, hence the release), one red is enough
+      # to refuse, and diagnosis happens in a local run, not in 22 job logs
+      # (user, 2026-09-22). A run by hand goes to the end and shows every pair:
+      # a macOS runner loses Safari sessions, and one such pair would otherwise
+      # cancel the others.
+      fail-fast: ${{ inputs.fail-fast }}
       matrix:
         pair: ${{ fromJSON(needs.plan.outputs.list) }}
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
+        with:
+          browsers: ${{ inputs.browsers }}
       - name: Matrix ${{ matrix.pair }}
         # The live progress check run: its link is printed in this step.
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          BSQ_PROGRESS_SHA: ${{ github.sha }}
+          BSQ_PROGRESS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BSQ_PROGRESS_LABEL: ${{ matrix.pair }}
-        run: node scripts/test-matrix.ts --pair ${{ matrix.pair }}
+          PAIR: ${{ matrix.pair }}
+        # Every column of each browser: test-matrix.ts takes only a product of
+        # browsers and modes.
+        run: |
+          IFS=, read -ra list <<< "$BROWSERS"
+          args=()
+          for browser in "${list[@]}"; do
+            args+=(--engine "$browser" --engine "isolated-$browser")
+          done
+          node scripts/test-matrix.ts --pair "$PAIR" "${args[@]}"
       # The planner writes each cell's report and log to .matrix/ and prints the
       # last lines of a red cell's log, but a log tail may not say enough — and
       # "diagnose it locally" fails when the cell is green locally, which is how
