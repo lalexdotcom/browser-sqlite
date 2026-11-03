@@ -1,0 +1,34 @@
+name: Matrix (macOS 26)
+
+# Every pair through Chrome's, Firefox's and Safari's columns on macOS 26, by
+# hand. Each run goes to the end and shows every pair: a macOS runner loses
+# Safari sessions, and one such pair would otherwise cancel the others.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: matrix-macos-26-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-26:
+    # checks: write for the live progress check runs (scripts/ci-progress.ts):
+    # a called workflow cannot hold more than its caller grants.
+    permissions:
+      contents: read
+      checks: write
+    uses: ./.github/workflows/matrix.yaml
+    with:
+      runs-on: macos-26
+      browsers: chrome,firefox,safari
+      # On GitHub's macOS runners a setTimeout(0) takes 16-25 ms in Chrome and
+      # Firefox started by their WebDriver, against 4.5-6 ms on Linux and on a
+      # Mac's foreground tab: a test built on timers runs ~4 times slower here.
+      time-scale: '2'
+      # The planner bounds each cell at 900 s × 2 = 30 min, runs Chrome's and
+      # Firefox's cells in parallel and Safari's two one after the other (one
+      # session per machine): at most ~60 min, so a hang ends there as a
+      # failure that uploads its report, inside the job's bound.
+      timeout-minutes: 90
+      # Probing three browsers in both modes, Safari's one at a time.
+      plan-timeout-minutes: 30
