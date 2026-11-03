@@ -169,3 +169,14 @@ describe('failureEvent, a long message', () => {
     expect(message).toBe(`${'x'.repeat(299)}…`);
   });
 });
+
+describe('failureEvent, a Windows path', () => {
+  it('names the file with forward slashes whatever the platform', () => {
+    // Falsifiable: keep path.relative's separators and Windows writes tests\browser\….
+    const line = failureEvent({
+      ...testCase('failed'),
+      module: { moduleId: join(ROOT, 'tests\\browser\\x.test.ts') },
+    });
+    expect(JSON.parse(line as string).file).toBe('tests/browser/x.test.ts');
+  });
+});

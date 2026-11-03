@@ -40,7 +40,9 @@ function errorEvent(
   const first = (errors?.[0]?.message ?? '').split('\n')[0] as string;
   const message =
     first.length > MESSAGE_MAX ? `${first.slice(0, MESSAGE_MAX - 1)}…` : first;
-  return `${JSON.stringify({ file: relative(ROOT, moduleId), test, message })}\n`;
+  // Forward slashes on every platform: path.relative writes `\` on Windows.
+  const file = relative(ROOT, moduleId).replace(/\\/g, '/');
+  return `${JSON.stringify({ file, test, message })}\n`;
 }
 
 export default class ProgressReporter implements Reporter {
