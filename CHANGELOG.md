@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0-rc.11] - 2026-11-03
+
 ### Added
 
 - **`stream()` and `chunk()` take a write statement and carry `affected`,** a promise of the rows it changed, on the client and in a transaction. A write is completed before its first row is delivered, so a slow consumer never holds the write lock.
@@ -878,7 +880,8 @@ with it.
 
 First published release line.
 
-[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.10...HEAD
+[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.11...HEAD
+[1.0.0-rc.11]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.10...v1.0.0-rc.11
 [1.0.0-rc.10]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.9...v1.0.0-rc.10
 [1.0.0-rc.9]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.8...v1.0.0-rc.9
 [1.0.0-rc.8]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.7...v1.0.0-rc.8
