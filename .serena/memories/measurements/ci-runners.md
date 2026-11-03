@@ -52,3 +52,19 @@ So the window is rare and narrow; the fix (`fix/restart-held-file`) was made det
 **A foreign failing check run does not turn a green run red** (`spike/progress-failure`, deleted): a `failure` check run created by one workflow landed in a green workflow's suite; that run stayed `success`, and so did its check suite.
 
 **Proving runs of `feat/ci-live-progress`:** `tests-ubuntu.yaml` 41614933716 green, both planners' `Live progress:` links in the job log, `ci-watch.ts` printed 27 lines and exited 0; `matrix.yaml` 41614937442 green, 22 progress check runs `success`, 52 `[n/N]` lines (the 52 cells); `tests-windows.yaml` 41614940797 red on three of our own unit tests, reported live (`path.relative` wrote `\` on Windows; fixed before the merge). **A failure seen live** (a throwaway failing browser test, run 41616175643, deleted): its `FAILED` lines reached `ci-watch.ts` before the `[n/N]` lines of their 193-239 s cells; the check run ended `failure`. **A re-run** (41614933716 attempt 2): `filter=latest` shows only attempt 2's check runs, `filter=all` both — the name without attempt works as meant. **A cancel on Windows** (run 41618274365, cancelled during `Test`): the check run, at 1/19, closed `cancelled` by the closing step — which also proves the `import.meta.url` guard and `$RUNNER_TEMP` under Git Bash there.
+
+**One check run left open (2026-11-03, MATRIX-OS run 41629313260, `macos-26 / cells (OPFSWriteAheadVFS/async)`):** every Checks API call of that job failed at the network level (`ci-progress: publishing stopped: fetch failed` at 12:36, `could not close 125921217428: fetch failed` from the closing step at 12:52), so its progress check run stays `in_progress` ("0/3") on that commit; the job itself green. One of ~110 jobs. The closing step makes one attempt; retrying it a few times is a small fix, proposed and not decided.
+
+## MATRIX-OS — the first matrices on Windows and macOS, 2026-11-03, `ci/matrix-os`
+
+**Method.** `matrix.yaml` as a module (`mem:stack-and-build/ci`), its callers run through a temporary `push` trigger on the branch (`gh workflow run` cannot reach a workflow that exists only on a branch), followed with one `ci-watch.ts --sha … --interval 60`. Chrome 153, Firefox 155.0.1; Safari 26 (`macos-26`), Safari 27.0.1 (`xcode-27`).
+
+| run | what | result |
+|---|---|---|
+| 41629313193 | CI with its new `matrix` job (Linux) | green; matrix 22/22 + plan |
+| 41629313286 | Matrix (Windows), `time-scale '4'` | **green 22/22**, done before the macOS runs; slowest Firefox cell 1444 s (`OPFSCoopSyncVFS/sync`) |
+| 41629313297 | Matrix (macOS 27), Safari included | **green 22/22**, ~2 h (macOS jobs shared 5 slots with macOS 26) |
+| 41629313260 | Matrix (macOS 26), Safari included | red 20/22 (two Chrome tests, fixed in `test/macos26-flakes`) |
+| 41654580706 | Matrix (macOS 26) again, alone, with the fixes | red 20/22 (two other waits bounded at 10 s, a worker over 10 s to start) — `mem:follow-ups/macos-ci-instability` |
+
+**Throughput.** Two macOS matrices together queue 46 jobs on 5 macOS slots (free plan, as observed: 5 running at once). `ci-watch.ts` printed the runs' conclusions only at the end of all of them until `0e5d768f` (now: each as it completes).

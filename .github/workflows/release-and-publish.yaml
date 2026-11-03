@@ -7,9 +7,10 @@ on:
       - "v*.*.*-*"
 
 jobs:
-  # The push of `main` that carries the tagged commit has run CI and the matrix
-  # on it. Wait for those runs and reuse them; anything but a passing run — none,
-  # cancelled by a later push of `main`, failed — makes the release run its own.
+  # The push of `main` that carries the tagged commit has run CI on it — the
+  # checks, the tests and the matrix. Wait for that run and reuse it; anything
+  # but a passing run — none, cancelled by a later push of `main`, failed —
+  # makes the release run its own.
   prior:
     permissions:
       contents: read
@@ -18,35 +19,30 @@ jobs:
     timeout-minutes: 60
     outputs:
       ci: ${{ steps.runs.outputs.ci }}
-      matrix: ${{ steps.runs.outputs.matrix }}
     steps:
       - uses: actions/checkout@v6
-      - name: Reuse the runs of the push of main
+      - name: Reuse the run of the push of main
         id: runs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           SHA=$(git rev-parse HEAD)
-          # Both waits end within 50 of the job's 60 minutes: a wait that runs
+          ID=$(gh run list --workflow ci.yaml --commit "$SHA" --event push \
+            --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          # The wait ends within 50 of the job's 60 minutes: a wait that runs
           # out means rerun, where a killed job would fail and untag a good tag.
-          DEADLINE=$((SECONDS + 50 * 60))
-          for WF in ci matrix; do
-            ID=$(gh run list --workflow "$WF.yaml" --commit "$SHA" --event push \
-              --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-            LEFT=$((DEADLINE - SECONDS))
-            if [ -n "$ID" ] && [ "$LEFT" -gt 0 ] \
-              && timeout "$LEFT" gh run watch "$ID" --exit-status --interval 30 > /dev/null; then
-              echo "$WF=success" >> "$GITHUB_OUTPUT"
-              echo "$WF.yaml: run $ID passed on $SHA, reused"
-            else
-              echo "$WF=rerun" >> "$GITHUB_OUTPUT"
-              echo "$WF.yaml: no passing run on $SHA (${ID:-none}), the release runs its own"
-            fi
-          done
+          if [ -n "$ID" ] \
+            && timeout $((50 * 60)) gh run watch "$ID" --exit-status --interval 30 > /dev/null; then
+            echo "ci=success" >> "$GITHUB_OUTPUT"
+            echo "ci.yaml: run $ID passed on $SHA, reused"
+          else
+            echo "ci=rerun" >> "$GITHUB_OUTPUT"
+            echo "ci.yaml: no passing run on $SHA (${ID:-none}), the release runs its own"
+          fi
 
-  # ci.yaml covers what the cells cannot: the unit project, which the cells'
-  # `--project` filters never select.
+  # CI on the tagged commit — the checks, the tests and the matrix — when the
+  # push of `main` left no passing run to reuse: the same verification.
   verify:
     needs: prior
     if: needs.prior.outputs.ci != 'success'
@@ -55,16 +51,6 @@ jobs:
       contents: read
       checks: write
     uses: ./.github/workflows/ci.yaml
-
-  # The 22 pairs, in matrix.yaml so that they can also be run by hand.
-  matrix:
-    needs: prior
-    if: needs.prior.outputs.matrix != 'success'
-    # checks: write for the live progress check runs of the called jobs.
-    permissions:
-      contents: read
-      checks: write
-    uses: ./.github/workflows/matrix.yaml
 
   # The packed tarball, statically (publint, Are the Types Wrong?) and through
   # five bundlers and a page with none. It proves the package is usable once
@@ -88,7 +74,7 @@ jobs:
   # could be published. A failure after npm publish is left alone: deleting the
   # tag there would orphan a published version.
   untag:
-    needs: [prior, verify, matrix, consumer-smoke]
+    needs: [prior, verify, consumer-smoke]
     if: failure()
     permissions:
       contents: write
@@ -103,7 +89,7 @@ jobs:
           echo "::notice::${{ github.ref_name }} was deleted: the release checks did not pass."
 
   release:
-    needs: [prior, verify, matrix, consumer-smoke]
+    needs: [prior, verify, consumer-smoke]
     # A check reused from the push of main is skipped here, and a skipped need
     # would skip this job without the condition.
     if: ${{ !cancelled() && !failure() }}
@@ -180,7 +166,7 @@ jobs:
 
   # The benchmark page is published for the version that was just released, and
   # only if the release actually succeeded. The condition is explicit because a
-  # skipped ancestor (verify or matrix, reused from the push of main) would skip
+  # skipped ancestor (verify, reused from the push of main) would skip
   # this job too. Because a reusable workflow runs at the caller's ref, this
   # builds the tag, so the page and the npm tarball are the same code and the
   # page's banner can say so.
