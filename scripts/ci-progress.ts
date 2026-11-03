@@ -6,7 +6,22 @@
  * workflows run the whole suite in one step. The check run's summary carries
  * the planner's `[n/N]` lines and every failed test as it fails;
  * scripts/ci-watch.ts reads it back, so its layout is a contract.
+ *
+ * The planner is the only writer: each Vitest process it starts appends its
+ * failed tests to an events file (scripts/progress-reporter.ts), which the
+ * publisher reads on its own tick. Publishing is a side channel — a refusal,
+ * a timeout or an unreachable API stops it with one warning and changes
+ * nothing else.
+ *
+ *   node scripts/ci-progress.ts close <conclusion>
+ *
+ * closes, with the job's status, the check runs this job created and left
+ * open: the workflow's `if: always()` step after a cancel, a timeout or a
+ * planner killed by bounded.ts.
  */
+import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 /** A test that failed, as the live reporter wrote it, in the job it ran in. */
 export type Failure = {
@@ -142,3 +157,258 @@ export function renderSummary(state: ProgressState): {
 }
 
 const clock = (date: Date) => `${date.toISOString().slice(11, 19)} UTC`;
+
+/** Rejects when `promise` has not settled within `ms`; never holds the process. */
+function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer in ${ms} ms`)), ms);
+      timer.unref();
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+type Api = Pick<ProgressConfig, 'api' | 'repo' | 'token'>;
+
+/** A request to the repository's check runs; rejects on any non-2xx answer. */
+function checkRuns(config: Api, fetchImpl: typeof fetch, timeoutMs: number) {
+  return (method: string, path: string, body?: unknown): Promise<unknown> =>
+    bounded(
+      (async () => {
+        const response = await fetchImpl(
+          `${config.api}/repos/${config.repo}/check-runs${path}`,
+          {
+            method,
+            headers: {
+              Authorization: `Bearer ${config.token}`,
+              Accept: 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+            signal: AbortSignal.timeout(timeoutMs),
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          },
+        );
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`.trim());
+        }
+        return response.json();
+      })(),
+      timeoutMs,
+    );
+}
+
+/**
+ * The failures appended to `eventsDir/<job>.ndjson` since the last call:
+ * complete lines only, so a line read mid-write is taken whole next time.
+ */
+export function readEvents(
+  eventsDir: string,
+  offsets: Map<string, number>,
+): Failure[] {
+  if (!existsSync(eventsDir)) return [];
+  const failures: Failure[] = [];
+  const files = readdirSync(eventsDir).filter((n) => n.endsWith('.ndjson'));
+  for (const name of files.sort()) {
+    const file = join(eventsDir, name);
+    const from = offsets.get(file) ?? 0;
+    const bytes = readFileSync(file);
+    const end = bytes.lastIndexOf(0x0a) + 1;
+    if (end <= from) continue;
+    offsets.set(file, end);
+    const job = name.slice(0, -'.ndjson'.length);
+    for (const line of bytes.subarray(from, end).toString('utf8').split('\n')) {
+      if (line === '') continue;
+      try {
+        const {
+          file: path,
+          test,
+          message,
+        } = JSON.parse(line) as Omit<Failure, 'job'>;
+        failures.push({ job, file: path, test, message });
+      } catch {
+        // A line the reporter did not write whole: nothing to show for it.
+      }
+    }
+  }
+  return failures;
+}
+
+export interface Progress {
+  /** Records one of the planner's `[n/N]` lines; sent on the next tick. */
+  line(text: string): void;
+  /** Closes the check run; bounded, never rejects. */
+  finish(conclusion: Conclusion): Promise<void>;
+}
+
+const OFF: Progress = {
+  line() {},
+  async finish() {},
+};
+
+export async function startProgress(options: {
+  config: ProgressConfig | undefined;
+  total: number;
+  eventsDir: string;
+  fetch?: typeof fetch;
+  intervalMs?: number;
+  finishTimeoutMs?: number;
+  idsFile?: string;
+  log?: (message: string) => void;
+}): Promise<Progress> {
+  const {
+    config,
+    total,
+    eventsDir,
+    fetch: fetchImpl = fetch,
+    intervalMs = 10_000,
+    finishTimeoutMs = 15_000,
+    log = console.log,
+  } = options;
+  if (!config) return OFF;
+  const idsFile = options.idsFile ?? defaultIdsFile(process.env);
+  const request = checkRuns(config, fetchImpl, finishTimeoutMs);
+  const state: ProgressState = {
+    started: new Date(),
+    total,
+    lines: [],
+    failures: [],
+  };
+  let stopped = false;
+  const stop = (error: unknown) => {
+    if (stopped) return;
+    stopped = true;
+    log(
+      `ci-progress: publishing stopped: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  };
+
+  let id: number;
+  try {
+    const created = (await request('POST', '', {
+      name: config.name,
+      head_sha: config.sha,
+      external_id: config.externalId,
+      status: 'in_progress',
+      started_at: state.started.toISOString(),
+      output: renderSummary(state),
+    })) as { id: number; html_url: string };
+    id = created.id;
+    log(`Live progress: ${created.html_url}`);
+    // For the workflow's closing step, should this job not end normally.
+    if (idsFile) appendFileSync(idsFile, `${id}\n`);
+  } catch (error) {
+    stop(error);
+    return OFF;
+  }
+
+  const offsets = new Map<string, number>();
+  let dirty = false;
+  let inFlight: Promise<void> | undefined;
+  const collect = () => {
+    const fresh = readEvents(eventsDir, offsets);
+    if (fresh.length > 0) {
+      state.failures.push(...fresh);
+      dirty = true;
+    }
+  };
+  const send = (body: object) =>
+    request('PATCH', `/${id}`, body).then(() => {}, stop);
+  // Only when something changed: the token's 1 000 requests an hour are
+  // shared by every job of the repository.
+  const tick = () => {
+    if (stopped) return;
+    try {
+      collect();
+    } catch (error) {
+      stop(error);
+      return;
+    }
+    if (!dirty || inFlight) return;
+    dirty = false;
+    inFlight = send({ output: renderSummary(state) }).finally(() => {
+      inFlight = undefined;
+    });
+  };
+  const timer = setInterval(tick, intervalMs);
+  timer.unref();
+
+  return {
+    line(text) {
+      state.lines.push(text);
+      dirty = true;
+    },
+    async finish(conclusion) {
+      clearInterval(timer);
+      if (stopped) return;
+      const closing = async () => {
+        try {
+          collect();
+        } catch {
+          // The summary goes out with what was read.
+        }
+        await inFlight;
+        if (stopped) return;
+        state.conclusion = conclusion;
+        await send({
+          status: 'completed',
+          conclusion,
+          completed_at: new Date().toISOString(),
+          output: renderSummary(state),
+        });
+      };
+      await bounded(closing(), finishTimeoutMs).catch(stop);
+    },
+  };
+}
+
+function defaultIdsFile(env: NodeJS.ProcessEnv): string | undefined {
+  return env.RUNNER_TEMP
+    ? join(env.RUNNER_TEMP, 'bsq-progress-ids')
+    : undefined;
+}
+
+/** Completes, with `conclusion`, every check run of `ids` still open. */
+export async function closeOpen(
+  ids: readonly string[],
+  conclusion: string,
+  config: Api,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const request = checkRuns(config, fetchImpl, 15_000);
+  for (const id of ids) {
+    const run = (await request('GET', `/${id}`)) as { status: string };
+    if (run.status === 'completed') continue;
+    await request('PATCH', `/${id}`, {
+      status: 'completed',
+      conclusion,
+      completed_at: new Date().toISOString(),
+    });
+  }
+}
+
+async function closeFromCli(args: readonly string[]) {
+  const [command, conclusion] = args;
+  if (command !== 'close' || !conclusion) {
+    console.error('usage: node scripts/ci-progress.ts close <conclusion>');
+    process.exitCode = 2;
+    return;
+  }
+  const config = progressConfig(process.env, '');
+  const idsFile = defaultIdsFile(process.env);
+  if (!config || !idsFile || !existsSync(idsFile)) return;
+  const ids = readFileSync(idsFile, 'utf8').split('\n').filter(Boolean);
+  try {
+    await closeOpen(ids, conclusion, config);
+  } catch (error) {
+    // The job's own status already says how it ended.
+    console.warn(
+      `ci-progress: could not close ${ids.join(', ')}: ${(error as Error).message}`,
+    );
+  }
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  closeFromCli(process.argv.slice(2));
+}
