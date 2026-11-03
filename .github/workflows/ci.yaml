@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      # TEMPORARY (ci/matrix-os): proves the matrix job before the merge.
+      - ci/matrix-os
   pull_request:
   # From release-and-publish.yaml, when the push of `main` carrying the tagged
   # commit has no passing run of this workflow to reuse: the gate that blocks a

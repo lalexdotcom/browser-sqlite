@@ -5,6 +5,10 @@ name: Matrix (Ubuntu)
 # main. A run by hand goes to the end and shows every pair.
 on:
   workflow_dispatch:
+  # TEMPORARY (ci/matrix-os): a workflow on a branch alone cannot be dispatched.
+  push:
+    branches:
+      - ci/matrix-os
 
 concurrency:
   group: matrix-ubuntu-${{ github.ref }}
