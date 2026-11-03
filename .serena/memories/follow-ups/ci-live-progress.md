@@ -1,6 +1,6 @@
 # Follow-up — Reading a GitHub run's progress from `gh` while it runs (user, 2026-10-26)
 
-**Status: OPEN** — not designed; the recommended mechanism is a progress check run the planner updates.
+**Status: CLOSED** — 2026-11-03, `feat/ci-live-progress`: each planner on CI publishes a progress check run (its `[n/N]` lines and every failed test as it fails), `scripts/ci-watch.ts` follows a run from a terminal. Design `docs/superpowers/specs/2026-11-03-ci-live-progress-design.md`, wiring in `mem:stack-and-build/ci`, the spike and the proving runs in `mem:measurements/ci-runners` (CHECK-PROGRESS). History below as written.
 
 Part of `mem:follow-ups`, opened 2026-10-26 (user), while following the OS workflows of the push of `main` `a17b6c6`.
 
