@@ -7,9 +7,14 @@ import {
   type SQLiteVFS,
   VFS_CAPABILITIES,
 } from '../../../src/const/vfs';
+import { initLockName } from '../../../src/locks';
 import type { InternalSQLiteClientOptions } from '../../../src/scheduler';
 import type { SQLiteError } from '../../../src/types/errors';
-import { databaseFiles, databasePath } from '../../../src/utils';
+import {
+  databaseFiles,
+  databasePath,
+  resolveDatabase,
+} from '../../../src/utils';
 import {
   needFromTags,
   representative,
@@ -179,6 +184,18 @@ const cleanUp = async (
   ) {
     // IndexedDB keeps its database, and AccessHandlePoolVFS its slot, until
     // deleteDatabase: removing files by name reaches neither.
+    //
+    // deleteDatabase refuses with BUSY while an open is in progress, a
+    // transient state its contract says to retry: a worker the client
+    // restarted and close() then terminated can hold the open lock a moment
+    // longer (Chrome on the macOS 26 runner, `verdict.test.ts`, 2026-11-03).
+    // Wait for that lock to be released — granted the moment it is, no timer
+    // to guess — then delete; bounded, so a lock never released still fails.
+    await navigator.locks.request(
+      initLockName(pair.vfs, resolveDatabase(name, pair.vfs).path),
+      { signal: AbortSignal.timeout(scaled(10_000)) },
+      () => {},
+    );
     await withNativeWorker(() =>
       deleteDatabase(name, { vfs: pair.vfs, build: pair.build }),
     ).catch((error: unknown) => {
