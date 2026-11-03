@@ -376,3 +376,26 @@ describe('closeOpen', () => {
     ]);
   });
 });
+
+describe('closeOpen, a failing request', () => {
+  it('still closes the other check runs, and names the one it could not', async () => {
+    const gh = fakeGitHub((call) =>
+      call.method === 'GET'
+        ? call.url.endsWith('/1')
+          ? new Response('{}', { status: 502 })
+          : Response.json({ status: 'in_progress' })
+        : Response.json({}),
+    );
+    // Falsifiable: stop at the first error and check run 2 stays open.
+    const failed = await closeOpen(
+      ['1', '2'],
+      'cancelled',
+      CONFIG,
+      gh.fetchImpl,
+    );
+    expect(gh.patches().map((c) => c.url)).toEqual([
+      'https://api.github.com/repos/o/r/check-runs/2',
+    ]);
+    expect(failed).toEqual(['1: 502']);
+  });
+});

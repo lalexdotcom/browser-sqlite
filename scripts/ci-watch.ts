@@ -59,6 +59,41 @@ export function newEvents(seen: Set<string>, snapshot: Snapshot): string[] {
   return fresh;
 }
 
+export type WatchState = { endedPolls: number; failedPolls: number };
+
+/** Polls a check run may stay open after its runs ended (a lost runner). */
+const GRACE_POLLS = 4;
+/** Failed polls in a row before giving up (a wrong id, gh logged out). */
+const FAILED_POLLS = 4;
+
+/** Whether to stop after a poll; a watcher always ends. */
+export function nextStep(
+  state: WatchState,
+  poll:
+    | { ok: false }
+    | { ok: true; runsCompleted: boolean; open: readonly string[] },
+): {
+  state: WatchState;
+  exit?: { code: number; stragglers: string[] };
+} {
+  if (!poll.ok) {
+    const failedPolls = state.failedPolls + 1;
+    return {
+      state: { ...state, failedPolls },
+      ...(failedPolls >= FAILED_POLLS
+        ? { exit: { code: 2, stragglers: [] } }
+        : {}),
+    };
+  }
+  if (!poll.runsCompleted) return { state: { endedPolls: 0, failedPolls: 0 } };
+  const endedPolls = state.endedPolls + 1;
+  const done = poll.open.length === 0 || endedPolls >= GRACE_POLLS;
+  return {
+    state: { endedPolls, failedPolls: 0 },
+    ...(done ? { exit: { code: 0, stragglers: [...poll.open] } } : {}),
+  };
+}
+
 type Run = {
   id: number;
   name: string;
@@ -131,28 +166,41 @@ function parseArgs(args: readonly string[]) {
 async function main() {
   const { intervalMs, ...target } = parseArgs(process.argv.slice(2));
   const seen = new Set<string>();
+  let state: WatchState = { endedPolls: 0, failedPolls: 0 };
   for (;;) {
+    let runs: Run[] = [];
+    let step: ReturnType<typeof nextStep>;
     try {
-      const runs = runsToFollow(target);
+      runs = runsToFollow(target);
       const sha = runs[0]?.head_sha ?? target.sha;
       const ids = new Set(runs.map((r) => `${r.id}/${r.run_attempt}`));
       const checks = sha ? progressCheckRuns(sha, ids) : [];
       for (const check of checks) {
         for (const event of newEvents(seen, check)) console.log(event);
       }
-      if (
-        runs.length > 0 &&
-        runs.every((r) => r.status === 'completed') &&
-        checks.every((c) => c.status === 'completed')
-      ) {
+      step = nextStep(state, {
+        ok: true,
+        runsCompleted:
+          runs.length > 0 && runs.every((r) => r.status === 'completed'),
+        open: checks.filter((c) => c.status !== 'completed').map((c) => c.name),
+      });
+    } catch (error) {
+      // A poll that fails is retried at the next one, up to a few in a row.
+      console.log(`ci-watch: ${(error as Error).message.split('\n')[0]}`);
+      step = nextStep(state, { ok: false });
+    }
+    state = step.state;
+    if (step.exit) {
+      for (const name of step.exit.stragglers) {
+        console.log(`${name}: still open, its run has ended`);
+      }
+      if (step.exit.code === 0) {
         for (const r of runs) {
           console.log(`run ${r.id} (${r.name}): ${r.conclusion}`);
         }
-        return;
       }
-    } catch (error) {
-      // A poll that fails is retried at the next one.
-      console.log(`ci-watch: ${(error as Error).message.split('\n')[0]}`);
+      process.exitCode = step.exit.code;
+      return;
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }

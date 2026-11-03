@@ -375,17 +375,24 @@ export async function closeOpen(
   conclusion: string,
   config: Api,
   fetchImpl: typeof fetch = fetch,
-): Promise<void> {
+): Promise<string[]> {
   const request = checkRuns(config, fetchImpl, 15_000);
+  const failed: string[] = [];
+  // One by one, each on its own: a refused id must not leave the next open.
   for (const id of ids) {
-    const run = (await request('GET', `/${id}`)) as { status: string };
-    if (run.status === 'completed') continue;
-    await request('PATCH', `/${id}`, {
-      status: 'completed',
-      conclusion,
-      completed_at: new Date().toISOString(),
-    });
+    try {
+      const run = (await request('GET', `/${id}`)) as { status: string };
+      if (run.status === 'completed') continue;
+      await request('PATCH', `/${id}`, {
+        status: 'completed',
+        conclusion,
+        completed_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      failed.push(`${id}: ${(error as Error).message}`);
+    }
   }
+  return failed;
 }
 
 async function closeFromCli(args: readonly string[]) {
@@ -399,13 +406,9 @@ async function closeFromCli(args: readonly string[]) {
   const idsFile = defaultIdsFile(process.env);
   if (!config || !idsFile || !existsSync(idsFile)) return;
   const ids = readFileSync(idsFile, 'utf8').split('\n').filter(Boolean);
-  try {
-    await closeOpen(ids, conclusion, config);
-  } catch (error) {
-    // The job's own status already says how it ended.
-    console.warn(
-      `ci-progress: could not close ${ids.join(', ')}: ${(error as Error).message}`,
-    );
+  // A warning only: the job's own status already says how it ended.
+  for (const failure of await closeOpen(ids, conclusion, config)) {
+    console.warn(`ci-progress: could not close ${failure}`);
   }
 }
 

@@ -10,7 +10,7 @@
  */
 import { appendFileSync } from 'node:fs';
 import { relative } from 'node:path';
-import type { Reporter, TestCase } from 'vitest/node';
+import type { Reporter, TestCase, TestModule, TestSuite } from 'vitest/node';
 import { ROOT } from './parallel.ts';
 
 type Reported = {
@@ -26,19 +26,47 @@ type Reported = {
 export function failureEvent(testCase: Reported): string | undefined {
   const result = testCase.result();
   if (result.state !== 'failed') return undefined;
-  const message = result.errors?.[0]?.message ?? '';
-  return `${JSON.stringify({
-    file: relative(ROOT, testCase.module.moduleId),
-    test: testCase.fullName,
-    message: message.split('\n')[0],
-  })}\n`;
+  return errorEvent(testCase.module.moduleId, testCase.fullName, result.errors);
+}
+
+/** A first line long enough to read, short enough that one cannot fill the summary. */
+const MESSAGE_MAX = 300;
+
+function errorEvent(
+  moduleId: string,
+  test: string,
+  errors: readonly { message?: string | undefined }[] | undefined,
+): string {
+  const first = (errors?.[0]?.message ?? '').split('\n')[0] as string;
+  const message =
+    first.length > MESSAGE_MAX ? `${first.slice(0, MESSAGE_MAX - 1)}…` : first;
+  return `${JSON.stringify({ file: relative(ROOT, moduleId), test, message })}\n`;
 }
 
 export default class ProgressReporter implements Reporter {
   onTestCaseResult(testCase: TestCase) {
-    const file = process.env.BSQ_PROGRESS_EVENTS;
-    if (!file) return;
     const line = failureEvent(testCase);
-    if (line) appendFileSync(file, line);
+    if (line) append(line);
   }
+
+  // A file that fails to load, or in a hook, marks its tests skipped, not
+  // failed: only the file or the suite carries the error.
+  onTestModuleEnd(testModule: TestModule) {
+    const errors = testModule.errors();
+    if (errors.length > 0) {
+      append(errorEvent(testModule.moduleId, '(file)', errors));
+    }
+  }
+
+  onTestSuiteResult(testSuite: TestSuite) {
+    const errors = testSuite.errors();
+    if (errors.length > 0) {
+      append(errorEvent(testSuite.module.moduleId, testSuite.fullName, errors));
+    }
+  }
+}
+
+function append(line: string) {
+  const file = process.env.BSQ_PROGRESS_EVENTS;
+  if (file) appendFileSync(file, line);
 }

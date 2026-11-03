@@ -6,8 +6,10 @@ import {
 } from '../../../scripts/ci-progress.ts';
 import {
   newEvents,
+  nextStep,
   parseSummary,
   type Snapshot,
+  type WatchState,
 } from '../../../scripts/ci-watch.ts';
 
 /**
@@ -113,5 +115,49 @@ describe('newEvents', () => {
       snapshot({ status: 'completed', conclusion: 'failure' }),
     );
     expect(events.at(-1)).toBe(`${NAME}: done, failure`);
+  });
+});
+
+describe('nextStep', () => {
+  const start: WatchState = { endedPolls: 0, failedPolls: 0 };
+  const poll = (runsCompleted: boolean, open: string[] = []) =>
+    ({ ok: true, runsCompleted, open }) as const;
+
+  it('keeps watching while a run is going', () => {
+    expect(nextStep(start, poll(false, ['a'])).exit).toBeUndefined();
+  });
+
+  it('stops once the runs and their check runs are completed', () => {
+    expect(nextStep(start, poll(true)).exit).toEqual({
+      code: 0,
+      stragglers: [],
+    });
+  });
+
+  it('stops a few polls after the runs ended, naming a check run left open', () => {
+    // Falsifiable: wait for every check run and a lost runner watches forever.
+    let state = start;
+    for (let n = 1; n < 4; n++) {
+      const step = nextStep(state, poll(true, ['a']));
+      expect(step.exit).toBeUndefined();
+      state = step.state;
+    }
+    expect(nextStep(state, poll(true, ['a'])).exit).toEqual({
+      code: 0,
+      stragglers: ['a'],
+    });
+  });
+
+  it('gives up after four failed polls in a row, not after scattered ones', () => {
+    let state = start;
+    for (const ok of [false, false, false, true, false, false, false]) {
+      const step = nextStep(state, ok ? poll(false) : { ok: false });
+      expect(step.exit).toBeUndefined();
+      state = step.state;
+    }
+    expect(nextStep(state, { ok: false }).exit).toEqual({
+      code: 2,
+      stragglers: [],
+    });
   });
 });
