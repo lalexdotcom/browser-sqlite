@@ -5,9 +5,6 @@ name: Matrix (macOS 26)
 # Safari sessions, and one such pair would otherwise cancel the others.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - docs/startup-probe-mac
 
 concurrency:
   group: matrix-macos-26-${{ github.ref }}
