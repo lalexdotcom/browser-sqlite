@@ -50,6 +50,11 @@ jobs:
   # The same suites as every other platform, so the steps cannot drift apart,
   # and a red run keeps its .work/ logs as test-logs-Linux.
   linux:
+    # checks: write for the live progress check run (scripts/ci-progress.ts):
+    # a called workflow cannot hold more than its caller grants.
+    permissions:
+      contents: read
+      checks: write
     uses: ./.github/workflows/tests.yaml
     with:
       runs-on: ubuntu-latest

@@ -35,8 +35,12 @@ export async function openVitest({
   process.env.BSQ_TEST_BUILT = '1';
   // `default` first when reporting: the log of a cell (or of a merge's source)
   // then holds Vitest's failure output; planning, which sets neither, stays silent.
+  // The progress reporter sends each failed test to the planner as it fails
+  // (scripts/ci-progress.ts); it does nothing outside a planned job.
   const reporters = [
-    ...(blob || json ? ['default'] : []),
+    ...(blob || json
+      ? ['default', resolve(ROOT, 'scripts/progress-reporter.ts')]
+      : []),
     ...(blob ? ['blob'] : []),
     ...(json ? ['json'] : []),
   ];
