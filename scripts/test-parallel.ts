@@ -35,6 +35,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { assertBrowserAvailable, safariVersion } from './browsers.ts';
+import { progressConfig, startProgress } from './ci-progress.ts';
 import {
   type BlobState,
   browserOfProject,
@@ -160,6 +161,20 @@ async function main() {
   console.log(
     `${jobs.length} jobs, ${concurrency} at a time. Run under ${run}.`,
   );
+  // On CI, a check run shows the [n/N] lines and each failed test as it fails
+  // (scripts/ci-progress.ts); each job's reporter writes to its events file.
+  const events = join(run, 'events');
+  mkdirSync(events, { recursive: true });
+  const progress = await startProgress({
+    config: progressConfig(
+      process.env,
+      names.every((name) => name.startsWith('conformance '))
+        ? 'conformance'
+        : 'parallel',
+    ),
+    total: jobs.length,
+    eventsDir: events,
+  });
 
   const start = Date.now();
   let done = 0;
@@ -183,9 +198,17 @@ async function main() {
           job.project,
           ...(job.shard ? [`--shard=${job.shard[0]}/${job.shard[1]}`] : []),
           '--reporter=blob',
+          '--reporter=./scripts/progress-reporter.ts',
           `--outputFile=${blob}`,
         ],
-        { cwd: ROOT, env: jobEnv(env, job.id), timeoutMs: JOB_TIMEOUT_MS },
+        {
+          cwd: ROOT,
+          env: {
+            ...jobEnv(env, job.id),
+            BSQ_PROGRESS_EVENTS: join(events, `${job.id}.ndjson`),
+          },
+          timeoutMs: JOB_TIMEOUT_MS,
+        },
       );
       writeFileSync(log, error ? `${output}\n${error.message}\n` : output);
       const state = blobState(blob);
@@ -197,9 +220,9 @@ async function main() {
         : error
           ? `error ${error.message}`
           : `exit ${exitCode}`;
-      console.log(
-        `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ` (${state === 'missing' ? 'NO BLOB' : 'BLOB DOES NOT PARSE'})`}`,
-      );
+      const line = `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ` (${state === 'missing' ? 'NO BLOB' : 'BLOB DOES NOT PARSE'})`}`;
+      console.log(line);
+      progress.line(line);
       return { job, timedOut, error, blob: state };
     },
     (job) => (isSafariProject(job.project) ? 'safari' : undefined),
@@ -258,6 +281,7 @@ async function main() {
       `\n${failed.length} of ${jobs.length} jobs did not finish cleanly: ${failed.map((f) => `${f.job.id} (${f.reason})`).join(', ')}. The merged report above may lack their tests.`,
     );
   }
+  await progress.finish(status === 0 ? 'success' : 'failure');
   process.exitCode = status;
 }
 

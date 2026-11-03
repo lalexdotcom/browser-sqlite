@@ -46,6 +46,7 @@ import {
   isBrowserName,
   safariVersion,
 } from './browsers.ts';
+import { progressConfig, startProgress } from './ci-progress.ts';
 import {
   allocateShards,
   type BlobState,
@@ -401,6 +402,19 @@ async function main() {
   console.log(
     `\n${jobs.length} jobs, ${concurrency} at a time. Run under ${relative(ROOT, run)}.`,
   );
+  // On CI, a check run shows the [n/N] lines and each failed test as it fails
+  // (scripts/ci-progress.ts); each job's reporter writes to its events file.
+  const events = join(run, 'events');
+  mkdirSync(events, { recursive: true });
+  const progress = await startProgress({
+    config: progressConfig(process.env, 'test'),
+    total: jobs.length,
+    eventsDir: events,
+  });
+  const jobEnvOf = (id: string) => ({
+    ...jobEnv(env, id),
+    BSQ_PROGRESS_EVENTS: join(events, `${id}.ndjson`),
+  });
 
   const start = Date.now();
   let done = 0;
@@ -426,11 +440,12 @@ async function main() {
                 '--project',
                 'unit',
                 '--reporter=blob',
+                '--reporter=./scripts/progress-reporter.ts',
                 `--outputFile=${blob}`,
               ],
               {
                 cwd: ROOT,
-                env: jobEnv(env, job.id),
+                env: jobEnvOf(job.id),
                 timeoutMs: JOB_TIMEOUT_MS,
               },
             )
@@ -447,7 +462,7 @@ async function main() {
               ],
               {
                 cwd: ROOT,
-                env: jobEnv(env, job.id),
+                env: jobEnvOf(job.id),
                 timeoutMs: JOB_TIMEOUT_MS,
               },
             );
@@ -482,9 +497,9 @@ async function main() {
         : error
           ? `error ${error.message}`
           : `exit ${exitCode}`;
-      console.log(
-        `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ' (NO BLOB)'}`,
-      );
+      const line = `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ' (NO BLOB)'}`;
+      console.log(line);
+      progress.line(line);
       return { job, timedOut, error, blob: state, exitCode };
     },
     (job) =>
@@ -598,6 +613,7 @@ async function main() {
       `test-plan: failing because ${plan.dead.length} test(s) run on no pair (listed after the plan, above)`,
     );
   }
+  await progress.finish(status === 0 ? 'success' : 'failure');
   process.exitCode = status;
 }
 
