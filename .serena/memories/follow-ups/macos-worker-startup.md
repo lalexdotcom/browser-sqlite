@@ -1,6 +1,6 @@
 # Follow-up — Worker startups of 10-15 s on GitHub's macOS 26 runner: the runner's, or the users'? (user, 2026-11-03)
 
-**Status: OPEN** — backlog (user, 2026-11-03); not measured.
+**Status: OPEN** — backlog (user, 2026-11-03); the user's Mac (Safari 27.2) measured fast, STARTUP-PROBE-MAC; next, the macOS 26 matrix rerun with the startup waits fixed (user, 2026-11-03).
 
 Part of `mem:follow-ups`, opened 2026-11-03 after the second macOS 26 matrix run (MATRIX-OS, `mem:measurements/ci-runners`); the tests it failed no longer bound startup by `waitUntil` (`test/macos26-startup`, `mem:follow-ups/macos-ci-instability`).
 
@@ -8,4 +8,8 @@ Part of `mem:follow-ups`, opened 2026-11-03 after the second macOS 26 matrix run
 
 **The question that decides the next step** (as for TIMER-PROBE-MAC): does a real Mac show such startups? If yes, a Safari or Chrome user on macOS can wait 10 s or more for the first statement — a library subject (what the worker does before `ready`: fetch and compile the WASM, open the VFS, the probes). If no, it is the runner (3 vCPU, two cells at once, slow timers) and `BSQ_TIME_SCALE` or nothing.
 
-**Method to settle it (proposed, not run):** a page served from the container (`scripts/static-server.ts`, port forwarded by VS Code; the user's Mac has no Node — never ask to run Node there) that creates clients one after another on each VFS/build and records, per worker, the time from creation to each `boot` stage and to `ready` (`debug` mode exposes the stages), opened by hand in Chrome, Firefox and Safari on the user's Mac; then the same page on the `macos-26` runner through a throwaway spike, to compare stage by stage.
+**Method to settle it (the Mac half run 2026-11-03, the runner half not):** a page served from the container (`scripts/static-server.ts`, port forwarded by VS Code; the user's Mac has no Node — never ask to run Node there) that creates clients one after another on each VFS/build and records, per worker, the time from creation to each `boot` stage and to `ready` (`debug` mode exposes the stages), opened by hand in Chrome, Firefox and Safari on the user's Mac; then the same page on the `macos-26` runner through a throwaway spike, to compare stage by stage.
+
+**Measured on the user's Mac, 2026-11-03 (STARTUP-PROBE-MAC, `mem:measurements/test-browsers/library`):** Safari 27.2, every pair `ready` in 25-56 ms (132 ms cold), also after a heavy count in another worker. Chrome and Firefox not measured there (Safari only on that Mac).
+
+**Already known, and not seen by this follow-up when it was opened:** SAFARI-WASM-INSTANTIATE (2026-10-23, same memory) — on the runner, Safari 26.6.2 and 27.0.1 stall a new worker's wasm instantiation 1-11 s after hot wasm ran in another worker; it fits the Safari case above (same pair, `OPFSAdaptiveVFS/async`), not the Chrome one. Its open question, one compiled `WebAssembly.Module`, is in `mem:follow-ups`.
