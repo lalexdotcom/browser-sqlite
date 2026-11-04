@@ -29,7 +29,7 @@ been work on nothing.
 |---|---|---|
 | `library-stock-browsers` | What stays open after the Vitest + WebdriverIO migration | OPEN — the iOS simulator, the WASM built once |
 | `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10). **Bug-gated: WebKit 328618**, last seen 2026-11-02: NEW, unassigned, InRadar since 2026-10-30, no comment |
-| `macos-worker-startup` | Worker startups of 10-15 s on the macOS 26 runner: the runner's, or the users'? | OPEN — backlog (user, 2026-11-03); settle on the user's Mac first, as TIMER-PROBE-MAC |
+| `macos-worker-startup` | Worker startups of 10-15 s on the macOS 26 runner: the runner's, or the users'? | OPEN — backlog (user, 2026-11-03); the user's Mac fast on Safari 27.2 (STARTUP-PROBE-MAC); the Safari case fits SAFARI-WASM-INSTANTIATE; Chrome stalls a plain worker over 10 s there (rerun 41714043416, 20/22) |
 | `macos-ci-instability` | macOS workflows fail without a library cause: timers ~5× slower in Chrome and Firefox than on Linux (not in Safari), a lost Safari session | OPEN — low priority: the runner's, not macOS's (user's Mac fast); `BSQ_TIME_SCALE=2` on macOS since 2026-10-26; runner cause and Safari sessions open |
 
 ## Open — upstream (wa-sqlite)

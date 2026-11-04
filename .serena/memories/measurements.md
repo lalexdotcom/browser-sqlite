@@ -31,6 +31,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - SAFARI-TERMINATE-WASM — Safari's `terminate()` lets a worker's WASM loop run to its end, its OPFS handles held meanwhile (7-9 s for an 8 s spin, 26 and 27); a JS loop or an idle worker frees them in ~10 ms; Chrome stops both after ~2 s
 - SAFARI-DISPATCH-TERMINATED — on Safari 26/27 an event dispatched on a `Worker` after `terminate()` reaches no listener (Firefox, Chrome: delivered); `second-client`'s lost worker 0 went unseen until the 30 s open timeout
 - SAFARI-WASM-INSTANTIATE — on Safari 26/27 a worker's wasm instantiation stalls 1-11 s after another worker ran hot wasm (killed or closed); fast without (≤ 230 ms); Chrome/Firefox ≤ 41 ms
+- STARTUP-PROBE-MAC — worker startup per pair on the user's Mac, Safari 27.2: ready 25-56 ms (132 ms cold), also after a heavy count; Chrome headless control 16-53 ms
 
 ## `mem:measurements/ci-runners` — the library's suites on CI runners, from macOS 26/27 on
 
@@ -39,6 +40,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - LIFECYCLE-HELD-PROBE — whether a restarted worker meets its predecessor's held file: 0 in 130 looped runs and 3 probed full suites; only `pool-cap`'s live holder held an open
 - MATRIX-OS — the first matrices by hand on Windows (22/22) and macOS 27 (22/22, Safari included); macOS 26 20/22 twice, on runner speed
 - CHECK-PROGRESS — a job's check run read live, `::notice::` not; check runs filed under another workflow's suite without changing its conclusion; the progress check runs proven on Ubuntu, Matrix, Windows (a failure seen live, a cancel closed, a re-run named alike)
+- CHROME-STALL-SPIKE — Chrome workers on the macOS 26 runner under a pair's load (load average 63-115 on 3 cores): 2-5× slower, max 0.6 s plain / 1.7 s library round, no stall in 856 rounds
 
 ## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
 

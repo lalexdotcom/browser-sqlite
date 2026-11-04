@@ -66,5 +66,20 @@ So the window is rare and narrow; the fix (`fix/restart-held-file`) was made det
 | 41629313297 | Matrix (macOS 27), Safari included | **green 22/22**, ~2 h (macOS jobs shared 5 slots with macOS 26) |
 | 41629313260 | Matrix (macOS 26), Safari included | red 20/22 (two Chrome tests, fixed in `test/macos26-flakes`) |
 | 41654580706 | Matrix (macOS 26) again, alone, with the fixes | red 20/22 (two other waits bounded at 10 s, a worker over 10 s to start) — `mem:follow-ups/macos-ci-instability` |
+| 41714043416 | Matrix (macOS 26), alone, with the startup waits fixed (`test/macos26-startup`), branch `docs/startup-probe-mac`, 1 h 15 | red 20/22, both Chrome, both new: `MemoryVFS/async` — `need-guard.ts`'s OPFS handle probe (a plain blob worker, no wasm) silent 3 × 10 s (`PROBE_BOUND_MS`, unscaled), so `abandon.test.ts` never loads; `OPFSAdaptiveVFS/async` — `abandon-transaction` "leaves a correct transaction untouched" (2 workers, 2 000 rows read in a transaction) over its 60 s. Every test fixed on the earlier runs green; Chrome cells 265-1436 s against Firefox 195-767 s and Safari 38-1006 s — `mem:follow-ups/macos-worker-startup` |
 
 **Throughput.** Two macOS matrices together queue 46 jobs on 5 macOS slots (free plan, as observed: 5 running at once). `ci-watch.ts` printed the runs' conclusions only at the end of all of them until `0e5d768f` (now: each as it completes).
+
+## CHROME-STALL-SPIKE — Chrome workers on the macOS 26 runner, idle and under a pair's load, 2026-11-04, branch `spike/macos26-chrome-stall`
+
+**Method.** Run 41802800134, one `macos-26` job (3 cores, HeadlessChrome 153): a page (`spike/chrome-stall/index.html`) in its own headless Chrome driven over CDP, alternating two rounds bounded at 60 s each: A, a plain blob worker (no wasm, no library), page-side time to its first message then to each of `getDirectory`, `getFileHandle`, `createSyncAccessHandle`, close + `removeEntry`, one message per stage; B, a `poolSize: 2` `OPFSAdaptiveVFS/async` client (each worker's boot stages, `ready`, CREATE, 2 000-row seed, a chunked read in a transaction — `abandon-transaction`'s failed test). 3 min idle, then beside `test-matrix.ts --pair OPFSAdaptiveVFS/async` on Chrome and Firefox, both modes, `BSQ_TIME_SCALE=2` (17 min, green), then 1 min; `uptime` every 15 s.
+
+| | idle (106 + 106) | under the pair (428 + 428) | after (38 + 38) |
+|---|---|---|---|
+| load average, 1 min | 22 (max 34) | 63 (p90 104, max 115) | 10 |
+| A spawn → first message, p50 / p99 / max ms | 10 / 47 / 138 | 25 / 333 / 555 | 9 / 23 / 23 |
+| A each OPFS call, max ms | 107 | 56 | 126 |
+| B create → `ready`, p50 / max | 124 / 524 | 199 / 1 061 | 118 / 253 |
+| B whole round, p50 / max | 339 / 952 | 609 / 1 741 | 330 / 529 |
+
+No error, no round over 1 s (A) or 3 s (B), in 1 144 rounds. **Reading.** A pair's load slows Chrome's worker work 2-5× at the median and up to ~10× at the tail on this runner, not the 10-60 s of the matrix's two failures (run 41714043416). Those are rare: about one per pair job, in 2 of 22 jobs, against none in this job's 856 loaded rounds. The `need-guard.ts` probe that failed there (3 × 10 s silent) runs no library code, so a worker silent over 10 s is the runner's (or Chrome's on it), not the library's; which stage stalls is still unseen.
