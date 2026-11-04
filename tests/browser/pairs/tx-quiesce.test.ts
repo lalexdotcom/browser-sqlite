@@ -30,7 +30,7 @@ const SEED =
 describe('a statement following a short-circuited statement in the same callback', {
   tags: ['requires:two-workers'],
 }, () => {
-  it('follows tx.first()', { timeout: 30_000 }, async () => {
+  it('follows tx.first()', { timeout: scaled(30_000) }, async () => {
     const db = await createTestClient({ ...TWO_WORKERS });
     try {
       await db.run('CREATE TABLE t (n INTEGER)');
