@@ -40,6 +40,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - LIFECYCLE-HELD-PROBE — whether a restarted worker meets its predecessor's held file: 0 in 130 looped runs and 3 probed full suites; only `pool-cap`'s live holder held an open
 - MATRIX-OS — the first matrices by hand on Windows (22/22) and macOS 27 (22/22, Safari included); macOS 26 20/22 twice, on runner speed
 - CHECK-PROGRESS — a job's check run read live, `::notice::` not; check runs filed under another workflow's suite without changing its conclusion; the progress check runs proven on Ubuntu, Matrix, Windows (a failure seen live, a cancel closed, a re-run named alike)
+- CHROME-STALL-SPIKE — Chrome workers on the macOS 26 runner under a pair's load (load average 63-115 on 3 cores): 2-5× slower, max 0.6 s plain / 1.7 s library round, no stall in 856 rounds
 
 ## `mem:measurements/wa-sqlite-prs` — the campaigns behind wa-sqlite PRs
 

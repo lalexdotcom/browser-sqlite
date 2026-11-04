@@ -1,6 +1,6 @@
 # Follow-up — Worker startups of 10-15 s on GitHub's macOS 26 runner: the runner's, or the users'? (user, 2026-11-03)
 
-**Status: OPEN** — backlog (user, 2026-11-03); the user's Mac (Safari 27.2) measured fast, STARTUP-PROBE-MAC; the macOS 26 rerun (41714043416) red 20/22 on two new Chrome stalls, one without wasm; next step not decided.
+**Status: OPEN** — backlog (user, 2026-11-03); the user's Mac (Safari 27.2) measured fast, STARTUP-PROBE-MAC; the macOS 26 rerun (41714043416) red 20/22 on two new Chrome stalls, one without wasm; a spike under a pair's load did not reproduce a stall (CHROME-STALL-SPIKE); next step not decided.
 
 Part of `mem:follow-ups`, opened 2026-11-03 after the second macOS 26 matrix run (MATRIX-OS, `mem:measurements/ci-runners`); the tests it failed no longer bound startup by `waitUntil` (`test/macos26-startup`, `mem:follow-ups/macos-ci-instability`).
 
@@ -15,3 +15,5 @@ Part of `mem:follow-ups`, opened 2026-11-03 after the second macOS 26 matrix run
 **Already known, and not seen by this follow-up when it was opened:** SAFARI-WASM-INSTANTIATE (2026-10-23, same memory) — on the runner, Safari 26.6.2 and 27.0.1 stall a new worker's wasm instantiation 1-11 s after hot wasm ran in another worker; it fits the Safari case above (same pair, `OPFSAdaptiveVFS/async`), not the Chrome one. Its open question, one compiled `WebAssembly.Module`, is in `mem:follow-ups`.
 
 **The rerun, 2026-11-03 (run 41714043416, MATRIX-OS in `mem:measurements/ci-runners`):** the fixed waits green; two new Chrome failures, each a worker silent for tens of seconds on trivial work. One is decisive for the mechanism: `need-guard.ts`'s OPFS handle probe — a blob worker with no wasm and no library code, `getDirectory()` then `createSyncAccessHandle()` — did not report in 10 s, three workers in a row. So Chrome's case on this runner is not SAFARI-WASM-INSTANTIATE's: a plain worker (its startup, or its OPFS call: not told apart, the probe's `console.error` not in the job log) can stall over 10 s. A Chrome user on a fast Mac not measured (the user's Mac has Safari only).
+
+**The spike, 2026-11-04 (CHROME-STALL-SPIKE, `mem:measurements/ci-runners`):** 1 144 rounds on the `macos-26` runner, idle and beside a pair's real cells (load average up to 115 on 3 cores): no plain worker over 0.6 s, no library round over 1.7 s, no error. The 10-60 s silences are rare events (about one per pair job in 2 of 22 jobs) that one job's sampling did not catch.
