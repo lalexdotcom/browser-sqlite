@@ -1,4 +1,5 @@
 import { detectFeatures } from 'browser-sqlite';
+import { inject } from 'vitest';
 import { defaultBuildFor } from '../../../src/capabilities';
 import {
   BUILD_CAPABILITIES,
@@ -23,16 +24,33 @@ export const ALL_VFS = Object.keys(VFS_CAPABILITIES) as SQLiteVFS[];
  * exclusive locking (which blocks the second open).
  */
 /**
- * One attempt. Resolves `'wedged'` rather than an answer when the worker does
- * not report inside `PROBE_BOUND_MS` — see `probeHandles` for why that
- * case exists at all.
+ * One attempt. Resolves `'wedged'` rather than an answer when the worker
+ * started and does not report inside `PROBE_BOUND_MS` — see `probeHandles`
+ * for why that case exists at all — and `'unstarted'` when it did not start
+ * inside `STARTUP_BOUND_MS`.
  */
 /** What the probe worker found: one sync access handle, then a second one. */
 type HandleProbe = { readonly sync: boolean; readonly unsafe: boolean };
 
-function probeOnce(attempt: number): Promise<HandleProbe | 'wedged'> {
-  return new Promise<HandleProbe | 'wedged'>((resolve) => {
+/** Test seams of one attempt: code the worker runs first, and its bounds. */
+type ProbeOptions = {
+  readonly prelude?: string;
+  readonly startupBoundMs?: number;
+  readonly answerBoundMs?: number;
+};
+
+export function probeOnce(
+  attempt: number,
+  {
+    prelude = '',
+    startupBoundMs = STARTUP_BOUND_MS,
+    answerBoundMs = PROBE_BOUND_MS,
+  }: ProbeOptions = {},
+): Promise<HandleProbe | 'wedged' | 'unstarted'> {
+  return new Promise<HandleProbe | 'wedged' | 'unstarted'>((resolve) => {
     const src = `
+      ${prelude}
+      self.postMessage('up');
       self.onmessage = async () => {
         let h1;
         let sync = false;
@@ -64,28 +82,52 @@ function probeOnce(attempt: number): Promise<HandleProbe | 'wedged'> {
     // often enough to leave `__probe_unsafe_handles` in the OPFS root (4 of 6
     // Chromium loads, measured on the bench page's copy of this probe — see
     // BENCH-DRIFT in mem:follow-ups). `onerror` means no cleanup will run.
-    const bound = setTimeout(() => {
-      // The worker is wedged, not slow: terminate it so it cannot hold an OPFS
-      // entry, and let the caller start a fresh one.
+    //
+    // Two bounds, told apart by the worker's 'up': before it, the worker is
+    // starting — slow on a starved runner (a 3-core macOS runner left one
+    // silent over 10 s, run 41714043416), and a fresh worker would only start
+    // as slowly; after it, the worker has started and only the Firefox
+    // getDirectory() hang keeps it from answering.
+    let answerBound: ReturnType<typeof setTimeout> | undefined;
+    const giveUp = (answer: 'wedged' | 'unstarted', message: string) => {
+      // Terminate it so it cannot hold an OPFS entry; the caller decides
+      // whether a fresh one is worth starting.
       worker.terminate();
       URL.revokeObjectURL(url);
       console.error(
-        `[conformance] readwrite-unsafe probe attempt ${attempt} did not report in ${PROBE_BOUND_MS} ms — see the Firefox getDirectory() hang in mem:follow-ups`,
+        `[conformance] readwrite-unsafe probe attempt ${attempt} ${message}`,
       );
-      resolve('wedged');
-    }, PROBE_BOUND_MS);
-    worker.onmessage = (e: MessageEvent<HandleProbe>) => {
-      clearTimeout(bound);
+      resolve(answer);
+    };
+    const startupBound = setTimeout(
+      () => giveUp('unstarted', `did not start in ${startupBoundMs} ms`),
+      startupBoundMs,
+    );
+    worker.onmessage = (e: MessageEvent<HandleProbe | 'up'>) => {
+      if (e.data === 'up') {
+        clearTimeout(startupBound);
+        answerBound = setTimeout(
+          () =>
+            giveUp(
+              'wedged',
+              `did not report in ${answerBoundMs} ms once started — see the Firefox getDirectory() hang in mem:follow-ups`,
+            ),
+          answerBoundMs,
+        );
+        worker.postMessage(null);
+        return;
+      }
+      clearTimeout(answerBound);
       resolve(e.data);
       URL.revokeObjectURL(url);
     };
     worker.onerror = () => {
-      clearTimeout(bound);
+      clearTimeout(startupBound);
+      clearTimeout(answerBound);
       resolve({ sync: false, unsafe: false });
       worker.terminate();
       URL.revokeObjectURL(url);
     };
-    worker.postMessage(null);
   });
 }
 
@@ -97,8 +139,17 @@ function probeOnce(attempt: number): Promise<HandleProbe | 'wedged'> {
  * open). Resolved once at module load via top-level await so the skip
  * decision can be made synchronously at test-declaration time.
  */
-/** How long one attempt gets before its worker is written off as wedged. */
-const PROBE_BOUND_MS = 10_000;
+/** The run's `BSQ_TIME_SCALE`, read as `tests/browser/helpers/library.ts` reads it. */
+const TIME_SCALE = inject('bsqTimeScale') ?? 1;
+/** How long a started worker gets to answer before it is written off as wedged. */
+const PROBE_BOUND_MS = 10_000 * TIME_SCALE;
+/**
+ * How long a worker gets to start at all: the library's open timeout
+ * (`tests/browser/helpers/library.ts`), the time a client's own worker gets.
+ * A worker that has not started by then is a starved machine, which no fresh
+ * worker cures: the probe throws instead of trying again.
+ */
+const STARTUP_BOUND_MS = 30_000 * TIME_SCALE;
 /** How many workers get to try before the suite gives up and says so. */
 const PROBE_ATTEMPTS = 3;
 
@@ -123,10 +174,15 @@ const PROBE_ATTEMPTS = 3;
 async function probeHandles(): Promise<HandleProbe> {
   for (let attempt = 1; attempt <= PROBE_ATTEMPTS; attempt++) {
     const answer = await probeOnce(attempt);
+    if (answer === 'unstarted') {
+      throw new Error(
+        `OPFS handle probe: the worker did not start within ${STARTUP_BOUND_MS} ms (the library's open timeout under BSQ_TIME_SCALE). The machine is starved; the probe is not wedged.`,
+      );
+    }
     if (answer !== 'wedged') return answer;
   }
   throw new Error(
-    `OPFS handle probe: ${PROBE_ATTEMPTS} workers in a row failed to report within ${PROBE_BOUND_MS} ms each. On Firefox this is navigator.storage.getDirectory() never settling inside a worker (mem:follow-ups). The suite refuses to guess the answer.`,
+    `OPFS handle probe: ${PROBE_ATTEMPTS} workers in a row started and failed to report within ${PROBE_BOUND_MS} ms each. On Firefox this is navigator.storage.getDirectory() never settling inside a worker (mem:follow-ups). The suite refuses to guess the answer.`,
   );
 }
 
