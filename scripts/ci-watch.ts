@@ -29,27 +29,31 @@ const OVERFLOW = /^- … and \d+ more$/;
 /** The bullets under the summary's two headings, overflow lines left out. */
 export function parseSummary(summary: string): {
   failures: string[];
+  retried: string[];
   jobs: string[];
 } {
   const failures: string[] = [];
+  const retried: string[] = [];
   const jobs: string[] = [];
   let section: string[] | undefined;
   for (const line of summary.split('\n')) {
     if (line.startsWith('### Failed tests')) section = failures;
+    else if (line.startsWith('### Passed on retry')) section = retried;
     else if (line === '### Jobs') section = jobs;
     else if (line.startsWith('#') || line.startsWith('**')) section = undefined;
     else if (section && line.startsWith('- ') && !OVERFLOW.test(line)) {
       section.push(line.slice(2));
     }
   }
-  return { failures, jobs };
+  return { failures, retried, jobs };
 }
 
 /** What `snapshot` holds that `seen` has not: each event printed once. */
 export function newEvents(seen: Set<string>, snapshot: Snapshot): string[] {
-  const { failures, jobs } = parseSummary(snapshot.summary);
+  const { failures, retried, jobs } = parseSummary(snapshot.summary);
   const events = [
     ...failures.map((f) => `${snapshot.name}: FAILED ${f}`),
+    ...retried.map((f) => `${snapshot.name}: RETRIED ${f}`),
     ...jobs.map((j) => `${snapshot.name}: ${j}`),
     ...(snapshot.status === 'completed'
       ? [`${snapshot.name}: done, ${snapshot.conclusion}`]

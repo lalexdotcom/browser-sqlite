@@ -8,7 +8,7 @@ import {
   type BrowserName,
   WDIO_CACHE_DIR,
 } from '../scripts/browsers.ts';
-import { timeScale } from '../scripts/processes.ts';
+import { timeoutRetry, timeScale } from '../scripts/processes.ts';
 import { resolvingWebdriverio } from './harness/browser-provider.ts';
 import { declaredTags } from './harness/planner/need.ts';
 import type { TestTarget } from './harness/target.ts';
@@ -66,6 +66,9 @@ const browserProject = (
     // A teardown closes a client that may still be draining an abandoned
     // statement, and close() waits up to drainTimeout (60 s by default).
     hookTimeout: 60_000 * TIME_SCALE,
+    // On a platform slower than Linux only: one more attempt for a test that
+    // ran out of time, reported apart (scripts/processes.ts, timeoutRetry).
+    retry: timeoutRetry(TIME_SCALE),
     provide: {
       bsqTimeScale: TIME_SCALE,
       ...(options.target

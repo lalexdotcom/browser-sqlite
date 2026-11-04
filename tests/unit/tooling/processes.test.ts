@@ -5,6 +5,7 @@ import {
   killTree,
   packageBin,
   parseTimeScale,
+  timeoutRetry,
   timeScale,
 } from '../../../scripts/processes.ts';
 
@@ -92,5 +93,23 @@ describe('timeScale', () => {
       if (saved === undefined) delete process.env.BSQ_TIME_SCALE;
       else process.env.BSQ_TIME_SCALE = saved;
     }
+  });
+});
+
+describe('timeoutRetry', () => {
+  // Falsifiable: retry at scale 1 and a load-sensitive hang of the library
+  // (ABANDON-WEDGE, mem:measurements/aborts) passes Linux CI on its retry.
+  it('retries nothing on a platform at Linux speed', () => {
+    expect(timeoutRetry(1)).toBe(0);
+  });
+
+  it('retries a test once on a slower platform, when it ran out of time only', () => {
+    const retry = timeoutRetry(2);
+    expect(retry).toEqual({ count: 1, condition: expect.any(RegExp) });
+    const { condition } = retry as { condition: RegExp };
+    expect(condition.test('Test timed out in 60000ms.')).toBe(true);
+    expect(condition.test('Hook timed out in 120000ms.')).toBe(true);
+    // Falsifiable: retry on every error and a wrong result passes on its retry.
+    expect(condition.test('expected 2000 to be 2001')).toBe(false);
   });
 });

@@ -70,7 +70,7 @@ here on purpose: a total alone cannot say which suite moved.
   that fails once on CI and passes on a re-run is not automatically noise here: a load-sensitive
   defect once reproduced about once in eighteen runs of `pnpm test` and never in isolation, and
   sixteen busy loops around a single-file Firefox run cut time-to-failure twentyfold (ABANDON-WEDGE,
-  `mem:measurements/aborts`).
+  `mem:measurements/aborts`). That is why a timed-out test is retried only above `BSQ_TIME_SCALE` 1, and listed apart when its retry passes (`mem:stack-and-build/ci`, 2026-11-04).
 
 ## In progress
 

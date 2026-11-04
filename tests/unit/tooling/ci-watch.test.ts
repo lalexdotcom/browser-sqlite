@@ -54,6 +54,7 @@ describe('parseSummary', () => {
         '`unit` · `tests/unit/x.test.ts` › test 1 — Error: 1',
         '`unit` · `tests/unit/x.test.ts` › test 2 — Error: 2',
       ],
+      retried: [],
       jobs: [
         '[1/3] a: exit 0 in 1s',
         '[2/3] b: exit 0 in 2s',
@@ -116,6 +117,25 @@ describe('newEvents', () => {
       snapshot({ status: 'completed', conclusion: 'failure' }),
     );
     expect(events.at(-1)).toBe(`${NAME}: done, failure`);
+  });
+});
+
+describe('newEvents, a test passed on a retry', () => {
+  it('prints it as retried, not as failed', () => {
+    const retried: Failure = {
+      ...failure(2),
+      message: 'passed on retry 1',
+      retried: true,
+    };
+    const events = newEvents(
+      new Set<string>(),
+      snapshot({ summary: summary([retried], ['[1/3] unit: exit 0 in 5s']) }),
+    );
+    // Falsifiable: leave the section unread and the retry goes unseen.
+    expect(events).toEqual([
+      `${NAME}: RETRIED \`unit\` · \`tests/unit/x.test.ts\` › test 2 — passed on retry 1`,
+      `${NAME}: [1/3] unit: exit 0 in 5s`,
+    ]);
   });
 });
 

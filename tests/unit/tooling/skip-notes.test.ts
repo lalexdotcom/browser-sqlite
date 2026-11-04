@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatSkipNotes } from '../../../scripts/skip-notes.ts';
+import { formatRetried, formatSkipNotes } from '../../../scripts/skip-notes.ts';
 
 /**
  * A browser-defect skip shows its reason in every run's output
@@ -81,6 +81,34 @@ describe('formatSkipNotes', () => {
         '  zeta',
         '    tests/browser/b.test.ts › t',
         '      on every cell that ran it (1)',
+        '',
+      ].join('\n'),
+    );
+  });
+});
+
+describe('formatRetried', () => {
+  it('prints nothing when no test needed its retry', () => {
+    expect(
+      formatRetried([{ file: FILE, test: 'a', cell: 'chrome · A/x' }]),
+    ).toBe('');
+  });
+
+  it('names each test that passed on its retry, with its cells', () => {
+    // Falsifiable: leave it out of the merged report and a pass on retry
+    // looks like any other pass once the run ends.
+    expect(
+      formatRetried([
+        { file: FILE, test: 'd > t', cell: 'firefox · A/x', retried: 1 },
+        { file: FILE, test: 'd > t', cell: 'chrome · A/x', retried: 1 },
+        { file: FILE, test: 'd > u', cell: 'chrome · A/x' },
+      ]),
+    ).toBe(
+      [
+        '',
+        'Passed on retry (1 test) — it ran out of time first: look at it',
+        `  ${FILE} › d > t`,
+        '    on chrome · A/x, firefox · A/x',
         '',
       ].join('\n'),
     );
