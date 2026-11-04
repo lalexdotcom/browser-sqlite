@@ -51,16 +51,28 @@ describe('a statement timeout inside a transaction', () => {
         await db.run('CREATE TABLE t (a INTEGER)');
 
         let caughtCode: string | undefined;
+        // What the next red must say (Windows Firefox, 2026-11-04, run
+        // 41847018002: `undefined`, nothing else known): whether all()
+        // resolved or threw something without a code, and after how long —
+        // a page timer fired late, or another error.
+        let outcome = 'resolved';
         await db.transaction(async (tx) => {
+          const started = performance.now();
           try {
-            await tx.all(longQuery(2_000_000), [], { timeout: 200 });
+            const rows = await tx.all(longQuery(2_000_000), [], {
+              timeout: 200,
+            });
+            outcome = `resolved with ${rows.length} row(s)`;
           } catch (error) {
             caughtCode = (error as { code?: string }).code;
+            outcome = `threw ${String(error)}`;
+          } finally {
+            outcome += ` after ${Math.round(performance.now() - started)} ms`;
           }
           await tx.run('INSERT INTO t VALUES (1)');
         });
 
-        expect(caughtCode).toBe('OPERATION_TIMEOUT');
+        expect(caughtCode, outcome).toBe('OPERATION_TIMEOUT');
         expect(await db.all('SELECT a FROM t')).toEqual([{ a: 1 }]);
       } finally {
         await db.close();

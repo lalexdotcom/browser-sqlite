@@ -23,7 +23,8 @@ const seed = async (db: Awaited<ReturnType<typeof createTestClient>>) => {
 };
 
 /**
- * Whether the pool served a read within `ms`.
+ * Whether the pool served a read within `ms` — for proving it did NOT: a
+ * slower runner only makes that answer surer.
  *
  * The read is given a rejection sink before it is raced: against a wedged pool
  * it never settles, and at `close()` it rejects — long after this function has
@@ -37,6 +38,15 @@ const servesWithin = (
   read.catch(() => {});
   return Promise.race([read, sleep(ms).then(() => false)]);
 };
+
+/**
+ * Whether the pool serves a read, however long that takes: only the test's own
+ * timeout bounds it, so a pool that never comes back still fails the test. A
+ * fixed bound measured the runner instead — GitHub's macOS 27 runner took over
+ * 8 s to serve after a reclaim (2026-11-04, run 41847029385).
+ */
+const serves = async (db: Awaited<ReturnType<typeof createTestClient>>) =>
+  (await db.all<{ ok: number }>('SELECT 1 AS ok'))[0]?.ok === 1;
 
 /**
  * The abandoned generators, reachable until the test clears this in its
@@ -71,7 +81,7 @@ describe('an abandoned generator gives its worker back', () => {
         expect(await servesWithin(db, 300)).toBe(false);
 
         // After it, the reclaim has run and the pool serves again.
-        expect(await servesWithin(db, 8000)).toBe(true);
+        expect(await serves(db)).toBe(true);
       } finally {
         held.clear();
         await db.close();
@@ -96,7 +106,7 @@ describe('an abandoned generator gives its worker back', () => {
 
         expect(await servesWithin(db, 300)).toBe(false);
         controller.abort(new Error('the consumer changed its mind'));
-        expect(await servesWithin(db, 8000)).toBe(true);
+        expect(await serves(db)).toBe(true);
       } finally {
         held.clear();
         await db.close();
@@ -125,7 +135,7 @@ describe('an abandoned generator gives its worker back', () => {
           await nextTask();
         }
         expect(seen).toBe(ROWS);
-        expect(await servesWithin(db, 8000)).toBe(true);
+        expect(await serves(db)).toBe(true);
       } finally {
         await db.close();
       }
