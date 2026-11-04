@@ -127,6 +127,34 @@ describe('an SQL error the callback catches (spec 2026-09-11 §1)', () => {
 const ENDLESS_INSERT =
   'INSERT INTO big SELECT count(*) FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 2000000000) SELECT x FROM c)';
 
+/**
+ * A signal that aborts once `sql` is seen running, and whether it did. Not a
+ * short deadline: a statement with its own signal first asks the worker
+ * whether it writes, and a deadline that expires during that question rejects
+ * it before it is posted, so nothing is abandoned (T4, 2026-11-03; T5 on
+ * GitHub's macOS 27 runner, 2026-11-04; red locally with the verdict delayed
+ * 60 ms).
+ */
+const abandonOnceRunning = (
+  db: Parameters<typeof theQueryIsRunning>[0],
+  sql: string,
+) => {
+  const abandon = new AbortController();
+  let running = false;
+  waitUntil(
+    theQueryIsRunning(db, sql),
+    'the abandoned write to run',
+    2000,
+  ).then(
+    () => {
+      running = true;
+      abandon.abort(new Error('abandon the running write'));
+    },
+    () => {},
+  );
+  return { signal: abandon.signal, abandonedRunning: () => running };
+};
+
 describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R3)', () => {
   // Falsifiable: in `settled`, `await worker.quiesce()` before rethrowing the
   // own abort — the rejection then arrives when the write ends, when it is no
@@ -134,14 +162,15 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // the deadline whether or not the underlying step can be cut, so this no
   // longer loops over VFS (spec 2026-09-15, A5).
   it(
-    'rejects at the deadline, and the next statement pays for the rest (T2)',
+    'rejects at its abort, and the next statement pays for the rest (T2)',
     async () => {
       const db = await setUp();
       try {
         let runningAtRejection = false;
         await db.transaction(async (tx) => {
-          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-          // Rejected at the deadline: the write is still running.
+          const { signal } = abandonOnceRunning(db, BIG_INSERT);
+          await tx.run(BIG_INSERT, [], { signal }).catch(() => {});
+          // Rejected at its abort: the write is still running.
           runningAtRejection = theQueryIsRunning(db, BIG_INSERT)();
           await tx.run('INSERT INTO t VALUES (1)');
         });
@@ -181,7 +210,8 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
         let runningAtRejection = false;
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
-          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          const { signal } = abandonOnceRunning(db, BIG_INSERT);
+          await tx.run(BIG_INSERT, [], { signal }).catch(() => {});
           second = await tx
             .run('INSERT INTO t VALUES (9)', [], { timeout: 20 })
             .catch((e) => e);
@@ -211,10 +241,16 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
     async () => {
       const db = await setUp();
       try {
+        const abandon = abandonOnceRunning(db, BIG_INSERT);
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
-          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          await tx
+            .run(BIG_INSERT, [], { signal: abandon.signal })
+            .catch(() => {});
         });
+        // Abandoned while it ran: a write rejected before it was posted
+        // would leave nothing to undo, and the test would prove nothing.
+        expect(abandon.abandonedRunning()).toBe(true);
         expect(await rowsOf(db)).toEqual([0, 1]);
         expect(await bigCount(db)).toBe(0);
       } finally {
