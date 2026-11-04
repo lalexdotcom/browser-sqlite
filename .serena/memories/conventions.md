@@ -55,6 +55,8 @@ even when each step is only a test calibration. Said after two follow-ups (a tes
 re-measured bound, two commits) landed straight on `main` under the "calibration is inline"
 reading. Those commits were left there.
 
+**One branch in progress at a time: no new branch until the user closes the current one (user, 2026-11-04).** Whatever comes next — the next point of the same subject, a fix found while validating, a memory note — goes on the branch in hand; if the user has not said to close it, the work continues on it. Said after a test fix found by the matrices on `test/retry-timeouts-on-slow-runners` was put on a new `test/tx-savepoint-verdict-and-scaled`, leaving two open branches and the user unable to tell where things stood; the same day three branches had been opened in turn for one subject (`docs/startup-probe-mac`, `spike/…`, `test/handle-probe-startup`). A spike branch is the one exception the project's CI method needs (`mem:lessons/process`), and says so when opened.
+
 **Specs and plans go on the branch, not on `main` (user, 2026-08-27).** This file said the
 opposite and it was wrong: a spec is the first artefact of the work it designs, so it
 travels with that work and lands at the merge. Two spec commits went straight to `main`
