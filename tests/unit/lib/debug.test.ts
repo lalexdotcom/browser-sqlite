@@ -185,31 +185,73 @@ describe('the pool-level request history', () => {
     expect(debug.state.requests[0]?.kind).toBe('verdict');
   });
 
-  it('gives the slot back to the request a borrowed lease interrupted', () => {
+  it('leaves the transaction its request during a lend, and files the verdict query in the lend', () => {
     const debug = make();
     const w0 = debug.createWorkerDebugState(0, 'w0');
     debug.createRequestDebugState('write').acquired(0);
-    const verdict = debug.createRequestDebugState('verdict');
-    verdict.acquired(0, true);
-    w0.query('SELECT 1');
-    verdict.released();
+    const lend = debug.createRequestDebugState('verdict');
+    lend.acquired(0, true);
+    w0.query('COMMIT');
+    w0.verdict('SELECT 1');
+    lend.released();
     w0.query('SELECT 2');
     const [tx, lent] = debug.state.requests;
     expect(lent?.queries.map((q) => q.sql)).toEqual(['SELECT 1']);
-    expect(tx?.queries.map((q) => q.sql)).toEqual(['SELECT 2']);
+    expect(tx?.queries.map((q) => q.sql)).toEqual(['COMMIT', 'SELECT 2']);
     expect(tx?.endTime).toBeUndefined();
   });
 
-  it('does not give the slot back to a request that ended during the borrow', () => {
+  it('files each verdict query in its own lend, newest first, and keeps the transaction', () => {
     const debug = make();
     const w0 = debug.createWorkerDebugState(0, 'w0');
-    const tx = debug.createRequestDebugState('write');
-    tx.acquired(0);
-    const verdict = debug.createRequestDebugState('verdict');
-    verdict.acquired(0, true);
-    tx.released();
-    verdict.released();
-    expect(w0.query('SELECT 1')).toBeUndefined();
+    debug.createRequestDebugState('write').acquired(0);
+    const first = debug.createRequestDebugState('verdict');
+    first.acquired(0, true);
+    const second = debug.createRequestDebugState('verdict');
+    second.acquired(0, true);
+    w0.verdict('SELECT 2');
+    first.released();
+    w0.verdict('SELECT 1');
+    second.released();
+    w0.query('SELECT 3');
+    const [tx, one, two] = debug.state.requests;
+    expect(one?.queries.map((q) => q.sql)).toEqual([]);
+    expect(two?.queries.map((q) => q.sql)).toEqual(['SELECT 2', 'SELECT 1']);
+    expect(tx?.queries.map((q) => q.sql)).toEqual(['SELECT 3']);
+  });
+
+  it('files a verdict query in the newer of two live lends', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('write').acquired(0);
+    const first = debug.createRequestDebugState('verdict');
+    first.acquired(0, true);
+    const second = debug.createRequestDebugState('verdict');
+    second.acquired(0, true);
+    w0.verdict('SELECT 2');
+    second.released();
+    w0.verdict('SELECT 1');
+    const [, one, two] = debug.state.requests;
+    expect(one?.queries.map((q) => q.sql)).toEqual(['SELECT 1']);
+    expect(two?.queries.map((q) => q.sql)).toEqual(['SELECT 2']);
+  });
+
+  it('files a verdict query in the active request when nothing is lent', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('verdict').acquired(0);
+    w0.verdict('SELECT 1');
+    expect(debug.state.requests[0]?.queries.map((q) => q.sql)).toEqual([
+      'SELECT 1',
+    ]);
+  });
+
+  it('records nothing for a verdict of a stale worker handle', () => {
+    const debug = make();
+    const old = debug.createWorkerDebugState(0, 'w0');
+    debug.createWorkerDebugState(0, 'w0'); // the replacement
+    debug.createRequestDebugState('write').acquired(0);
+    expect(old.verdict('SELECT 1')).toBeUndefined();
   });
 
   it('clears the slot at the release of an unborrowed lease, as before', () => {

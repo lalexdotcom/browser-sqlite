@@ -715,18 +715,22 @@ export const createPoolWorker = (deps: {
         break;
       }
       case 'verdict': {
-        verdictDebug
-          ?.get(data.callId)
-          ?.done(0, data.prepared ?? 0, data.elapsed);
-        verdictDebug?.delete(data.callId);
+        if (verdictDebug) {
+          verdictDebug
+            .get(data.callId)
+            ?.done(0, data.prepared ?? 0, data.elapsed);
+          verdictDebug.delete(data.callId);
+        }
         verdicts.get(data.callId)?.resolve(data.kind);
         verdicts.delete(data.callId);
         break;
       }
       case 'verdict-error': {
         const error = statementError(data);
-        verdictDebug?.get(data.callId)?.failed(error, data.elapsed);
-        verdictDebug?.delete(data.callId);
+        if (verdictDebug) {
+          verdictDebug.get(data.callId)?.failed(error, data.elapsed);
+          verdictDebug.delete(data.callId);
+        }
         verdicts.get(data.callId)?.reject(error);
         verdicts.delete(data.callId);
         break;
@@ -1070,7 +1074,7 @@ export const createPoolWorker = (deps: {
       const callId = ++lastCallId;
       const pending = Promise.withResolvers<Verdict>();
       verdicts.set(callId, pending);
-      const handle = debugWorker?.query(sql, undefined, true);
+      const handle = debugWorker?.verdict(sql);
       if (handle) verdictDebug?.set(callId, handle);
       worker.postMessage({ type: 'verdict', callId, sql });
       return pending.promise;

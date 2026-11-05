@@ -138,5 +138,5 @@ Found by the final review, decided with the user: the non-goal "no stage for the
 
 ### Tests
 
-- Unit (`tests/unit/lib/debug.test.ts`): a `'verdict'` request; a borrowed lease restores the slot's previous active request at release, and a query issued after it attaches to that request again.
+- Unit (`tests/unit/lib/debug.test.ts`): a `'verdict'` request; during a borrowed lease a `query()` attaches to the transaction's request and a `verdict()` to the lent one; after the lend the transaction's request is still active; with two overlapping lends each verdict query lands in the newest live one, and the transaction's later queries still land in its request.
 - Browser (`tests/browser/pairs/run-stages.test.ts`): a first `db.all(SQL)` on a debug client with `poolSize: 1` leaves a `kind: 'verdict'` request ending before the read request, whose one query has `sql === SQL`, `internal: true` and a `preparing` stage; the read request's query has no `preparing`. In a read-write transaction, a statement given its own `signal` leaves an `internal` query with its SQL and a `preparing` stage in the transaction's request, before the statement's own query.
