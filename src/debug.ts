@@ -310,7 +310,11 @@ export const createClientDebug = (
       released: () => {
         // A dead worker's lease can come back after its slot was re-lent.
         if (request.worker !== undefined && active[request.worker] === request)
-          active[request.worker] = interrupted?.previous;
+          // A request that ended during the borrow is not resurrected.
+          active[request.worker] =
+            interrupted?.previous?.endTime === undefined
+              ? interrupted?.previous
+              : undefined;
         end();
       },
     };

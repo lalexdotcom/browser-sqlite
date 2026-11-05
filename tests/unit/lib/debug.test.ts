@@ -200,6 +200,18 @@ describe('the pool-level request history', () => {
     expect(tx?.endTime).toBeUndefined();
   });
 
+  it('does not give the slot back to a request that ended during the borrow', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    const tx = debug.createRequestDebugState('write');
+    tx.acquired(0);
+    const verdict = debug.createRequestDebugState('verdict');
+    verdict.acquired(0, true);
+    tx.released();
+    verdict.released();
+    expect(w0.query('SELECT 1')).toBeUndefined();
+  });
+
   it('clears the slot at the release of an unborrowed lease, as before', () => {
     const debug = make();
     const w0 = debug.createWorkerDebugState(0, 'w0');
