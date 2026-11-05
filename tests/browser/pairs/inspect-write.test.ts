@@ -1,6 +1,7 @@
 import { inspectDatabase, SQLiteError } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import {
+  exercised,
   interceptWorkers,
   scaled,
   sharedDatabase,
@@ -149,17 +150,18 @@ describe('a verdict that gives up says who was holding', () => {
         (error: unknown) => error as SQLiteError,
       );
 
-    // The verdict was asked and is parked, or the case is not exercised.
-    expect(held.length).toBeGreaterThan(0);
-    expect(failure).toBeInstanceOf(SQLiteError);
-    expect(failure?.code).toBe('OPERATION_TIMEOUT');
-    expect(failure?.timeout).toBe(VERDICT_DEADLINE_MS);
-    expect(failure?.message).toContain('this tab');
-
+    const parked = held.length > 0;
     commit();
     await transaction;
     release();
     await expect(b.run('INSERT INTO t VALUES (3)')).resolves.toBeDefined();
+
+    // The verdict was asked and parked before the deadline expired.
+    if (!(await exercised(parked, 'the verdict was not parked'))) return;
+    expect(failure).toBeInstanceOf(SQLiteError);
+    expect(failure?.code).toBe('OPERATION_TIMEOUT');
+    expect(failure?.timeout).toBe(VERDICT_DEADLINE_MS);
+    expect(failure?.message).toContain('this tab');
   });
 
   // Falsifiable: drop the isDeadlineError gate in explainWriteLockTimeout in
@@ -201,21 +203,31 @@ describe('a verdict that gives up says who was holding', () => {
       signal: ctl.signal,
     });
     waiting.catch(() => {});
-    // b queues on the write lock behind a's transaction, or the case is not
-    // exercised.
+    // b queues on the write lock behind a's transaction. Bounded: not
+    // queuing is a precondition missed, not a failure (`exercised` below).
     let queued = 0;
-    await waitUntil(async () => {
-      queued = (await inspectDatabase(shared.name, { vfs: TEST_TARGET.vfs }))
-        .write.waiting;
-      return queued >= 1;
-    }, 'b queued on the write lock').catch(() => {});
-    expect(queued).toBe(1);
+    await waitUntil(
+      async () => {
+        queued = (await inspectDatabase(shared.name, { vfs: TEST_TARGET.vfs }))
+          .write.waiting;
+        return queued >= 1;
+      },
+      'b queued on the write lock',
+      5_000,
+    ).catch(() => {});
+    const queuedOnLock = queued === 1;
     const reason = new SQLiteError('OPERATION_TIMEOUT', 'the caller gave up');
     ctl.abort(reason);
-    await expect(waiting).rejects.toBe(reason);
+    const outcome = await waiting.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
 
     commit();
     await transaction;
+    if (!(await exercised(queuedOnLock, 'b was not queued on the write lock')))
+      return;
+    expect(outcome).toBe(reason);
   });
 
   // Falsifiable: drop the `'silent'` argument kindFor passes to

@@ -24,6 +24,8 @@ import type { TestTarget } from '../../harness/target';
 import { TERMINATE_RUNS_WASM, terminateRunsWasm } from '../../harness/webkit';
 import { AVAILABLE_FEATURES, removeOpfsPath } from './environment';
 
+export { exercised } from './exercised';
+
 let targetReads = 0;
 
 /**

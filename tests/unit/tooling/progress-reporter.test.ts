@@ -6,6 +6,7 @@ import type { TestCase, TestModule, TestSuite } from 'vitest/node';
 import { ROOT } from '../../../scripts/parallel.ts';
 import ProgressReporter, {
   failureEvent,
+  notExercisedEvent,
   retriedEvent,
 } from '../../../scripts/progress-reporter.ts';
 
@@ -73,6 +74,34 @@ describe('retriedEvent', () => {
     expect(
       retriedEvent(testCase('failed', [{ message: 'x' }], 's > t', 1)),
     ).toBeUndefined();
+  });
+});
+
+describe('notExercisedEvent', () => {
+  const annotated = (annotations: { type: string; message: string }[]) => ({
+    ...testCase('passed'),
+    annotations: () => annotations,
+  });
+
+  it('writes a test whose case was not reached as one line, with why', () => {
+    const line = notExercisedEvent(
+      annotated([
+        { type: 'not-exercised', message: 'the verdict was not parked' },
+      ]),
+    );
+    expect(JSON.parse(line as string)).toEqual({
+      file: 'tests/browser/x.test.ts',
+      test: 's > t',
+      message: 'not exercised: the verdict was not parked',
+      notExercised: true,
+    });
+  });
+
+  it('writes nothing for a test with no such annotation', () => {
+    expect(
+      notExercisedEvent(annotated([{ type: 'notice', message: 'x' }])),
+    ).toBeUndefined();
+    expect(notExercisedEvent(testCase('passed'))).toBeUndefined();
   });
 });
 

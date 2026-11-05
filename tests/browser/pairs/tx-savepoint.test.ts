@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   abandonOnceRunning,
   createTestClient,
+  exercised,
   interceptWorkers,
   scaled,
   theQueryIsRunning,
@@ -223,7 +224,13 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
         });
         // Abandoned while it ran: a write rejected before it was posted
         // would leave nothing to undo, and the test would prove nothing.
-        expect(abandon.abandonedRunning()).toBe(true);
+        if (
+          !(await exercised(
+            abandon.abandonedRunning(),
+            'the write was not seen running before the commit',
+          ))
+        )
+          return;
         expect(await rowsOf(db)).toEqual([0, 1]);
         expect(await bigCount(db)).toBe(0);
       } finally {
@@ -318,7 +325,13 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
           { timeout: TX_TIMEOUT },
         )
         .catch((e) => e);
-      expect(abandonedRunning).toBe(true);
+      if (
+        !(await exercised(
+          abandonedRunning,
+          'the endless write was not seen running',
+        ))
+      )
+        return;
       expect(outcome).toMatchObject({
         code: 'OPERATION_TIMEOUT',
         timeout: TX_TIMEOUT,

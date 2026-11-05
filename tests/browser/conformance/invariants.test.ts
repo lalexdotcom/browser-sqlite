@@ -2,6 +2,7 @@ import { deleteDatabase } from 'browser-sqlite';
 import { afterEach, describe, expect, it } from 'vitest';
 import { VFS_CAPABILITIES } from '../../../src/const/vfs';
 import { ALL_VFS, missingHere, oneWorkerHere } from '../helpers/environment';
+import { exercised } from '../helpers/exercised';
 import {
   conformanceClient,
   createReopened,
@@ -208,11 +209,11 @@ describe('invariant 6 — no read runs inside an open transaction', () => {
 
       if (winner === null) {
         // HANDLE-1: abort fired before the read could be served. B1 isolation
-        // was not exercised for this VFS on this browser.
-        console.warn(
-          `[invariant 6] ${vfs}: read aborted after 2 s ` +
-            `(HANDLE-1 — pool blocked by open transaction; ` +
-            `B1 isolation not exercised on this browser)`,
+        // was not exercised for this VFS on this browser: said in the report,
+        // not only in the console.
+        await exercised(
+          false,
+          `${vfs}: the read was not served before the 2 s abort (HANDLE-1, B1 isolation)`,
         );
       } else if (!winner.ok) {
         throw winner.err;

@@ -141,6 +141,26 @@ describe('renderSummary, tests passed on a retry', () => {
   });
 });
 
+describe('renderSummary, tests whose case was not reached', () => {
+  it('lists them apart and counts them in the title', () => {
+    const missed: Failure = {
+      ...failure(3, 'not exercised: the verdict was not parked'),
+      notExercised: true,
+    };
+    const { title, summary } = renderSummary(
+      state({ failures: [failure(1), missed] }),
+    );
+    // Falsifiable: render it with the failures and the run reads 2 failed.
+    expect(title).toBe('3/27 · 1 failed · 1 not exercised');
+    const at = summary.indexOf('### Not exercised (1)');
+    expect(at).toBeGreaterThan(summary.indexOf('### Failed tests (1)'));
+    expect(at).toBeLessThan(summary.indexOf('### Jobs'));
+    expect(summary.slice(at)).toContain(
+      '› suite > test 3 — not exercised: the verdict was not parked',
+    );
+  });
+});
+
 describe('progressConfig', () => {
   const CI_ENV = {
     CI: 'true',

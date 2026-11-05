@@ -21,6 +21,7 @@ type Reported = {
     errors?: readonly { message?: string | undefined }[] | undefined;
   };
   diagnostic?(): { retryCount: number; flaky: boolean } | undefined;
+  annotations?(): readonly { type: string; message: string }[];
 };
 
 /** The events line of a failed test; undefined for any other result. */
@@ -38,7 +39,24 @@ export function retriedEvent(testCase: Reported): string | undefined {
     testCase.module.moduleId,
     testCase.fullName,
     `passed on retry ${diagnostic.retryCount}`,
-    true,
+    'retried',
+  );
+}
+
+/**
+ * The events line of a test whose case was not reached (`exercised`,
+ * tests/browser/helpers/exercised.ts); undefined otherwise.
+ */
+export function notExercisedEvent(testCase: Reported): string | undefined {
+  const missed = testCase
+    .annotations?.()
+    .find((annotation) => annotation.type === 'not-exercised');
+  if (missed === undefined) return undefined;
+  return eventLine(
+    testCase.module.moduleId,
+    testCase.fullName,
+    `not exercised: ${missed.message}`,
+    'notExercised',
   );
 }
 
@@ -53,19 +71,19 @@ function errorEvent(
   const first = (errors?.[0]?.message ?? '').split('\n')[0] as string;
   const message =
     first.length > MESSAGE_MAX ? `${first.slice(0, MESSAGE_MAX - 1)}…` : first;
-  return eventLine(moduleId, test, message, false);
+  return eventLine(moduleId, test, message);
 }
 
 function eventLine(
   moduleId: string,
   test: string,
   message: string,
-  retried: boolean,
+  mark?: 'retried' | 'notExercised',
 ): string {
   // Forward slashes on every platform: path.relative writes `\` on Windows.
   const file = relative(ROOT, moduleId).replace(/\\/g, '/');
-  const event = retried
-    ? { file, test, message, retried }
+  const event = mark
+    ? { file, test, message, [mark]: true }
     : { file, test, message };
   return `${JSON.stringify(event)}\n`;
 }
@@ -74,6 +92,8 @@ export default class ProgressReporter implements Reporter {
   onTestCaseResult(testCase: TestCase) {
     const line = failureEvent(testCase) ?? retriedEvent(testCase);
     if (line) append(line);
+    const missed = notExercisedEvent(testCase);
+    if (missed) append(missed);
   }
 
   // A file that fails to load, or in a hook, marks its tests skipped, not

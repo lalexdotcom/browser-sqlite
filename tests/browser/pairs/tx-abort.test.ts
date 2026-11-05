@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   abandonOnceRunning,
   createTestClient,
+  exercised,
   longQuery,
   scaled,
+  theQueryIsRunning,
 } from '../helpers';
 
 /**
@@ -165,11 +167,16 @@ describe('a write abandoned inside a transaction', () => {
       try {
         const before = workerIdentity(db);
         let caught: unknown;
+        let runningAtDeadline = false;
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
           caught = await tx
             .run(BIG_INSERT, [], { timeout: 30 })
             .catch((e) => e);
+          // The deadline is the subject, so no signal stands in for it; on a
+          // slow runner it can expire while the client still asks the worker
+          // whether this writes, before anything runs.
+          runningAtDeadline = theQueryIsRunning(db, BIG_INSERT)();
           await tx.run('INSERT INTO t VALUES (2)');
         });
 
@@ -186,6 +193,10 @@ describe('a write abandoned inside a transaction', () => {
           { n: 0 },
         ]);
         expect(workerIdentity(db)).toBe(before);
+        await exercised(
+          runningAtDeadline,
+          'the write was not running when its 30 ms deadline expired',
+        );
       } finally {
         await db.close();
       }

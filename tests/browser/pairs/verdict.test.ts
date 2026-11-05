@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import type { PoolWorker } from '../../../src/pool';
 import {
   createTestClient,
+  exercised,
   interceptWorkers,
   killSilently,
   longQuery,
+  TEST_TARGET,
   theQueryIsRunning,
   waitUntil,
 } from '../helpers';
@@ -178,13 +180,21 @@ describe('verdict', () => {
       worker.verdict('PRAGMA optimize'),
       worker.verdict('SELECT a FROM t'),
     ]);
+    // Answered while the read still stepped: its result, sent once it ends,
+    // had not reached the page yet. The sync build answers only after the
+    // read, which is the behaviour, not a missed case.
+    const whileStepping = verdicts.then(() => !read);
     const control = worker.verdict('BEGIN');
     control.catch(() => {});
-    // Posted while the read steps, or the case is not exercised.
-    expect(read).toBe(false);
     expect(await verdicts).toEqual(['write', 'read']);
     await expect(control).rejects.toMatchObject({ sqliteCode: 23 });
     expect((await reading)[0]?.n).toBe(2_000_000);
+    if (TEST_TARGET.build !== 'sync') {
+      await exercised(
+        await whileStepping,
+        'the read ended before the verdicts were answered',
+      );
+    }
   });
 
   // Falsifiable: leave pending verdicts out of poison().

@@ -1,7 +1,9 @@
 /**
  * A Vitest reporter that prints every test skipped with a reason
  * (`ctx.skip(note)`), grouped by reason, after a merged report — then every
- * test that passed only on its retry (`timeoutRetry`, scripts/processes.ts).
+ * test that passed only on its retry (`timeoutRetry`, scripts/processes.ts),
+ * then every test whose case was not reached (`exercised`,
+ * tests/browser/helpers/exercised.ts).
  *
  * A browser-defect skip shows its reason in every run's output
  * (`mem:conventions`), and the default reporter prints a test line, hence its
@@ -21,6 +23,8 @@ export type TestOutcome = {
   cell: string;
   note?: string | undefined;
   retried?: number | undefined;
+  /** Why its case was not reached, when it was not. */
+  notExercised?: string | undefined;
 };
 
 export function formatSkipNotes(outcomes: readonly TestOutcome[]): string {
@@ -86,6 +90,39 @@ export function formatRetried(outcomes: readonly TestOutcome[]): string {
   return `${lines.join('\n')}\n`;
 }
 
+/**
+ * The tests whose case was not reached, by reason, each with its cells: a pass
+ * that proved nothing, which the report says rather than counting it green.
+ */
+export function formatNotExercised(outcomes: readonly TestOutcome[]): string {
+  // reason → test → cells
+  const byReason = new Map<string, Map<string, string[]>>();
+  for (const { file, test, cell, notExercised } of outcomes) {
+    if (notExercised === undefined) continue;
+    const tests = byReason.get(notExercised) ?? new Map<string, string[]>();
+    byReason.set(notExercised, tests);
+    const key = `${file} › ${test}`;
+    tests.set(key, [...(tests.get(key) ?? []), cell]);
+  }
+  if (byReason.size === 0) return '';
+  const count = [...byReason.values()].reduce((n, t) => n + t.size, 0);
+  const lines = [
+    '',
+    `Not exercised (${count} test${count > 1 ? 's' : ''}) — a precondition was not reached, nothing was proven: look at it`,
+  ];
+  for (const reason of [...byReason.keys()].sort()) {
+    lines.push(`  ${reason}`);
+    const tests = byReason.get(reason) as Map<string, string[]>;
+    for (const key of [...tests.keys()].sort()) {
+      lines.push(
+        `    ${key}`,
+        `      on ${(tests.get(key) as string[]).sort().join(', ')}`,
+      );
+    }
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 export default class SkipNotesReporter implements Reporter {
   private vitest: Vitest | undefined;
 
@@ -107,10 +144,16 @@ export default class SkipNotesReporter implements Reporter {
           cell: test.project.name,
           note: result.state === 'skipped' ? result.note : undefined,
           retried: diagnostic?.flaky ? diagnostic.retryCount : undefined,
+          notExercised: test
+            .annotations()
+            .find((annotation) => annotation.type === 'not-exercised')?.message,
         });
       }
     }
-    const text = formatSkipNotes(outcomes) + formatRetried(outcomes);
+    const text =
+      formatSkipNotes(outcomes) +
+      formatRetried(outcomes) +
+      formatNotExercised(outcomes);
     if (text !== '') this.vitest.logger.log(text);
   }
 }
