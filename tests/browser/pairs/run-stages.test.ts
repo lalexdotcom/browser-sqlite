@@ -1,0 +1,118 @@
+import { describe, expect, it } from 'vitest';
+import {
+  createTestClient,
+  interceptWorkers,
+  longQuery,
+  theQueryHasEnded,
+  theQueryIsComputing,
+  waitUntil,
+} from '../helpers';
+
+/** Where a running query is (`workers[i].run`) and where its time went (`stages`). */
+
+type TestClient = Awaited<ReturnType<typeof createTestClient>>;
+
+const queriesOf = (db: TestClient, sql: string) =>
+  (db.debug?.requests ?? []).flatMap((request) =>
+    request.queries.filter((query) => query.sql === sql),
+  );
+
+// A thousand rows, one per chunk with `chunkSize: 1`: the credit window runs out.
+const STREAM =
+  'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1000) SELECT x FROM c';
+
+describe('the run stages of a debug client', () => {
+  it('a first statement is prepared then stepped; the same one again is only stepped', async () => {
+    // first(): all() and run() prepare the statement for their verdict, so the
+    // query that follows would find it cached. WHERE 0: no row, so the reply
+    // that counts is the last.
+    const SQL = 'SELECT 1 AS a WHERE 0';
+    const db = await createTestClient({ debug: true, poolSize: 1 });
+    try {
+      await db.first(SQL);
+      await db.first(SQL);
+      const [first, second] = queriesOf(db, SQL);
+      expect(Object.keys(first?.stages ?? {})).toEqual(
+        expect.arrayContaining(['preparing', 'stepping']),
+      );
+      expect(Object.keys(second?.stages ?? {})).toContain('stepping');
+      expect(Object.keys(second?.stages ?? {})).not.toContain('preparing');
+      for (const query of [first, second]) {
+        for (const value of Object.values(query?.stages ?? {})) {
+          expect(typeof value).toBe('number');
+          expect(value).toBeGreaterThanOrEqual(0);
+        }
+      }
+      expect(db.debug?.workers[0]?.run).toBeUndefined();
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('a long step is computing, live and in its record', {
+    tags: ['requires:interruptible'],
+  }, async () => {
+    const sql = longQuery(20_000_000);
+    const db = await createTestClient({ debug: true, poolSize: 1 });
+    try {
+      const abort = new AbortController();
+      const pending = db.all(sql, [], { signal: abort.signal });
+      pending.catch(() => {});
+      await waitUntil(
+        theQueryIsComputing(db, sql),
+        'the query to be computing',
+      );
+      abort.abort();
+      await expect(pending).rejects.toBeDefined();
+      // A stage is recorded when it closes, with the worker's reply.
+      await waitUntil(
+        theQueryHasEnded(db, sql),
+        'the query to be reported ended',
+      );
+      expect(queriesOf(db, sql).at(-1)?.stages?.computing).toBeDefined();
+      await waitUntil(
+        () => db.debug?.workers[0]?.run === undefined,
+        'the worker to leave its run stage',
+      );
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('a stream with no credit left is awaiting credit', async () => {
+    const db = await createTestClient({ debug: true, poolSize: 1 });
+    try {
+      for await (const _ of db.chunk(STREAM, [], { chunkSize: 1 })) {
+        await waitUntil(
+          () => db.debug?.workers[0]?.run === 'awaiting-credit',
+          'the worker to wait for credit',
+        );
+        break;
+      }
+      // The stage the stop cut is recorded with the worker's reply.
+      await waitUntil(
+        theQueryHasEnded(db, STREAM),
+        'the query to be reported ended',
+      );
+      expect(Object.keys(queriesOf(db, STREAM).at(-1)?.stages ?? {})).toContain(
+        'awaiting-credit',
+      );
+    } finally {
+      await db.close();
+    }
+  });
+
+  it('a client without debug receives no run stage', async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({ poolSize: 1 });
+    try {
+      await db.all('SELECT 1');
+      for await (const _ of db.chunk(STREAM, [], { chunkSize: 1 })) {
+        // Read to the end.
+      }
+      expect(records[0]?.received).not.toContain('run');
+    } finally {
+      await db.close();
+    }
+  });
+});

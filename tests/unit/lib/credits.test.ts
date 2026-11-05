@@ -91,6 +91,19 @@ describe('createCreditGate', () => {
     expect(await gate.take(1)).toBe('stopped');
   });
 
+  it('wouldWait is true only with no credit left and no stop', async () => {
+    const gate = createCreditGate(countingTick().tick);
+    gate.reset(1, 1);
+    expect(gate.wouldWait()).toBe(false);
+    await gate.take(1);
+    expect(gate.wouldWait()).toBe(true);
+    gate.grant(1, 1);
+    expect(gate.wouldWait()).toBe(false);
+    await gate.take(1);
+    gate.stop();
+    expect(gate.wouldWait()).toBe(false);
+  });
+
   // THE load-bearing test. Falsifiable: skip the tick when credits are
   // available — the obvious "optimisation" — and the count drops below the
   // number of takes. The measurement in spec §2.2 showed that without a task

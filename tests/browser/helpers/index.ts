@@ -482,6 +482,21 @@ export const theQueryIsRunning =
       );
     });
 
+/** Whether the worker is inside a step of `sql` long enough to be computing: needs a `debug` client. */
+export const theQueryIsComputing =
+  (db: Awaited<ReturnType<typeof createTestClient>>, sql: string) =>
+  (): boolean =>
+    (db.debug?.requests ?? []).some((request) => {
+      const query = request.queries.at(-1);
+      return (
+        request.worker !== undefined &&
+        request.endTime === undefined &&
+        db.debug?.workers[request.worker]?.run === 'computing' &&
+        query?.sql === sql &&
+        query.endTime === undefined
+      );
+    });
+
 /** Whether the worker has reported the end of `sql`: needs a `debug` client. */
 export const theQueryHasEnded =
   (db: Awaited<ReturnType<typeof createTestClient>>, sql: string) =>

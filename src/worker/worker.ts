@@ -66,6 +66,7 @@ import { bindBlock, RowWriter } from './binary';
 import { cloneable } from './cloneable';
 import { isHeldElsewhere } from './held';
 import { firstMissing } from './probes';
+import { createRunStageTracker } from './run-stages';
 import { sqliteCodeOf } from './sqlite-code';
 import { createStatementCache } from './statement-cache';
 
@@ -595,6 +596,10 @@ const open = (file: string, options: OpenOptions) => {
       } satisfies WorkerMessageData);
   };
   if (proceedGate) boot('awaiting-client');
+  // Where the query in flight is, announced only to a debug client.
+  const stages = debug
+    ? createRunStageTracker((m) => self.postMessage(m))
+    : undefined;
 
   // Spec 2026-10-04, § 4: SQLite's authorizer refuses transaction control
   // unless the message carries the library's `control` flag. One query runs
@@ -1061,6 +1066,7 @@ const open = (file: string, options: OpenOptions) => {
       let cols: string[] | undefined;
       let writer: RowWriter | undefined;
 
+      stages?.enter('stepping');
       while (true) {
         if (gate.isStopped()) break;
 
@@ -1095,6 +1101,7 @@ const open = (file: string, options: OpenOptions) => {
             chunkBytes = block.used;
             writer = undefined;
             yield block;
+            stages?.enter('stepping');
           }
         } else {
           if (writer && cols) yield writer.finish(cols);
@@ -1197,12 +1204,16 @@ const open = (file: string, options: OpenOptions) => {
         PROGRESS_OPS,
         yields
           ? async () => {
+              if (stepping) stages?.enter('computing');
               // The task turn is what lets a queued `stop` be delivered, and
               // what lets IDBBatchAtomicVFS's IndexedDB transaction commit.
               await gate.tick();
               return gate.isStopped() ? 1 : 0;
             }
-          : () => (abortedHere() ? 1 : 0),
+          : () => {
+              if (stepping) stages?.enter('computing');
+              return abortedHere() ? 1 : 0;
+            },
         null,
       );
     }
@@ -1227,6 +1238,7 @@ const open = (file: string, options: OpenOptions) => {
       } else if (multi) {
         // The barrier's own string: every statement runs in order, none is
         // kept. The generator finalises what it yields.
+        stages?.enter('preparing');
         for await (const stmt of sqlite.statements(
           db,
           textOf ? textOf() : sql,
@@ -1238,6 +1250,8 @@ const open = (file: string, options: OpenOptions) => {
           } finally {
             factsOf.delete(stmt);
           }
+          // wa-sqlite compiles the next statement as the loop turns.
+          stages?.enter('preparing');
         }
       } else {
         // One statement, kept in the cache; or finalised after it when the
@@ -1256,6 +1270,7 @@ const open = (file: string, options: OpenOptions) => {
             text: textOf ? textOf() : sql,
             guarded: refuseWrite !== undefined,
           };
+          stages?.enter('preparing');
           const first = await statements.next();
           if (!first.done) {
             // Assigned BEFORE the rows are streamed: first() leaves the
@@ -1316,8 +1331,12 @@ const open = (file: string, options: OpenOptions) => {
         // worker's status to RUNNING after posting the query.
         gate.reset(callId, options?.credits ?? DEFAULT_CREDIT_WINDOW);
         queryRunning = Promise.withResolvers<void>();
+        stages?.start(callId);
         const held = holdSqlite();
-        if (held) await held;
+        if (held) {
+          stages?.enter('awaiting-turn');
+          await held;
+        }
         denied = undefined;
         allowControl = options?.control === true;
         try {
@@ -1408,19 +1427,25 @@ const open = (file: string, options: OpenOptions) => {
             // SQLite call is in flight, and the consumer's next pull, which
             // sends the credit, may itself be waiting on a verdict.
             releaseSqlite();
+            if (gate.wouldWait()) stages?.enter('awaiting-credit');
             const taken = await gate.take(callId);
             const back = holdSqlite();
-            if (back) await back;
+            if (back) {
+              stages?.enter('awaiting-turn');
+              await back;
+            }
             if (taken === 'stopped') break;
             reply({ type: 'chunk', callId, data: chunk }, [chunk.buffer]);
           }
 
+          const elapsed = stages?.end();
           if (closing) {
             reply({
               type: 'error',
               callId,
               message: 'The SQLite client has been closed.',
               inTransaction: await connectionInTransaction(),
+              ...(elapsed !== undefined ? { elapsed } : {}),
             });
           } else {
             reply({
@@ -1429,6 +1454,7 @@ const open = (file: string, options: OpenOptions) => {
               affected,
               prepared,
               inTransaction: await connectionInTransaction(),
+              ...(elapsed !== undefined ? { elapsed } : {}),
             });
           }
         } catch (e) {
@@ -1442,9 +1468,11 @@ const open = (file: string, options: OpenOptions) => {
           // numeric `code`. Without this the code dies at the postMessage
           // boundary and the client can only string-match the message.
           const sqliteCode = sqliteCodeOf(e);
+          const elapsed = stages?.end();
           reply({
             type: 'error',
             callId,
+            ...(elapsed !== undefined ? { elapsed } : {}),
             ...(typeof e === 'object'
               ? e instanceof Error
                 ? { message: e.message, cause: cloneable(e.cause) }

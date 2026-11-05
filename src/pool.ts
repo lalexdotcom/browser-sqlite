@@ -491,6 +491,7 @@ export const createPoolWorker = (deps: {
     // Ends the query in flight: a worker death sends neither `done` nor
     // `error`, and without this its request would read as still running.
     debugQuery?.failed(error);
+    debugWorker?.run(undefined);
     worker.status = 'DEAD';
     deathDeferred.reject(error);
     // The delivery loop's wait: it races `lost`, never `deathDeferred`.
@@ -655,7 +656,8 @@ export const createPoolWorker = (deps: {
         if (deferredChunk && callId === currentCallId) {
           worker.inTransaction = data.inTransaction;
           const affected = data.affected;
-          debugQuery?.done(affected, data.prepared);
+          debugWorker?.run(undefined);
+          debugQuery?.done(affected, data.prepared, data.elapsed);
           // The affected count is the last thing the generator yields, so it
           // queues behind whatever chunks are still waiting — a `done` that
           // jumped the queue would truncate them.
@@ -675,7 +677,8 @@ export const createPoolWorker = (deps: {
         if (deferredChunk && callId === currentCallId) {
           worker.inTransaction = data.inTransaction;
           const error = statementError(data);
-          debugQuery?.failed(error);
+          debugWorker?.run(undefined);
+          debugQuery?.failed(error, data.elapsed);
           deferredChunk.reject(error);
           // Deliberately NOT `failure = error`, which is what a `messageerror`
           // and a death do. Those two mean the transport is broken, so nothing
@@ -724,7 +727,11 @@ export const createPoolWorker = (deps: {
         break;
       }
       case 'run': {
-        // Posted by a debug worker only; the pool does not track run stages yet.
+        // Posted by a debug worker only; a late one is ignored, as a chunk is.
+        if (data.callId === currentCallId) {
+          debugWorker?.run(data.stage);
+          debugQuery?.stage(data.stage, data.elapsed);
+        }
         break;
       }
       default: {
