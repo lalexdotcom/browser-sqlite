@@ -136,6 +136,8 @@ export type ClientMessageData =
       /** Bytes retained per worker; see `src/client.ts`. Internal. */
       statementCacheBytes?: number;
       wasm?: WasmLocation;
+      /** Sent for a client created with `debug`; the worker then posts its boot stages. */
+      debug?: true;
       /** Shared abort slots, one Int32 per worker. Isolated contexts only. */
       abortSlots?: SharedArrayBuffer;
       /** This worker's index into `abortSlots`. */
@@ -206,15 +208,15 @@ export type ClientMessageData =
  * finishes stopped.
  */
 export type BootStage =
-  | 'waiting for the client'
-  | 'loading the build'
-  | 'instantiating wasm'
-  | 'loading the VFS module'
-  | 'creating the VFS'
-  | 'waiting for the open lock'
-  | 'opening the database'
-  | 'waiting for a held file'
-  | 'applying pragmas';
+  | 'awaiting-client'
+  | 'loading-build'
+  | 'instantiating-wasm'
+  | 'loading-vfs-module'
+  | 'creating-vfs'
+  | 'awaiting-open-lock'
+  | 'opening-database'
+  | 'awaiting-held-file'
+  | 'applying-pragmas';
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }

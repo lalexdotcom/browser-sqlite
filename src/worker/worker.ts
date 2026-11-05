@@ -480,6 +480,7 @@ type OpenOptions = {
   vfs: SQLiteVFS;
   build: SQLiteBuild;
   wasm?: WasmLocation | undefined;
+  debug?: true | undefined;
   pragmas?: Record<string, string> | undefined;
   statementCacheSize?: number | undefined;
   statementCacheBytes?: number | undefined;
@@ -583,13 +584,17 @@ const open = (file: string, options: OpenOptions) => {
 
   // Each step announced as it begins, so an open that never finishes names
   // the step it stopped in (tests/browser/open-retry.test.ts).
-  const boot = (stage: BootStage) =>
-    self.postMessage({
-      type: 'boot',
-      callId: 0,
-      stage,
-    } satisfies WorkerMessageData);
-  if (proceedGate) boot('waiting for the client');
+  // Posted only for a client created with `debug`: nothing else reads them.
+  const debug = options.debug === true;
+  const boot = (stage: BootStage) => {
+    if (debug)
+      self.postMessage({
+        type: 'boot',
+        callId: 0,
+        stage,
+      } satisfies WorkerMessageData);
+  };
+  if (proceedGate) boot('awaiting-client');
 
   // Spec 2026-10-04, § 4: SQLite's authorizer refuses transaction control
   // unless the message carries the library's `control` flag. One query runs
@@ -707,15 +712,15 @@ const open = (file: string, options: OpenOptions) => {
 
   openedDB = (proceedGate?.promise ?? Promise.resolve())
     .then(() => {
-      boot('loading the build');
+      boot('loading-build');
       return WA_SQLITE_BUILDS[build]();
     })
     .then(({ default: factory }) => {
-      boot('instantiating wasm');
+      boot('instantiating-wasm');
       return factory(wasmModuleArg(wasm));
     })
     .then((module) => {
-      boot('loading the VFS module');
+      boot('loading-vfs-module');
       const sqlite = SQLite.Factory(module);
       return vfsConfig.fs().then((vfsModule) => ({
         sqlite,
@@ -724,15 +729,15 @@ const open = (file: string, options: OpenOptions) => {
       }));
     })
     .then(({ sqlite, module, vfsModule }) => {
-      boot('creating the VFS');
+      boot('creating-vfs');
       return (
         createVfsInstance(vfsModule, vfs, module, () =>
-          boot('waiting for a held file'),
+          boot('awaiting-held-file'),
         ) as Promise<any>
       ).then((vfsInstance: any) => {
         vfsInstanceSeen = vfsInstance;
         sqlite.vfs_register(vfsInstance, true);
-        boot('waiting for the open lock');
+        boot('awaiting-open-lock');
         // One lock for open + pragmas. withLock releases on throw too, which
         // is what the explicit unlock() in the old .catch existed to do.
         //
@@ -745,16 +750,16 @@ const open = (file: string, options: OpenOptions) => {
         // (measured: broke all 96 browser tests on 56-char names). The VFS
         // normalizes internally, so 'data' and '/data' open the same OPFS file.
         return locks.withLock(initLockName(vfs, file), async () => {
-          boot('opening the database');
+          boot('opening-database');
           const db = await openWithRetry(
             sqlite,
             file,
             () => vfsInstanceSeen?.lastError,
             options.afterDeath,
             options.openDeadline,
-            () => boot('waiting for a held file'),
+            () => boot('awaiting-held-file'),
           );
-          boot('applying pragmas');
+          boot('applying-pragmas');
           for (const statement of renderPragmas(pragmas)) {
             for await (const stmt of sqlite.statements(db, statement)) {
               while ((await sqlite.step_asap(stmt)) === SQLITE_ROW) {}
@@ -1823,6 +1828,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         vfs,
         build,
         wasm,
+        debug,
         pragmas,
         statementCacheSize,
         statementCacheBytes,
@@ -1837,6 +1843,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         vfs,
         build,
         wasm,
+        debug,
         pragmas,
         statementCacheSize,
         statementCacheBytes,

@@ -1119,6 +1119,7 @@ export const createPoolWorker = (deps: {
     vfs,
     build,
     wasm,
+    ...(createWorkerDebugState ? { debug: true as const } : {}),
     pragmas,
     statementCacheSize,
     statementCacheBytes,

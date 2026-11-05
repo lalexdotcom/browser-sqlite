@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** **The boot stages of `db.debug.workers[i].boot` are codes,** and a worker reports them only for a client created with `debug`. The `BootStage` type is now `'awaiting-client' | 'loading-build' | 'instantiating-wasm' | 'loading-vfs-module' | 'creating-vfs' | 'awaiting-open-lock' | 'opening-database' | 'awaiting-held-file' | 'applying-pragmas'`, where it held English phrases (`'waiting for the client'`, `'loading the build'`, …). Compare against the codes.
+
 ## [1.0.0-rc.11] - 2026-11-03
 
 ### Added

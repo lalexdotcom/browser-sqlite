@@ -183,8 +183,8 @@ describe('the sync build, isolated', {
     // The cause is asserted rather than a time, which a slow runner stretches.
     // Firefox frees the file of a terminated worker at once, slot or not, so
     // only Chromium and Safari can fail this (red on Chrome with the slot cut).
-    expect(records[1]?.stages).toContain('opening the database');
-    expect(records[1]?.stages).not.toContain('waiting for a held file');
+    expect(records[1]?.stages).toContain('opening-database');
+    expect(records[1]?.stages).not.toContain('awaiting-held-file');
     // The replacement does not inherit KILLED_SLOT: a statement past the
     // progress handler's 100 000-op threshold still completes, twice.
     for (let run = 0; run < 2; run++) {

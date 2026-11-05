@@ -705,7 +705,7 @@ It is one object, updated in place: keep the reference and read it as often as y
 |---|---|
 | `file`, `vfs`, `pragmas`, `name` | What the client opened, and the name its log lines carry. |
 | `queue` | Callers waiting for a worker (`read`, `write`), and for the pool to exist (`gated`). |
-| `workers` | One entry per slot: `index`, `generation` (0 for the slot's first worker, +1 per replacement), `name`, `creationTime`, `initializationTime`, `boot` (the step its open has reached — where an open never finishes, the step it stopped at), `status`. |
+| `workers` | One entry per slot: `index`, `generation` (0 for the slot's first worker, +1 per replacement), `name`, `creationTime`, `initializationTime`, `boot` (the step its open has reached — where an open never finishes, the step it stopped at: `awaiting-client`, `loading-build`, `instantiating-wasm`, `loading-vfs-module`, `creating-vfs`, `awaiting-open-lock`, `opening-database`, `awaiting-held-file` or `applying-pragmas`), `status`. |
 | `requests` | The client's recent requests, oldest first. |
 
 **A request is one lease of a worker.**<br>An `all()` is one, and so is a whole transaction. It carries `kind` (`'read'` or `'write'`), `startTime` (the call), `lockTime` (the cross-tab write lock was granted — a write on a VFS whose storage other tabs share), `acquireTime` (a worker was lent), `endTime` (the worker went back, or the request failed before getting one), `worker` and `generation` (who served it), `error` (why it ended before running), `affected`, `rows` and `queries`. Its state is in its timestamps:

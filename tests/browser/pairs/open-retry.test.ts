@@ -339,7 +339,7 @@ describe('opening a database whose file is momentarily held', () => {
 describe('opening a database whose file is refused for another reason', () => {
   // Falsifiable: make a first open retry whatever the refusal — it then waits
   // out OPEN_RETRY_BUDGET_MS (2.5 s) before reporting what was never transient,
-  // and announces that wait with the boot stage `waiting for a held file`,
+  // and announces that wait with the boot stage `awaiting-held-file`,
   // which is what this asserts absent. A failure prints the boot timeline.
   it('fails without waiting out the retry budget', {
     tags: ['requires:opfs-file', 'requires:exclusive-file-handle'],
@@ -380,7 +380,7 @@ describe('opening a database whose file is refused for another reason', () => {
     });
 
     const started = performance.now();
-    const db = createSQLiteClient(dbName, TEST_PAIR());
+    const db = createSQLiteClient(dbName, { ...TEST_PAIR(), debug: true });
     onTestFinished(() => db.close().catch(() => {}));
     const error = await db.all('SELECT 1').then(
       () => undefined,
@@ -388,14 +388,14 @@ describe('opening a database whose file is refused for another reason', () => {
     );
 
     expect(error).toMatchObject({ code: 'WORKER_CRASHED' });
-    const opening = boot.find((b) => b.stage === 'opening the database');
+    const opening = boot.find((b) => b.stage === 'opening-database');
     const timeline = boot
       .map((b) => `w${b.worker} ${b.stage} @${Math.round(b.t - started)}`)
       .join(', ');
     expect(opening, `no open began: ${timeline}`).toBeDefined();
     // A retry announces itself before its first wait: no wait was begun.
     expect(
-      boot.some((b) => b.stage === 'waiting for a held file'),
+      boot.some((b) => b.stage === 'awaiting-held-file'),
       `a retry began (boot: ${timeline})`,
     ).toBe(false);
   });
