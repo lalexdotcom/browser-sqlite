@@ -21,14 +21,15 @@ been work on nothing.
 |---|---|---|
 | `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21), WriteAhead on Firefox tested (2026-11-02); Safari open. **Bug-gated: WebKit 328618**, last seen 2026-11-02: NEW, unassigned, InRadar since 2026-10-30, no comment |
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
-| `debug-run-stage` | A `run` sub-status of a busy worker (debug-only, on the model of `boot`); `BootStage` as codes, not text | OPEN — designed 2026-11-05, its own branch and session (user); public `debug` change, breaking for `BootStage`, while the release is bugfix only |
+| `debug-run-stage` | A `run` sub-status of a busy worker (debug-only, on the model of `boot`); `BootStage` as codes, not text | IMPLEMENTED 2026-11-05 on `feat/debug-run-stage`, awaiting the user's approval and merge |
+| `debug-verdict-visibility` | A first `all()`/`run()`/`chunk()`/`stream()` compiles in its verdict, outside any debug query: its wait and compile show in no stage | OPEN — 2026-11-05, a spec change, the user's call |
 | `delete-database-wait` | `deleteDatabase` waits for an open in progress instead of refusing with `BUSY` (an option, default unchanged) | OPEN — the user's idea (2026-11-03), not designed; lean: wait on the open lock's release, never holding one lock while blocking on the other |
 
 ## Open — tests and CI
 
 | Memory | Subject | Status |
 |---|---|---|
-| `false-greens-remaining` | Tests that can still pass without exercising their case (`abort-slot`, `early-exit`), and what the starved-runner work left open (`tx-timeout` on Windows, a file lost when a worker never starts, the library's unscaled budgets, the matrices not re-run) | OPEN — 2026-11-05; the four tests wait on `debug-run-stage` |
+| `false-greens-remaining` | Tests that can still pass without exercising their case (`abort-slot`, `early-exit`), and what the starved-runner work left open (`tx-timeout` on Windows, a file lost when a worker never starts, the library's unscaled budgets, the matrices not re-run) | OPEN — 2026-11-05; the four tests fixed on `feat/debug-run-stage` (awaiting merge), the rest open |
 | `library-stock-browsers` | What stays open after the Vitest + WebdriverIO migration | OPEN — the iOS simulator, the WASM built once |
 | `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10). **Bug-gated: WebKit 328618**, last seen 2026-11-02: NEW, unassigned, InRadar since 2026-10-30, no comment |
 | `macos-worker-startup` | Worker startups of 10-15 s on the macOS 26 runner: the runner's, or the users'? | OPEN — backlog (user, 2026-11-03); the user's Mac fast on Safari 27.2 (STARTUP-PROBE-MAC); the Safari case fits SAFARI-WASM-INSTANTIATE; Chrome stalls a plain worker over 10 s there (rerun 41714043416, 20/22) |

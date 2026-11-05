@@ -174,6 +174,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 
 - ROUTING-VS-MAIN — the verdict and the memo against `main`, stock Chrome 153 / Firefox 155: first call +0.05-0.19 ms per statement, steady state equal with the memo, +23-69 % without
 - ROUTING-DELTAS — its two deltas, 2026-10-28: Firefox `stream()` +6/+16 % is real, bisected to `7f67c01`'s worker (drain code in the row generator slows SpiderMonkey's per-row loop), fixed in `c6c0ce6` by splitting the generator; Adaptive repeated writes show no delta at n = 6
+- DEBUG-RUN-STAGE-AB — 2026-11-05: the debug run stages' calls in `rows()` cost a non-debug Firefox `stream()` nothing (Memory `async` +1.2 %, WriteAhead `sync` 0.0 %, n = 20, inside `main`'s quartiles)
 
 ## `mem:measurements/step` — the step loop
 
