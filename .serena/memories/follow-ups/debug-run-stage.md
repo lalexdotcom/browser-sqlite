@@ -11,7 +11,8 @@
 - **`workers[i].run`** is live, cleared at the terminal reply and in `poison`.
 - **The four false greens** (`abort-slot`, `early-exit`) wait for `computing` (`chunk()`) or read `stages.computing` after the next `SELECT 1` (`first()`), else `exercised`; falsified (progress handler forced to 0: red timeouts).
 - **Cost:** DEBUG-RUN-STAGE-AB (`mem:measurements/routing`): no stream regression on Firefox.
-- **Left open:** a first `all()`/`run()`/`chunk()`/`stream()` compiles in its verdict, outside any debug query (`API.md` says so) — `mem:follow-ups/debug-verdict-visibility`; no browser test that `run` clears on a worker's death, nor for `awaiting-turn`, multi-statement `preparing` or `drainWrites`' `stepping`.
+- **The verdict is visible since the same branch** (`mem:follow-ups/debug-verdict-visibility`, plan `docs/superpowers/plans/2026-11-05-debug-verdict-stage.md`): a verdict with its own lease is a request `kind: 'verdict'` with `internal` queries carrying stages; a transaction's own verdict is an `internal` query of its request; a lent worker (`offer()`) leaves the transaction's request active and files the verdict in a per-slot lending list — the transaction goes on posting statements during a lend, and lends again after each one (a first design that swapped the active request misfiled them; caught by the final review). Commit `ad1ce55b` is red on Firefox one-worker pairs (fixed by `02a8417c`, history kept).
+- **Left open:** a transaction's own verdict asked during a live lend is filed in the lend's request; no browser test that `run` clears on a worker's death, nor for `awaiting-turn`, multi-statement `preparing` or `drainWrites`' `stepping`.
 
 Part of `mem:follow-ups`, opened while closing `test/retry-timeouts-on-slow-runners` (`mem:follow-ups/false-greens-remaining`).
 

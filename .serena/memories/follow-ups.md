@@ -22,7 +22,7 @@ been work on nothing.
 | `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21), WriteAhead on Firefox tested (2026-11-02); Safari open. **Bug-gated: WebKit 328618**, last seen 2026-11-02: NEW, unassigned, InRadar since 2026-10-30, no comment |
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
 | `debug-run-stage` | A `run` sub-status of a busy worker (debug-only, on the model of `boot`); `BootStage` as codes, not text | IMPLEMENTED 2026-11-05 on `feat/debug-run-stage`, awaiting the user's approval and merge |
-| `debug-verdict-visibility` | A first `all()`/`run()`/`chunk()`/`stream()` compiles in its verdict, outside any debug query: its wait and compile show in no stage | OPEN — 2026-11-05, a spec change, the user's call |
+| `debug-verdict-visibility` | A first `all()`/`run()`/`chunk()`/`stream()` compiles in its verdict, outside any debug query: its wait and compile show in no stage | IMPLEMENTED 2026-11-05 on `feat/debug-run-stage` (a request `kind: 'verdict'`), awaiting merge |
 | `delete-database-wait` | `deleteDatabase` waits for an open in progress instead of refusing with `BUSY` (an option, default unchanged) | OPEN — the user's idea (2026-11-03), not designed; lean: wait on the open lock's release, never holding one lock while blocking on the other |
 
 ## Open — tests and CI
