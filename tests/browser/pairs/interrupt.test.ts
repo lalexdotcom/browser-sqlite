@@ -3,6 +3,7 @@ import {
   createTestClient,
   LONG_QUERY,
   longQuery,
+  scaled,
   sleep,
   theQueryIsRunning,
   waitUntil,
@@ -172,7 +173,7 @@ describe('aborting a running statement', () => {
     const db = await createTestClient({
       poolSize: 1,
       debug: true,
-      drainTimeout: 2_000,
+      drainTimeout: scaled(2_000),
     });
     try {
       const controller = new AbortController();

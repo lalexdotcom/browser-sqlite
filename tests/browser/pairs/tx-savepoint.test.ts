@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  abandonOnceRunning,
   createTestClient,
   interceptWorkers,
   scaled,
@@ -126,34 +127,6 @@ describe('an SQL error the callback catches (spec 2026-09-11 §1)', () => {
  */
 const ENDLESS_INSERT =
   'INSERT INTO big SELECT count(*) FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 2000000000) SELECT x FROM c)';
-
-/**
- * A signal that aborts once `sql` is seen running, and whether it did. Not a
- * short deadline: a statement with its own signal first asks the worker
- * whether it writes, and a deadline that expires during that question rejects
- * it before it is posted, so nothing is abandoned (T4, 2026-11-03; T5 on
- * GitHub's macOS 27 runner, 2026-11-04; red locally with the verdict delayed
- * 60 ms).
- */
-const abandonOnceRunning = (
-  db: Parameters<typeof theQueryIsRunning>[0],
-  sql: string,
-) => {
-  const abandon = new AbortController();
-  let running = false;
-  waitUntil(
-    theQueryIsRunning(db, sql),
-    'the abandoned write to run',
-    2000,
-  ).then(
-    () => {
-      running = true;
-      abandon.abort(new Error('abandon the running write'));
-    },
-    () => {},
-  );
-  return { signal: abandon.signal, abandonedRunning: () => running };
-};
 
 describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R3)', () => {
   // Falsifiable: in `settled`, `await worker.quiesce()` before rethrowing the
@@ -503,8 +476,10 @@ describe('a consumer savepoint and a RELEASE riding on a write (spec 2026-10-04)
         await db.transaction(async (tx) => {
           const sp = await tx.savepoint('u');
           await tx.run('INSERT INTO t VALUES (1)');
+          // Wide: the refusal comes after the worker answers whether this
+          // writes, and a 30 ms deadline could expire first (2026-11-04).
           first = await tx
-            .run(`${BIG_INSERT}; RELEASE u`, [], { timeout: 30 })
+            .run(`${BIG_INSERT}; RELEASE u`, [], { timeout: scaled(5_000) })
             .catch((e) => e);
           await tx.run('INSERT INTO t VALUES (2)');
           await sp.release();

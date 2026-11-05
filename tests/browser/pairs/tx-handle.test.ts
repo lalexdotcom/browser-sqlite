@@ -306,7 +306,7 @@ describe('tx.signal', () => {
               }),
             );
           },
-          { timeout: 1000 },
+          { timeout: scaled(1000) },
         ),
       ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
       // The precondition: the callback ran before the deadline. If this fails, the deadline expired during lease + BEGIN.

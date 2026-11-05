@@ -3,6 +3,7 @@ import {
   createTestClient,
   interceptWorkers,
   killSilently,
+  scaled,
   sleep,
   waitUntil,
 } from '../helpers';
@@ -51,7 +52,7 @@ describe('back-pressure', () => {
     const records = interceptWorkers();
     const db = await createTestClient({
       poolSize: 1,
-      drainTimeout: 1000,
+      drainTimeout: scaled(1000),
       debug: true,
     });
     await seed(db);
@@ -140,7 +141,7 @@ describe('first()', () => {
     const records = interceptWorkers();
     const db = await createTestClient({
       poolSize: 1,
-      drainTimeout: 1000,
+      drainTimeout: scaled(1000),
       debug: true,
     });
     await seed(db);

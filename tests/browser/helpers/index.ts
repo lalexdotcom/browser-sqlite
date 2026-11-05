@@ -1,5 +1,5 @@
 import { createSQLiteClient, deleteDatabase } from 'browser-sqlite';
-import { expect, inject, onTestFinished } from 'vitest';
+import { expect, inject, onTestFinished, TestRunner } from 'vitest';
 import type { SQLiteDB } from '../../../src/api';
 import type { SQLiteBuild } from '../../../src/const/builds';
 import {
@@ -406,27 +406,57 @@ export const nextTask = (() => {
     });
 })();
 
+/** Vitest's `hookTimeout` before `BSQ_TIME_SCALE` (tests/vitest.config.ts). */
+const HOOK_TIMEOUT_MS = 60_000;
+
 /**
  * Polls until the predicate is true, yielding to the macrotask queue between
  * checks. Used to observe scheduler state without a fixed-duration sleep.
  *
- * BOUNDED, and it must be: the states below are transient, so a predicate that
- * is never observed used to spin here until the test itself timed out at 30 s
- * with no indication of what had been waited for. Failing at 5 s with the
- * thing named is the difference between a diagnosis and a mystery.
+ * No bound of its own unless given one: the test's timeout is the bound, and
+ * the wait stops when the test ends (`ended`, the test's signal). Its old 5 s
+ * default failed tests on starved CI runners while the state was only late
+ * (GitHub's macOS 26 runner, `lifecycle`, 2026-11-04). The diagnosis it was
+ * there for stays: a test that times out while this waits names, in its
+ * console, what it waited for. A caller that wants a shorter wait, and does
+ * something with its failure, passes `timeoutMs` (scaled here).
  */
 export const waitUntil = async (
   predicate: () => boolean | Promise<boolean>,
   what: string,
-  timeoutMs = 5000,
+  timeoutMs?: number,
+  ended: AbortSignal | undefined = TestRunner.getCurrentTest()?.context.signal,
 ): Promise<void> => {
-  const bound = scaled(timeoutMs);
-  const deadline = Date.now() + bound;
-  while (!(await predicate())) {
-    if (Date.now() > deadline) {
-      throw new Error(`timed out after ${bound} ms waiting for ${what}`);
+  // Outside a test (a suite hook) there is no test to end the wait: the hook's
+  // own bound stands in.
+  const bound =
+    timeoutMs !== undefined
+      ? scaled(timeoutMs)
+      : ended === undefined
+        ? scaled(HOOK_TIMEOUT_MS)
+        : undefined;
+  const deadline = bound === undefined ? Infinity : Date.now() + bound;
+  let waiting = true;
+  // A test that runs out of time while this still waits says what it waited
+  // for: its own failure is only "Test timed out".
+  TestRunner.getCurrentTest()?.context.onTestFailed(() => {
+    if (waiting)
+      console.error(`[waitUntil] the test ended while waiting for ${what}`);
+  });
+  try {
+    for (;;) {
+      // The test's end first: a predicate is not asked again once it ended.
+      if (ended?.aborted) {
+        throw new Error(`the test ended while waiting for ${what}`);
+      }
+      if (await predicate()) return;
+      if (Date.now() > deadline) {
+        throw new Error(`timed out after ${bound} ms waiting for ${what}`);
+      }
+      await nextTask();
     }
-    await nextTask();
+  } finally {
+    waiting = false;
   }
 };
 
@@ -449,6 +479,40 @@ export const theQueryIsRunning =
         query.endTime === undefined
       );
     });
+
+/** Whether the worker has reported the end of `sql`: needs a `debug` client. */
+export const theQueryHasEnded =
+  (db: Awaited<ReturnType<typeof createTestClient>>, sql: string) =>
+  (): boolean =>
+    (db.debug?.requests ?? []).some((request) => {
+      const query = request.queries.at(-1);
+      return query?.sql === sql && query.endTime !== undefined;
+    });
+
+/**
+ * A signal that aborts once `sql` is seen running, and whether it did. Not a
+ * short deadline: a statement with its own signal may first ask the worker
+ * whether it writes, and a deadline that expires during that question rejects
+ * it before it is posted — nothing runs, nothing is abandoned (`tx-savepoint`
+ * T4, 2026-11-03; T5 on GitHub's macOS 27 runner, 2026-11-04; red locally with
+ * the verdict delayed 60 ms). Needs a `debug` client, as `theQueryIsRunning`.
+ */
+export const abandonOnceRunning = (
+  db: Parameters<typeof theQueryIsRunning>[0],
+  sql: string,
+  reason: unknown = new Error('abandon the running statement'),
+) => {
+  const abandon = new AbortController();
+  let running = false;
+  waitUntil(theQueryIsRunning(db, sql), 'the abandoned statement to run').then(
+    () => {
+      running = true;
+      abandon.abort(reason);
+    },
+    () => {},
+  );
+  return { signal: abandon.signal, abandonedRunning: () => running };
+};
 
 /**
  * A single very long `sqlite.step()` with no table to populate: SQLite must run

@@ -6,7 +6,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { PoolWorker } from '../../../src/pool';
 import { databasePath } from '../../../src/utils';
-import { removeDatabaseFiles, sleep, TEST_TARGET } from '../helpers';
+import { removeDatabaseFiles, scaled, sleep, TEST_TARGET } from '../helpers';
 
 /**
  * A query posted to a worker that has already died, reached through
@@ -22,7 +22,7 @@ const spawn = async (): Promise<{ worker: PoolWorker; file: string }> => {
     file: databasePath(TEST_TARGET.vfs, file),
     vfs: TEST_TARGET.vfs,
     build: TEST_TARGET.build,
-    drainTimeout: 5000,
+    drainTimeout: scaled(5000),
     logger: createLogger('test', false),
   });
   if ('declined' in opened)
@@ -45,7 +45,7 @@ describe('a worker that has died', () => {
           }
           return 'resolved';
         })().catch((error: unknown) => error),
-        sleep(2000).then(() => 'still waiting after 2 s'),
+        sleep(scaled(2000)).then(() => 'still waiting after 2 s'),
       ]);
       expect(outcome).toBe(reason);
     } finally {

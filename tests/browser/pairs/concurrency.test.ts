@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, longQuery } from '../helpers';
+import { createTestClient, longQuery, scaled } from '../helpers';
 
 /**
  * INT-07: Concurrent reads are served by different workers in parallel
@@ -437,7 +437,7 @@ describe('AbortSignal while queued for a worker', () => {
       new Promise((_, reject) =>
         setTimeout(
           () => reject(new Error('the queued read outlived its abort')),
-          5_000,
+          scaled(5_000),
         ),
       ),
     ]);

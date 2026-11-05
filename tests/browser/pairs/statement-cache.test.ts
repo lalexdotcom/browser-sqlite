@@ -141,7 +141,7 @@ describe('statement cache', () => {
     await reader.run('CREATE TABLE t (a)');
     await reader.run('INSERT INTO t (a) VALUES (1), (2)');
     await reader.first('SELECT a FROM t');
-    await writer.run('UPDATE t SET a = a * 10', [], { timeout: 5_000 });
+    await writer.run('UPDATE t SET a = a * 10', [], { timeout: scaled(5_000) });
     const rows = await reader.all<{ a: number }>('SELECT min(a) AS a FROM t');
     expect(rows[0]?.a).toBe(10);
   });

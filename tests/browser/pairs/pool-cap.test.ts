@@ -44,7 +44,7 @@ const captureWarnings = () => {
  * wait is bounded under the 30 s test timeout, so a stall fails naming its
  * step (`mem:follow-ups/dormant`, the held-file stall on Firefox).
  */
-const HOLDER_STALL_MS = 20_000;
+const HOLDER_STALL_MS = scaled(20_000);
 
 const holdFileExclusively = async (path: string): Promise<string | null> => {
   const src = `

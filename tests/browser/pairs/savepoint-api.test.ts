@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SQLiteSavepoint } from '../../../src/api';
-import { createTestClient, scaled } from '../helpers';
+import { abandonOnceRunning, createTestClient, scaled } from '../helpers';
 
 /**
  * docs/superpowers/specs/2026-10-04-tx-savepoint-design.md: tx.savepoint()
@@ -8,7 +8,8 @@ import { createTestClient, scaled } from '../helpers';
  */
 
 const setUp = async () => {
-  const db = await createTestClient({ poolSize: 1 });
+  // debug: abandonOnceRunning sees the write running.
+  const db = await createTestClient({ poolSize: 1, debug: true });
   await db.run('CREATE TABLE t (a INTEGER UNIQUE)');
   return db;
 };
@@ -100,7 +101,11 @@ describe('tx.savepoint() (spec 2026-10-04)', () => {
         await db.transaction(async (tx) => {
           const sp = await tx.savepoint('u');
           await tx.run('INSERT INTO t VALUES (1)');
-          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          await tx
+            .run(BIG_INSERT, [], {
+              signal: abandonOnceRunning(db, BIG_INSERT).signal,
+            })
+            .catch(() => {});
           await sp.rollback();
           await tx.run('INSERT INTO t VALUES (3)');
         });
