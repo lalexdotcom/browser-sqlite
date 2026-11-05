@@ -311,7 +311,15 @@ export type WorkerMessageData =
        */
       inTransaction?: boolean | undefined;
     }
-  | { type: 'verdict'; callId: number; kind: Verdict }
+  | {
+      type: 'verdict';
+      callId: number;
+      kind: Verdict;
+      /** Milliseconds in the stage the verdict ended in; set for a debug client only. */
+      elapsed?: number;
+      /** 1 when this verdict compiled the statement, 0 on a cache hit; set for a debug client only. */
+      prepared?: number;
+    }
   /** The verdict's prepare failed: a failure says nothing of the statement's kind. */
   | {
       type: 'verdict-error';
@@ -319,6 +327,8 @@ export type WorkerMessageData =
       message: string;
       sqliteCode?: SQLiteResultCode;
       sqliteExtendedCode?: number;
+      /** Milliseconds in the stage the verdict failed in; set for a debug client only. */
+      elapsed?: number;
     }
   | { type: 'closed'; callId: number }
   /** Nothing of this worker's IndexedDB is live any more; terminate it. */

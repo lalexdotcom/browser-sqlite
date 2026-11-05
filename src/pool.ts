@@ -364,6 +364,8 @@ export const createPoolWorker = (deps: {
   let currentCallId = 0;
   /** Verdicts posted and not answered, by callId. */
   const verdicts = new Map<number, PromiseWithResolvers<Verdict>>();
+  /** The debug records of the verdicts in flight, by callId; never `debugQuery`'s. */
+  const verdictDebug = new Map<number, QueryDebugHandle>();
   // The debug record of the query in flight; replaced at every post, like
   // `deferredChunk`, so the callId check below also guards it.
   let debugQuery: QueryDebugHandle | undefined;
@@ -498,6 +500,8 @@ export const createPoolWorker = (deps: {
     lost?.reject(error);
     for (const pending of verdicts.values()) pending.reject(error);
     verdicts.clear();
+    for (const handle of verdictDebug.values()) handle.failed(error);
+    verdictDebug.clear();
     deferredInit.reject(error); // no-op once resolved
     // A dead worker can never send the 'closed' reply close() is awaiting —
     // it either never received the 'close' message or is gone before it could
@@ -707,12 +711,19 @@ export const createPoolWorker = (deps: {
         break;
       }
       case 'verdict': {
+        verdictDebug
+          .get(data.callId)
+          ?.done(0, data.prepared ?? 0, data.elapsed);
+        verdictDebug.delete(data.callId);
         verdicts.get(data.callId)?.resolve(data.kind);
         verdicts.delete(data.callId);
         break;
       }
       case 'verdict-error': {
-        verdicts.get(data.callId)?.reject(statementError(data));
+        const error = statementError(data);
+        verdictDebug.get(data.callId)?.failed(error, data.elapsed);
+        verdictDebug.delete(data.callId);
+        verdicts.get(data.callId)?.reject(error);
         verdicts.delete(data.callId);
         break;
       }
@@ -731,7 +742,7 @@ export const createPoolWorker = (deps: {
         if (deferredChunk && data.callId === currentCallId) {
           debugWorker?.run(data.stage);
           debugQuery?.stage(data.stage, data.elapsed);
-        }
+        } else verdictDebug.get(data.callId)?.stage(data.stage, data.elapsed);
         break;
       }
       default: {
@@ -1055,6 +1066,8 @@ export const createPoolWorker = (deps: {
       const callId = ++lastCallId;
       const pending = Promise.withResolvers<Verdict>();
       verdicts.set(callId, pending);
+      const handle = debugWorker?.query(sql, undefined, true);
+      if (handle) verdictDebug.set(callId, handle);
       worker.postMessage({ type: 'verdict', callId, sql });
       return pending.promise;
     },

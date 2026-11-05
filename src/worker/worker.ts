@@ -600,6 +600,12 @@ const open = (file: string, options: OpenOptions) => {
   const stages = debug
     ? createRunStageTracker((m) => self.postMessage(m))
     : undefined;
+  // The verdict's own: one can run while the query above waits for a credit.
+  const verdictStages = debug
+    ? createRunStageTracker((m) => self.postMessage(m))
+    : undefined;
+  /** Whether the verdict in flight compiled its statement, not read the cache. */
+  let verdictCompiled = false;
 
   // Spec 2026-10-04, § 4: SQLite's authorizer refuses transaction control
   // unless the message carries the library's `control` flag. One query runs
@@ -965,6 +971,8 @@ const open = (file: string, options: OpenOptions) => {
       return kindOf(cached);
     }
     const keep = queryRunning === undefined && free;
+    verdictCompiled = true;
+    verdictStages?.enter('preparing');
     // A query between two chunks has taken its facts and finished preparing.
     seen = {};
     const outer = compiling;
@@ -1507,8 +1515,13 @@ const open = (file: string, options: OpenOptions) => {
       }
       case 'verdict': {
         const { callId, sql } = data;
+        verdictStages?.start(callId);
         const held = holdSqlite();
-        if (held) await held;
+        if (held) {
+          verdictStages?.enter('awaiting-turn');
+          await held;
+        }
+        verdictCompiled = false;
         // A query waiting for a credit keeps its own; the verdict's prepare
         // is never control.
         const kept = { allowControl, preparing, denied, seen };
@@ -1517,8 +1530,18 @@ const open = (file: string, options: OpenOptions) => {
         denied = undefined;
         seen = {};
         try {
-          reply({ type: 'verdict', callId, kind: await verdictOf(sql) });
+          const kind = await verdictOf(sql);
+          const elapsed = verdictStages?.end();
+          const message: Extract<WorkerMessageData, { type: 'verdict' }> = {
+            type: 'verdict',
+            callId,
+            kind,
+          };
+          if (verdictStages) message.prepared = verdictCompiled ? 1 : 0;
+          if (elapsed !== undefined) message.elapsed = elapsed;
+          reply(message);
         } catch (e) {
+          const elapsed = verdictStages?.end();
           const sqliteCode = sqliteCodeOf(e);
           const message =
             denied !== undefined && sqliteCode === SQLITE_AUTH
@@ -1528,15 +1551,18 @@ const open = (file: string, options: OpenOptions) => {
                 : `Unknown error (${e})`;
           const extendedCode = (e as { extendedCode?: unknown } | undefined)
             ?.extendedCode;
-          reply({
-            type: 'verdict-error',
-            callId,
-            message,
-            ...(sqliteCode !== undefined ? { sqliteCode } : {}),
-            ...(typeof extendedCode === 'number'
-              ? { sqliteExtendedCode: extendedCode }
-              : {}),
-          });
+          const failure: Extract<WorkerMessageData, { type: 'verdict-error' }> =
+            {
+              type: 'verdict-error',
+              callId,
+              message,
+              ...(sqliteCode !== undefined ? { sqliteCode } : {}),
+              ...(typeof extendedCode === 'number'
+                ? { sqliteExtendedCode: extendedCode }
+                : {}),
+            };
+          if (elapsed !== undefined) failure.elapsed = elapsed;
+          reply(failure);
         } finally {
           ({ allowControl, preparing, denied, seen } = kept);
           releaseSqlite();

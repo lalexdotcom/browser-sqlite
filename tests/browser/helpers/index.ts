@@ -508,6 +508,7 @@ export const theQueryIsRunning =
         request.endTime === undefined &&
         db.debug?.workers[request.worker]?.status === 'RUNNING' &&
         query?.sql === sql &&
+        !query.internal &&
         query.endTime === undefined
       );
     });
@@ -523,6 +524,7 @@ export const theQueryIsComputing =
         request.endTime === undefined &&
         db.debug?.workers[request.worker]?.run === 'computing' &&
         query?.sql === sql &&
+        !query.internal &&
         query.endTime === undefined
       );
     });
@@ -533,7 +535,10 @@ export const theQueryHasEnded =
   (): boolean =>
     (db.debug?.requests ?? []).some((request) => {
       const query = request.queries.at(-1);
-      return query?.sql === sql && query.endTime !== undefined;
+      // Not the verdict that classified `sql` first: an `internal` query.
+      return (
+        query?.sql === sql && !query.internal && query.endTime !== undefined
+      );
     });
 
 /**

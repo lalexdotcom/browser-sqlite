@@ -102,6 +102,71 @@ describe('the run stages of a debug client', () => {
     }
   });
 
+  it('a first read is classified in a verdict request of its own', async () => {
+    const SQL = 'SELECT 41 + 1 AS v';
+    const db = await createTestClient({ debug: true, poolSize: 1 });
+    try {
+      await db.all(SQL);
+      const requests = db.debug?.requests ?? [];
+      const verdictAt = requests.findIndex(
+        (request) => request.kind === 'verdict',
+      );
+      const readAt = requests.findIndex(
+        (request) =>
+          request.kind === 'read' &&
+          request.queries.some((query) => query.sql === SQL),
+      );
+      expect(verdictAt).toBeGreaterThanOrEqual(0);
+      expect(readAt).toBeGreaterThan(verdictAt);
+      const verdict = requests[verdictAt];
+      const read = requests[readAt];
+      expect(verdict?.queries.map((query) => query.sql)).toEqual([SQL]);
+      expect(verdict?.queries[0]?.internal).toBe(true);
+      expect(Object.keys(verdict?.queries[0]?.stages ?? {})).toContain(
+        'preparing',
+      );
+      const own = read?.queries.find((query) => query.sql === SQL);
+      expect(Object.keys(own?.stages ?? {})).not.toContain('preparing');
+      expect(verdict?.endTime).toBeDefined();
+      expect(verdict?.endTime ?? Infinity).toBeLessThanOrEqual(
+        read?.acquireTime ?? -Infinity,
+      );
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("a statement given its own signal in a transaction is classified in the transaction's request", async () => {
+    const SQL = 'INSERT INTO t VALUES (7)';
+    const db = await createTestClient({ debug: true, poolSize: 1 });
+    try {
+      await db.run('CREATE TABLE t (a)');
+      await db.transaction(async (tx) => {
+        await tx.run(SQL, [], { signal: new AbortController().signal });
+      });
+      const requests = db.debug?.requests ?? [];
+      expect(
+        requests.some(
+          (request) =>
+            request.kind === 'verdict' &&
+            request.queries.some((query) => query.sql === SQL),
+        ),
+      ).toBe(false);
+      const transaction = requests.find((request) =>
+        request.queries.some((query) => query.sql === SQL),
+      );
+      const matching = (transaction?.queries ?? []).filter(
+        (query) => query.sql === SQL,
+      );
+      expect(matching.length).toBeGreaterThanOrEqual(2);
+      expect(matching[0]?.internal).toBe(true);
+      expect(Object.keys(matching[0]?.stages ?? {})).toContain('preparing');
+      expect(matching.at(-1)?.internal).toBe(false);
+    } finally {
+      await db.close();
+    }
+  });
+
   it('a client without debug receives no run stage', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1 });

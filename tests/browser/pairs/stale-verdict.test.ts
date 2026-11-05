@@ -35,9 +35,14 @@ const triggers = async (db: Db) =>
     )
   )[0]?.n;
 
-/** Pushes `DROP` out of the worker's 32-entry statement cache. */
+/**
+ * Pushes `DROP` out of the worker's 32-entry statement cache. By `first()`,
+ * which classifies nothing: a `run()` would add a verdict request per
+ * statement, and the debug history (50 requests per worker) would forget the
+ * `DROP`'s own.
+ */
 const evict = async (db: Db) => {
-  for (let i = 0; i < 40; i++) await db.run(`SELECT ${i} AS evict`);
+  for (let i = 0; i < 40; i++) await db.first(`SELECT ${i} AS evict`);
 };
 
 describe('a read verdict the schema made false', () => {
@@ -52,7 +57,13 @@ describe('a read verdict the schema made false', () => {
     await db.run(DROP);
     expect(await triggers(db)).toBe(0);
     await db.run(DROP);
-    expect(kindsOf(db, DROP)).toEqual(['read', 'read', 'write', 'write']);
+    expect(kindsOf(db, DROP)).toEqual([
+      'verdict',
+      'read',
+      'read',
+      'write',
+      'write',
+    ]);
   });
 
   // Falsifiable: leave `guardingStep` unset in refuseWrites (src/worker/
@@ -64,7 +75,7 @@ describe('a read verdict the schema made false', () => {
     // The read path's cached DROP, whose schema the CREATE changed.
     await db.run(DROP);
     expect(await triggers(db)).toBe(0);
-    expect(kindsOf(db, DROP)).toEqual(['read', 'read', 'write']);
+    expect(kindsOf(db, DROP)).toEqual(['verdict', 'read', 'read', 'write']);
   });
 
   // The mirror: CREATE TRIGGER IF NOT EXISTS is read-only while `trg` exists.
@@ -77,7 +88,12 @@ describe('a read verdict the schema made false', () => {
     await db.run(DROP);
     await db.run(CREATE_IF_ABSENT);
     expect(await triggers(db)).toBe(1);
-    expect(kindsOf(db, CREATE_IF_ABSENT)).toEqual(['read', 'read', 'write']);
+    expect(kindsOf(db, CREATE_IF_ABSENT)).toEqual([
+      'verdict',
+      'read',
+      'read',
+      'write',
+    ]);
   });
 
   /** stream() over DROP, once its read verdict no longer holds. */
@@ -92,7 +108,7 @@ describe('a read verdict the schema made false', () => {
     }
     expect(await rows.affected).toBe(0);
     expect(await triggers(db)).toBe(0);
-    expect(kindsOf(db, DROP)).toEqual(['read', 'read', 'write']);
+    expect(kindsOf(db, DROP)).toEqual(['verdict', 'read', 'read', 'write']);
   };
 
   // Falsifiable: drop the RoutedAsRead branch of streamWithRetry's catch in

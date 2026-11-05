@@ -114,10 +114,11 @@ describe('run() and all()', () => {
       rows: [{ a: 1 }],
       affected: 0,
     });
-    const request = db.debug?.requests.find((r) =>
-      r.queries.some((q) => q.sql === 'SELECT a FROM t'),
-    );
-    expect(request?.kind).toBe('read');
+    const kinds = (db.debug?.requests ?? [])
+      .filter((r) => r.queries.some((q) => q.sql === 'SELECT a FROM t'))
+      .map((r) => r.kind);
+    // Its first sight is classified in a verdict request of its own.
+    expect(kinds).toEqual(['verdict', 'read']);
   });
 
   // Falsifiable: return the whole result from all().
@@ -139,23 +140,27 @@ describe('run() and all()', () => {
   // refuses, but from the writer's queue.
   it('refuses two statements with MULTIPLE_STATEMENTS, without queueing them', async () => {
     const { db } = await setUp({ debug: true });
-    const before = db.debug?.requests.length;
+    const queued = () =>
+      db.debug?.requests.filter((r) => r.kind !== 'verdict').length;
+    const before = queued();
     await expect(db.run('SELECT 1; SELECT 2')).rejects.toMatchObject({
       code: 'MULTIPLE_STATEMENTS',
     });
-    expect(db.debug?.requests.length).toBe(before);
+    expect(queued()).toBe(before);
   });
 
   // Falsifiable: answer 'write' when the second prepare fails in askVerdict —
   // the statement still fails, but from the writer's queue.
   it('rejects a statement that does not prepare with STATEMENT_FAILED, without queueing it', async () => {
     const { db } = await setUp({ debug: true });
-    const before = db.debug?.requests.length;
+    const queued = () =>
+      db.debug?.requests.filter((r) => r.kind !== 'verdict').length;
+    const before = queued();
     await expect(db.run('SELECT * FROM nope')).rejects.toMatchObject({
       code: 'STATEMENT_FAILED',
       sqliteCode: 1,
     });
-    expect(db.debug?.requests.length).toBe(before);
+    expect(queued()).toBe(before);
   });
 
   // Falsifiable: memoise nothing in kindFor (each call asks).

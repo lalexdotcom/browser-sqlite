@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **With `debug`, `db.debug.workers[i].run` says where a running query is, and each query's `stages` where its time went.** `run` is one of `'awaiting-turn'`, `'preparing'`, `'stepping'`, `'computing'` or `'awaiting-credit'` (the exported `RunStage` type), and `undefined` when the worker is idle; `stages` holds the milliseconds spent in each stage the query went through. `'computing'` needs the progress handler: the `async` and `jspi` builds, or `sync` under cross-origin isolation.
+- **With `debug`, `db.debug.workers[i].run` says where a running query is, and each query's `stages` where its time went.** `run` is one of `'awaiting-turn'`, `'preparing'`, `'stepping'`, `'computing'` or `'awaiting-credit'` (the exported `RunStage` type), and `undefined` when the worker is idle; `stages` holds the milliseconds spent in each stage the query went through. `'computing'` needs the progress handler: the `async` and `jspi` builds, or `sync` under cross-origin isolation. The classification of a SQL text the client sees for the first time is now visible too: a request of `kind: 'verdict'` (its wait for a worker and its compile, with `stages`), or an `internal` query of the transaction's request when it is asked on the transaction's own worker.
 
 ### Changed
 

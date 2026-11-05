@@ -34,7 +34,11 @@ const aRequestIsInFlight =
   (db: Awaited<ReturnType<typeof createTestClient>>) => () =>
     (db.debug?.requests ?? []).some(
       (request) =>
-        request.acquireTime !== undefined && request.endTime === undefined,
+        // Not the verdict that classifies the statement first: it ends before
+        // the statement's own request starts.
+        request.kind !== 'verdict' &&
+        request.acquireTime !== undefined &&
+        request.endTime === undefined,
     );
 
 describe('close()', () => {

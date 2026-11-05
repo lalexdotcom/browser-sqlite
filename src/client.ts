@@ -1385,8 +1385,25 @@ export const createSQLiteClient = (
   };
 
   const verdictDeps = {
-    acquire: (signal: AbortSignal, free: boolean) =>
-      scheduler.acquire('verdict', signal, { free }),
+    // Each lease is a request of its own (`askVerdict` may take several).
+    acquire: async (signal: AbortSignal, free: boolean) => {
+      const request = clientDebug?.createRequestDebugState('verdict');
+      if (!request) return scheduler.acquire('verdict', signal, { free });
+      try {
+        const lease = await scheduler.acquire('verdict', signal, { free });
+        request.acquired(lease.worker.index, lease.borrowed === true);
+        return {
+          ...lease,
+          release: () => {
+            request.released();
+            lease.release();
+          },
+        };
+      } catch (error) {
+        request.failed(error);
+        throw error;
+      }
+    },
     applyBarrier,
   };
 
