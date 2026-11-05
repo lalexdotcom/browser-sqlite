@@ -3,8 +3,10 @@ import {
   createTestClient,
   interceptWorkers,
   nextTask,
+  reachedWithin,
   sleep,
 } from '../helpers';
+import { exercised } from '../helpers/exercised';
 
 /**
  * A consumer that awaits between chunks must still receive every row.
@@ -144,13 +146,19 @@ describe('chunk delivery', () => {
    */
   describe('while the consumer is suspended between chunks', () => {
     it('stops on an early break, and hands the worker back', async () => {
-      const db = await createTestClient({ poolSize: 1 });
+      const db = await createTestClient({ poolSize: 1, debug: true });
+      let parked = false;
       try {
         await seed(db);
         let chunks = 0;
         for await (const _chunk of db.chunk<{ a: number }>('SELECT a FROM t')) {
           chunks++;
-          await sleep(50);
+          // Suspended between chunks, the worker is parked on a credit: the
+          // break must stop it from there, not from inside a step.
+          parked = await reachedWithin(
+            () => db.debug?.workers[0]?.run === 'awaiting-credit',
+            5_000,
+          );
           break;
         }
         expect(chunks).toBe(1);
@@ -162,6 +170,13 @@ describe('chunk delivery', () => {
       } finally {
         await db.close();
       }
+      if (
+        !(await exercised(
+          parked,
+          'the worker was not parked on a credit at the break',
+        ))
+      )
+        return;
     });
 
     it('rejects on an undeserializable message', async () => {

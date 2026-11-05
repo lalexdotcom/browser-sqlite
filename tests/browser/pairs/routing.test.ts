@@ -105,7 +105,8 @@ describe('routing — strictness', () => {
     const requests = (db.debug?.requests ?? []).filter((r) =>
       r.queries.some((q) => q.sql === 'PRAGMA journal_mode'),
     );
-    expect(requests.map((r) => r.kind)).toEqual(['read']);
+    // The first sight is classified in a verdict request of its own.
+    expect(requests.map((r) => r.kind)).toEqual(['verdict', 'read']);
     await db.close();
   });
 
@@ -175,7 +176,7 @@ describe('a pragma table-valued function in the text of a read', () => {
       const kinds = (db.debug?.requests ?? [])
         .filter((r) => r.queries.some((q) => q.sql === read))
         .map((r) => r.kind);
-      expect(kinds).toEqual(['read', 'read', 'read']);
+      expect(kinds).toEqual(['verdict', 'read', 'read', 'read']);
     }
   });
 });

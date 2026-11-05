@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createClientDebug } from '../../../src/debug';
 
 describe('the pool-level request history', () => {
@@ -179,6 +179,90 @@ describe('the pool-level request history', () => {
     ]);
   });
 
+  it('records a verdict request', () => {
+    const debug = make();
+    debug.createRequestDebugState('verdict');
+    expect(debug.state.requests[0]?.kind).toBe('verdict');
+  });
+
+  it('leaves the transaction its request during a lend, and files the verdict query in the lend', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('write').acquired(0);
+    const lend = debug.createRequestDebugState('verdict');
+    lend.acquired(0, true);
+    w0.query('COMMIT');
+    w0.verdict('SELECT 1');
+    lend.released();
+    w0.query('SELECT 2');
+    const [tx, lent] = debug.state.requests;
+    expect(lent?.queries.map((q) => q.sql)).toEqual(['SELECT 1']);
+    expect(tx?.queries.map((q) => q.sql)).toEqual(['COMMIT', 'SELECT 2']);
+    expect(tx?.endTime).toBeUndefined();
+  });
+
+  it('files each verdict query in its own lend, newest first, and keeps the transaction', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('write').acquired(0);
+    const first = debug.createRequestDebugState('verdict');
+    first.acquired(0, true);
+    const second = debug.createRequestDebugState('verdict');
+    second.acquired(0, true);
+    w0.verdict('SELECT 2');
+    first.released();
+    w0.verdict('SELECT 1');
+    second.released();
+    w0.query('SELECT 3');
+    const [tx, one, two] = debug.state.requests;
+    expect(one?.queries.map((q) => q.sql)).toEqual([]);
+    expect(two?.queries.map((q) => q.sql)).toEqual(['SELECT 2', 'SELECT 1']);
+    expect(tx?.queries.map((q) => q.sql)).toEqual(['SELECT 3']);
+  });
+
+  it('files a verdict query in the newer of two live lends', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('write').acquired(0);
+    const first = debug.createRequestDebugState('verdict');
+    first.acquired(0, true);
+    const second = debug.createRequestDebugState('verdict');
+    second.acquired(0, true);
+    w0.verdict('SELECT 2');
+    second.released();
+    w0.verdict('SELECT 1');
+    const [, one, two] = debug.state.requests;
+    expect(one?.queries.map((q) => q.sql)).toEqual(['SELECT 1']);
+    expect(two?.queries.map((q) => q.sql)).toEqual(['SELECT 2']);
+  });
+
+  it('files a verdict query in the active request when nothing is lent', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('verdict').acquired(0);
+    w0.verdict('SELECT 1');
+    expect(debug.state.requests[0]?.queries.map((q) => q.sql)).toEqual([
+      'SELECT 1',
+    ]);
+  });
+
+  it('records nothing for a verdict of a stale worker handle', () => {
+    const debug = make();
+    const old = debug.createWorkerDebugState(0, 'w0');
+    debug.createWorkerDebugState(0, 'w0'); // the replacement
+    debug.createRequestDebugState('write').acquired(0);
+    expect(old.verdict('SELECT 1')).toBeUndefined();
+  });
+
+  it('clears the slot at the release of an unborrowed lease, as before', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    const request = debug.createRequestDebugState('read');
+    request.acquired(0);
+    request.released();
+    expect(w0.query('SELECT 1')).toBeUndefined();
+  });
+
   it('adds rows and affected up from the query to the request', () => {
     const debug = make();
     const w0 = debug.createWorkerDebugState(0, 'w0');
@@ -295,6 +379,70 @@ describe('the pool-level request history', () => {
     debug.createRequestDebugState('read').acquired(0);
     for (let i = 0; i < 200; i++) w0.query(`SELECT ${i}`);
     expect(debug.state.requests[0]?.queries.length).toBe(50);
+  });
+
+  describe('run stages', () => {
+    const start = () => {
+      const debug = make();
+      const w0 = debug.createWorkerDebugState(0, 'w0');
+      debug.createRequestDebugState('read').acquired(0);
+      const q = w0.query('SELECT 1');
+      if (!q) throw new Error('query not recorded');
+      return { debug, q };
+    };
+    const stagesOf = (debug: ReturnType<typeof make>) =>
+      debug.state.requests[0]?.queries[0]?.stages;
+
+    it("cumulates each stage's duration as the next one begins", () => {
+      const { debug, q } = start();
+      q.stage('preparing', undefined);
+      q.stage('stepping', 2);
+      q.stage('awaiting-credit', 5);
+      q.stage('stepping', 1);
+      q.done(0, 1, 3);
+      expect(stagesOf(debug)).toEqual({
+        preparing: 2,
+        stepping: 8,
+        'awaiting-credit': 1,
+      });
+    });
+
+    it('leaves stages empty for a query that announced none', () => {
+      const { debug, q } = start();
+      q.done(0, 0, undefined);
+      expect(stagesOf(debug)).toEqual({});
+    });
+
+    it("closes the current stage on the page's clock when the end brings no duration", () => {
+      const now = vi.spyOn(performance, 'now');
+      now.mockReturnValueOnce(100).mockReturnValueOnce(130);
+      try {
+        const { debug, q } = start();
+        q.stage('computing', undefined);
+        q.failed(new Error('x'));
+        expect(stagesOf(debug)?.computing).toBe(30);
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('ignores a stage after the end', () => {
+      const { debug, q } = start();
+      q.done(0, 0, undefined);
+      q.stage('stepping', 4);
+      expect(stagesOf(debug)).toEqual({});
+    });
+
+    it("sets and clears the worker's run stage", () => {
+      const debug = make();
+      const w0 = debug.createWorkerDebugState(0, 'w0');
+      w0.run('stepping');
+      expect(debug.state.workers[0]?.run).toBe('stepping');
+      w0.run(undefined);
+      expect(debug.state.workers[0] && 'run' in debug.state.workers[0]).toBe(
+        false,
+      );
+    });
   });
 
   it('exposes queue depths from the scheduler, never a stale copy', () => {

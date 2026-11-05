@@ -66,6 +66,7 @@ import { bindBlock, RowWriter } from './binary';
 import { cloneable } from './cloneable';
 import { isHeldElsewhere } from './held';
 import { firstMissing } from './probes';
+import { createRunStageTracker } from './run-stages';
 import { sqliteCodeOf } from './sqlite-code';
 import { createStatementCache } from './statement-cache';
 
@@ -480,6 +481,7 @@ type OpenOptions = {
   vfs: SQLiteVFS;
   build: SQLiteBuild;
   wasm?: WasmLocation | undefined;
+  debug?: true | undefined;
   pragmas?: Record<string, string> | undefined;
   statementCacheSize?: number | undefined;
   statementCacheBytes?: number | undefined;
@@ -583,13 +585,21 @@ const open = (file: string, options: OpenOptions) => {
 
   // Each step announced as it begins, so an open that never finishes names
   // the step it stopped in (tests/browser/open-retry.test.ts).
-  const boot = (stage: BootStage) =>
-    self.postMessage({
-      type: 'boot',
-      callId: 0,
-      stage,
-    } satisfies WorkerMessageData);
-  if (proceedGate) boot('waiting for the client');
+  // Posted only for a client created with `debug`: nothing else reads them.
+  const debug = options.debug === true;
+  const boot = (stage: BootStage) => {
+    if (debug)
+      self.postMessage({
+        type: 'boot',
+        callId: 0,
+        stage,
+      } satisfies WorkerMessageData);
+  };
+  if (proceedGate) boot('awaiting-client');
+  // Where the query in flight is, announced only to a debug client.
+  const stages = debug
+    ? createRunStageTracker((m) => self.postMessage(m))
+    : undefined;
 
   // Spec 2026-10-04, § 4: SQLite's authorizer refuses transaction control
   // unless the message carries the library's `control` flag. One query runs
@@ -707,15 +717,15 @@ const open = (file: string, options: OpenOptions) => {
 
   openedDB = (proceedGate?.promise ?? Promise.resolve())
     .then(() => {
-      boot('loading the build');
+      boot('loading-build');
       return WA_SQLITE_BUILDS[build]();
     })
     .then(({ default: factory }) => {
-      boot('instantiating wasm');
+      boot('instantiating-wasm');
       return factory(wasmModuleArg(wasm));
     })
     .then((module) => {
-      boot('loading the VFS module');
+      boot('loading-vfs-module');
       const sqlite = SQLite.Factory(module);
       return vfsConfig.fs().then((vfsModule) => ({
         sqlite,
@@ -724,15 +734,15 @@ const open = (file: string, options: OpenOptions) => {
       }));
     })
     .then(({ sqlite, module, vfsModule }) => {
-      boot('creating the VFS');
+      boot('creating-vfs');
       return (
         createVfsInstance(vfsModule, vfs, module, () =>
-          boot('waiting for a held file'),
+          boot('awaiting-held-file'),
         ) as Promise<any>
       ).then((vfsInstance: any) => {
         vfsInstanceSeen = vfsInstance;
         sqlite.vfs_register(vfsInstance, true);
-        boot('waiting for the open lock');
+        boot('awaiting-open-lock');
         // One lock for open + pragmas. withLock releases on throw too, which
         // is what the explicit unlock() in the old .catch existed to do.
         //
@@ -745,16 +755,16 @@ const open = (file: string, options: OpenOptions) => {
         // (measured: broke all 96 browser tests on 56-char names). The VFS
         // normalizes internally, so 'data' and '/data' open the same OPFS file.
         return locks.withLock(initLockName(vfs, file), async () => {
-          boot('opening the database');
+          boot('opening-database');
           const db = await openWithRetry(
             sqlite,
             file,
             () => vfsInstanceSeen?.lastError,
             options.afterDeath,
             options.openDeadline,
-            () => boot('waiting for a held file'),
+            () => boot('awaiting-held-file'),
           );
-          boot('applying pragmas');
+          boot('applying-pragmas');
           for (const statement of renderPragmas(pragmas)) {
             for await (const stmt of sqlite.statements(db, statement)) {
               while ((await sqlite.step_asap(stmt)) === SQLITE_ROW) {}
@@ -936,7 +946,10 @@ const open = (file: string, options: OpenOptions) => {
    * where nothing can be using a cached one — no transaction open, no query
    * in flight — since an insertion can evict, and so finalise, a statement.
    */
-  const verdictOf = async (sql: string): Promise<Verdict> => {
+  const verdictOf = async (
+    sql: string,
+    onCompile?: () => void,
+  ): Promise<Verdict> => {
     if (!openedDB) throw new Error('No DB opened');
     const { sqlite, db, module } = await openedDB;
     if (closing) throw new Error('The SQLite client has been closed.');
@@ -955,6 +968,7 @@ const open = (file: string, options: OpenOptions) => {
       return kindOf(cached);
     }
     const keep = queryRunning === undefined && free;
+    onCompile?.();
     // A query between two chunks has taken its facts and finished preparing.
     seen = {};
     const outer = compiling;
@@ -1056,6 +1070,7 @@ const open = (file: string, options: OpenOptions) => {
       let cols: string[] | undefined;
       let writer: RowWriter | undefined;
 
+      stages?.enter('stepping');
       while (true) {
         if (gate.isStopped()) break;
 
@@ -1090,6 +1105,7 @@ const open = (file: string, options: OpenOptions) => {
             chunkBytes = block.used;
             writer = undefined;
             yield block;
+            stages?.enter('stepping');
           }
         } else {
           if (writer && cols) yield writer.finish(cols);
@@ -1126,7 +1142,10 @@ const open = (file: string, options: OpenOptions) => {
         true,
       );
       // Under the credit gate, as any chunk; each let go once handed over.
-      while (kept.length > 0) yield kept.shift() as RowsBlock;
+      while (kept.length > 0) {
+        yield kept.shift() as RowsBlock;
+        stages?.enter('stepping');
+      }
     };
 
     /** Not a generator: a read takes no extra level of delegation. */
@@ -1192,12 +1211,16 @@ const open = (file: string, options: OpenOptions) => {
         PROGRESS_OPS,
         yields
           ? async () => {
+              if (stepping) stages?.enter('computing');
               // The task turn is what lets a queued `stop` be delivered, and
               // what lets IDBBatchAtomicVFS's IndexedDB transaction commit.
               await gate.tick();
               return gate.isStopped() ? 1 : 0;
             }
-          : () => (abortedHere() ? 1 : 0),
+          : () => {
+              if (stepping) stages?.enter('computing');
+              return abortedHere() ? 1 : 0;
+            },
         null,
       );
     }
@@ -1222,6 +1245,7 @@ const open = (file: string, options: OpenOptions) => {
       } else if (multi) {
         // The barrier's own string: every statement runs in order, none is
         // kept. The generator finalises what it yields.
+        stages?.enter('preparing');
         for await (const stmt of sqlite.statements(
           db,
           textOf ? textOf() : sql,
@@ -1233,6 +1257,8 @@ const open = (file: string, options: OpenOptions) => {
           } finally {
             factsOf.delete(stmt);
           }
+          // wa-sqlite compiles the next statement as the loop turns.
+          stages?.enter('preparing');
         }
       } else {
         // One statement, kept in the cache; or finalised after it when the
@@ -1251,6 +1277,7 @@ const open = (file: string, options: OpenOptions) => {
             text: textOf ? textOf() : sql,
             guarded: refuseWrite !== undefined,
           };
+          stages?.enter('preparing');
           const first = await statements.next();
           if (!first.done) {
             // Assigned BEFORE the rows are streamed: first() leaves the
@@ -1311,8 +1338,12 @@ const open = (file: string, options: OpenOptions) => {
         // worker's status to RUNNING after posting the query.
         gate.reset(callId, options?.credits ?? DEFAULT_CREDIT_WINDOW);
         queryRunning = Promise.withResolvers<void>();
+        stages?.start(callId);
         const held = holdSqlite();
-        if (held) await held;
+        if (held) {
+          stages?.enter('awaiting-turn');
+          await held;
+        }
         denied = undefined;
         allowControl = options?.control === true;
         try {
@@ -1403,28 +1434,37 @@ const open = (file: string, options: OpenOptions) => {
             // SQLite call is in flight, and the consumer's next pull, which
             // sends the credit, may itself be waiting on a verdict.
             releaseSqlite();
+            if (stages && gate.wouldWait()) stages.enter('awaiting-credit');
             const taken = await gate.take(callId);
             const back = holdSqlite();
-            if (back) await back;
+            if (back) {
+              stages?.enter('awaiting-turn');
+              await back;
+            }
             if (taken === 'stopped') break;
             reply({ type: 'chunk', callId, data: chunk }, [chunk.buffer]);
           }
 
+          const elapsed = stages?.end();
           if (closing) {
-            reply({
+            const message: Extract<WorkerMessageData, { type: 'error' }> = {
               type: 'error',
               callId,
               message: 'The SQLite client has been closed.',
               inTransaction: await connectionInTransaction(),
-            });
+            };
+            if (elapsed !== undefined) message.elapsed = elapsed;
+            reply(message);
           } else {
-            reply({
+            const message: Extract<WorkerMessageData, { type: 'done' }> = {
               type: 'done',
               callId,
               affected,
               prepared,
               inTransaction: await connectionInTransaction(),
-            });
+            };
+            if (elapsed !== undefined) message.elapsed = elapsed;
+            reply(message);
           }
         } catch (e) {
           if (denied !== undefined && sqliteCodeOf(e) === SQLITE_AUTH) {
@@ -1437,7 +1477,8 @@ const open = (file: string, options: OpenOptions) => {
           // numeric `code`. Without this the code dies at the postMessage
           // boundary and the client can only string-match the message.
           const sqliteCode = sqliteCodeOf(e);
-          reply({
+          const elapsed = stages?.end();
+          const message: Extract<WorkerMessageData, { type: 'error' }> = {
             type: 'error',
             callId,
             ...(typeof e === 'object'
@@ -1457,7 +1498,9 @@ const open = (file: string, options: OpenOptions) => {
               ? { errorCode: (e as { errorCode: SQLiteErrorCode }).errorCode }
               : {}),
             inTransaction: await connectionInTransaction(),
-          });
+          };
+          if (elapsed !== undefined) message.elapsed = elapsed;
+          reply(message);
         } finally {
           allowControl = false;
           queryRunning?.resolve();
@@ -1468,8 +1511,24 @@ const open = (file: string, options: OpenOptions) => {
       }
       case 'verdict': {
         const { callId, sql } = data;
+        // A tracker per verdict, never the query's: one can run while the query
+        // waits for a credit, and two verdicts can overlap on a worker.
+        const verdictStages = debug
+          ? createRunStageTracker((m) => self.postMessage(m))
+          : undefined;
+        let compiled = false;
+        const onCompile = verdictStages
+          ? () => {
+              compiled = true;
+              verdictStages.enter('preparing');
+            }
+          : undefined;
+        verdictStages?.start(callId);
         const held = holdSqlite();
-        if (held) await held;
+        if (held) {
+          verdictStages?.enter('awaiting-turn');
+          await held;
+        }
         // A query waiting for a credit keeps its own; the verdict's prepare
         // is never control.
         const kept = { allowControl, preparing, denied, seen };
@@ -1478,8 +1537,18 @@ const open = (file: string, options: OpenOptions) => {
         denied = undefined;
         seen = {};
         try {
-          reply({ type: 'verdict', callId, kind: await verdictOf(sql) });
+          const kind = await verdictOf(sql, onCompile);
+          const elapsed = verdictStages?.end();
+          const message: Extract<WorkerMessageData, { type: 'verdict' }> = {
+            type: 'verdict',
+            callId,
+            kind,
+          };
+          if (verdictStages) message.prepared = compiled ? 1 : 0;
+          if (elapsed !== undefined) message.elapsed = elapsed;
+          reply(message);
         } catch (e) {
+          const elapsed = verdictStages?.end();
           const sqliteCode = sqliteCodeOf(e);
           const message =
             denied !== undefined && sqliteCode === SQLITE_AUTH
@@ -1489,15 +1558,18 @@ const open = (file: string, options: OpenOptions) => {
                 : `Unknown error (${e})`;
           const extendedCode = (e as { extendedCode?: unknown } | undefined)
             ?.extendedCode;
-          reply({
-            type: 'verdict-error',
-            callId,
-            message,
-            ...(sqliteCode !== undefined ? { sqliteCode } : {}),
-            ...(typeof extendedCode === 'number'
-              ? { sqliteExtendedCode: extendedCode }
-              : {}),
-          });
+          const failure: Extract<WorkerMessageData, { type: 'verdict-error' }> =
+            {
+              type: 'verdict-error',
+              callId,
+              message,
+              ...(sqliteCode !== undefined ? { sqliteCode } : {}),
+              ...(typeof extendedCode === 'number'
+                ? { sqliteExtendedCode: extendedCode }
+                : {}),
+            };
+          if (elapsed !== undefined) failure.elapsed = elapsed;
+          reply(failure);
         } finally {
           ({ allowControl, preparing, denied, seen } = kept);
           releaseSqlite();
@@ -1823,6 +1895,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         vfs,
         build,
         wasm,
+        debug,
         pragmas,
         statementCacheSize,
         statementCacheBytes,
@@ -1837,6 +1910,7 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
         vfs,
         build,
         wasm,
+        debug,
         pragmas,
         statementCacheSize,
         statementCacheBytes,

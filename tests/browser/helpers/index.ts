@@ -437,6 +437,38 @@ export const waitUntil = async (
       : ended === undefined
         ? scaled(HOOK_TIMEOUT_MS)
         : undefined;
+  if (!(await pollUntil(predicate, what, bound, ended))) {
+    throw new Error(`timed out after ${bound} ms waiting for ${what}`);
+  }
+};
+
+/**
+ * `waitUntil` for a precondition a slow runner can miss: resolves `false` at
+ * the bound (`timeoutMs`, scaled) instead of throwing, for the caller to hand to
+ * `exercised()`. Still rejects when the test itself ends.
+ */
+export const reachedWithin = (
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs: number,
+  ended: AbortSignal | undefined = TestRunner.getCurrentTest()?.context.signal,
+): Promise<boolean> =>
+  pollUntil(
+    predicate,
+    'the precondition to be reached',
+    scaled(timeoutMs),
+    ended,
+  );
+
+/**
+ * The polling of `waitUntil` and `reachedWithin`: true once the predicate is,
+ * false at `bound` ms (none when undefined), a throw when `ended` aborts.
+ */
+const pollUntil = async (
+  predicate: () => boolean | Promise<boolean>,
+  what: string,
+  bound: number | undefined,
+  ended: AbortSignal | undefined,
+): Promise<boolean> => {
   const deadline = bound === undefined ? Infinity : Date.now() + bound;
   let waiting = true;
   // A test that runs out of time while this still waits says what it waited
@@ -451,10 +483,8 @@ export const waitUntil = async (
       if (ended?.aborted) {
         throw new Error(`the test ended while waiting for ${what}`);
       }
-      if (await predicate()) return;
-      if (Date.now() > deadline) {
-        throw new Error(`timed out after ${bound} ms waiting for ${what}`);
-      }
+      if (await predicate()) return true;
+      if (Date.now() > deadline) return false;
       await nextTask();
     }
   } finally {
@@ -478,6 +508,23 @@ export const theQueryIsRunning =
         request.endTime === undefined &&
         db.debug?.workers[request.worker]?.status === 'RUNNING' &&
         query?.sql === sql &&
+        !query.internal &&
+        query.endTime === undefined
+      );
+    });
+
+/** Whether the worker's `run` is `computing` for `sql`: a step long enough to fire the progress handler, and also between two chunks while credit is available (the stage stays `computing` until the query waits or ends): needs a `debug` client. */
+export const theQueryIsComputing =
+  (db: Awaited<ReturnType<typeof createTestClient>>, sql: string) =>
+  (): boolean =>
+    (db.debug?.requests ?? []).some((request) => {
+      const query = request.queries.at(-1);
+      return (
+        request.worker !== undefined &&
+        request.endTime === undefined &&
+        db.debug?.workers[request.worker]?.run === 'computing' &&
+        query?.sql === sql &&
+        !query.internal &&
         query.endTime === undefined
       );
     });
@@ -488,7 +535,10 @@ export const theQueryHasEnded =
   (): boolean =>
     (db.debug?.requests ?? []).some((request) => {
       const query = request.queries.at(-1);
-      return query?.sql === sql && query.endTime !== undefined;
+      // Not the verdict that classified `sql` first: an `internal` query.
+      return (
+        query?.sql === sql && !query.internal && query.endTime !== undefined
+      );
     });
 
 /**

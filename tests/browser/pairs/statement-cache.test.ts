@@ -19,7 +19,8 @@ const runsOf = (
 ) =>
   (db.debug?.requests ?? [])
     .flatMap((r) => r.queries)
-    .filter((q) => q.sql === sql);
+    // The queries the calls sent, not the verdict that classified a first one.
+    .filter((q) => q.sql === sql && !q.internal);
 
 describe('prepare counter', () => {
   it('reports one compilation for one statement', async () => {

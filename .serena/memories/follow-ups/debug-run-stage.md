@@ -1,6 +1,18 @@
 # Follow-up — a `run` sub-status for a busy worker, and `BootStage` as codes (user, 2026-11-05)
 
-**Status: OPEN** — designed in conversation, not started; to do in its own branch and session (user, 2026-11-05). Changes the public `debug` surface — new feature plus a breaking type change — while the current release is bugfix only (`mem:follow-ups`): when it ships is the user's call.
+**Status: CLOSED 2026-11-05** — `feat/debug-run-stage` merged into `main` (`mem:history/2026-11-02-to-08`). Spec `docs/superpowers/specs/2026-11-05-debug-run-stage-design.md`, plan `docs/superpowers/plans/2026-11-05-debug-run-stage.md`. The text below is the design as first written; where the built version differs, § As built says so. Kept marked breaking (`feat(debug)!`) although `db.debug` is outside semver: no stable release yet, so it costs nothing (user, 2026-11-05).
+
+## As built (2026-11-05)
+
+- **The worker learns `debug` once, in the `open` message** (`debug?: true`); boot stages and run stages are posted only by a debug worker. No per-query flag.
+- **Boot codes:** `awaiting-client`, `loading-build`, `instantiating-wasm`, `loading-vfs-module`, `creating-vfs`, `awaiting-open-lock`, `opening-database`, `awaiting-held-file`, `applying-pragmas`.
+- **Run stages:** `awaiting-turn` (the worker's SQLite mutex, not the pool's queue), `preparing` (a compile; none on a cache hit), `stepping` (a statement's first `step()`, or the first after a wait — never after `computing`), `computing` (the progress handler's first call inside a step, posted before the stop test, so its presence ⇔ the step could be cut), `awaiting-credit`. Two codes for step because `db.debug` is polled: a second identical `stepping` would be invisible.
+- **Durations, not timestamps:** each `run` message carries the duration of the stage it ends, on the worker's clock; the terminal reply carries the last one; the page cumulates them into `queries[].stages` (keys are the codes). No `timeOrigin` reconciliation needed. A worker dead mid-query: the page closes the current stage on its own clock.
+- **`workers[i].run`** is live, cleared at the terminal reply and in `poison`.
+- **The four false greens** (`abort-slot`, `early-exit`) wait for `computing` (`chunk()`) or read `stages.computing` after the next `SELECT 1` (`first()`), else `exercised`; falsified (progress handler forced to 0: red timeouts).
+- **Cost:** DEBUG-RUN-STAGE-AB (`mem:measurements/routing`): no stream regression on Firefox.
+- **The verdict is visible since the same branch** (`mem:follow-ups/debug-verdict-visibility`, plan `docs/superpowers/plans/2026-11-05-debug-verdict-stage.md`): a verdict with its own lease is a request `kind: 'verdict'` with `internal` queries carrying stages; a transaction's own verdict is an `internal` query of its request; a lent worker (`offer()`) leaves the transaction's request active and files the verdict in a per-slot lending list — the transaction goes on posting statements during a lend, and lends again after each one (a first design that swapped the active request misfiled them; caught by the final review). Commit `ad1ce55b` is red on Firefox one-worker pairs (fixed by `02a8417c`, history kept).
+- **Left open:** a transaction's own verdict asked during a live lend is filed in the lend's request; no browser test that `run` clears on a worker's death, nor for `awaiting-turn`, multi-statement `preparing` or `drainWrites`' `stepping`.
 
 Part of `mem:follow-ups`, opened while closing `test/retry-timeouts-on-slow-runners` (`mem:follow-ups/false-greens-remaining`).
 

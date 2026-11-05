@@ -364,6 +364,10 @@ export const createPoolWorker = (deps: {
   let currentCallId = 0;
   /** Verdicts posted and not answered, by callId. */
   const verdicts = new Map<number, PromiseWithResolvers<Verdict>>();
+  /** The debug records of the verdicts in flight, by callId; never `debugQuery`'s. Debug only. */
+  const verdictDebug = debugWorker
+    ? new Map<number, QueryDebugHandle>()
+    : undefined;
   // The debug record of the query in flight; replaced at every post, like
   // `deferredChunk`, so the callId check below also guards it.
   let debugQuery: QueryDebugHandle | undefined;
@@ -491,12 +495,17 @@ export const createPoolWorker = (deps: {
     // Ends the query in flight: a worker death sends neither `done` nor
     // `error`, and without this its request would read as still running.
     debugQuery?.failed(error);
+    debugWorker?.run(undefined);
     worker.status = 'DEAD';
     deathDeferred.reject(error);
     // The delivery loop's wait: it races `lost`, never `deathDeferred`.
     lost?.reject(error);
     for (const pending of verdicts.values()) pending.reject(error);
     verdicts.clear();
+    if (verdictDebug) {
+      for (const handle of verdictDebug.values()) handle.failed(error);
+      verdictDebug.clear();
+    }
     deferredInit.reject(error); // no-op once resolved
     // A dead worker can never send the 'closed' reply close() is awaiting —
     // it either never received the 'close' message or is gone before it could
@@ -655,7 +664,8 @@ export const createPoolWorker = (deps: {
         if (deferredChunk && callId === currentCallId) {
           worker.inTransaction = data.inTransaction;
           const affected = data.affected;
-          debugQuery?.done(affected, data.prepared);
+          debugWorker?.run(undefined);
+          debugQuery?.done(affected, data.prepared, data.elapsed);
           // The affected count is the last thing the generator yields, so it
           // queues behind whatever chunks are still waiting — a `done` that
           // jumped the queue would truncate them.
@@ -675,7 +685,8 @@ export const createPoolWorker = (deps: {
         if (deferredChunk && callId === currentCallId) {
           worker.inTransaction = data.inTransaction;
           const error = statementError(data);
-          debugQuery?.failed(error);
+          debugWorker?.run(undefined);
+          debugQuery?.failed(error, data.elapsed);
           deferredChunk.reject(error);
           // Deliberately NOT `failure = error`, which is what a `messageerror`
           // and a death do. Those two mean the transport is broken, so nothing
@@ -704,12 +715,23 @@ export const createPoolWorker = (deps: {
         break;
       }
       case 'verdict': {
+        if (verdictDebug) {
+          verdictDebug
+            .get(data.callId)
+            ?.done(0, data.prepared ?? 0, data.elapsed);
+          verdictDebug.delete(data.callId);
+        }
         verdicts.get(data.callId)?.resolve(data.kind);
         verdicts.delete(data.callId);
         break;
       }
       case 'verdict-error': {
-        verdicts.get(data.callId)?.reject(statementError(data));
+        const error = statementError(data);
+        if (verdictDebug) {
+          verdictDebug.get(data.callId)?.failed(error, data.elapsed);
+          verdictDebug.delete(data.callId);
+        }
+        verdicts.get(data.callId)?.reject(error);
         verdicts.delete(data.callId);
         break;
       }
@@ -721,6 +743,14 @@ export const createPoolWorker = (deps: {
       case 'not-found': {
         // Same as deleted: only the delete-worker path (src/delete.ts) receives
         // this message. A connection worker never sends it.
+        break;
+      }
+      case 'run': {
+        // Posted by a debug worker only; a late one is ignored, as a chunk is.
+        if (deferredChunk && data.callId === currentCallId) {
+          debugWorker?.run(data.stage);
+          debugQuery?.stage(data.stage, data.elapsed);
+        } else verdictDebug?.get(data.callId)?.stage(data.stage, data.elapsed);
         break;
       }
       default: {
@@ -1044,6 +1074,8 @@ export const createPoolWorker = (deps: {
       const callId = ++lastCallId;
       const pending = Promise.withResolvers<Verdict>();
       verdicts.set(callId, pending);
+      const handle = debugWorker?.verdict(sql);
+      if (handle) verdictDebug?.set(callId, handle);
       worker.postMessage({ type: 'verdict', callId, sql });
       return pending.promise;
     },
@@ -1119,6 +1151,7 @@ export const createPoolWorker = (deps: {
     vfs,
     build,
     wasm,
+    ...(createWorkerDebugState ? { debug: true as const } : {}),
     pragmas,
     statementCacheSize,
     statementCacheBytes,

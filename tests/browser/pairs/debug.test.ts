@@ -158,8 +158,10 @@ describe('the pool-level request history', () => {
     if (!debug) throw new Error('debug not available');
     const { requests, workers } = debug;
     expect(workers[0]?.generation).toBe(1);
-    const crashed = requests.find((r) =>
-      r.queries.some((q) => q.sql.includes('WITH RECURSIVE')),
+    const crashed = requests.find(
+      (r) =>
+        r.kind !== 'verdict' &&
+        r.queries.some((q) => q.sql.includes('WITH RECURSIVE')),
     );
     if (!crashed) throw new Error('no crashed request found');
     expect(crashed).toMatchObject({ worker: 0, generation: 0 });
@@ -184,8 +186,10 @@ describe('the pool-level request history', () => {
 
     const dbDebug = db.debug;
     if (!dbDebug) throw new Error('debug not available');
-    const reads = dbDebug.requests.filter((r) =>
-      r.queries.some((q) => q.sql === 'SELECT a FROM t'),
+    const reads = dbDebug.requests.filter(
+      (r) =>
+        r.kind !== 'verdict' &&
+        r.queries.some((q) => q.sql === 'SELECT a FROM t'),
     );
     const [all, first] = reads.map((r) =>
       r.queries.find((q) => q.sql === 'SELECT a FROM t'),

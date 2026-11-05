@@ -191,6 +191,10 @@ describe('aborting a running statement', () => {
       // for it, where the 20 M rows take seconds on either engine.
       await sleep(300);
       expect(db.debug?.workers[0]?.status).toBe('ABORTING');
+      // And the worker is still in the step. Not 'computing': a `sync` build
+      // without isolation installs no progress handler, so that stage never
+      // appears here.
+      expect(db.debug?.workers[0]?.run).toBe('stepping');
     } finally {
       await db.close();
     }

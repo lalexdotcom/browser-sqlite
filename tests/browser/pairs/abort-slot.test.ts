@@ -4,10 +4,12 @@ import {
   interceptWorkers,
   LONG_QUERY,
   longQuery,
-  sleep,
+  reachedWithin,
+  theQueryIsComputing,
   theQueryIsRunning,
   waitUntil,
 } from '../helpers';
+import { exercised } from '../helpers/exercised';
 
 describe('the sync build, isolated', {
   tags: ['build:sync', 'requires:interruptible'],
@@ -60,7 +62,9 @@ describe('the sync build, isolated', {
     // timeout, before SELECT 1 gets the worker.
     const db = await createTestClient({
       poolSize: 1,
+      debug: true,
     });
+    let computing = false;
     try {
       // The first row is immediate; the second is a 2 G-row count, one long
       // step (20 M took ~4 343 ms unaborted, measured for the test above).
@@ -71,15 +75,22 @@ describe('the sync build, isolated', {
         chunkSize: 1,
       })) {
         expect(rows).toEqual([{ n: 0 }]);
-        // The credit window lets the worker go straight into the count; this
-        // leaves it time to be inside that step before the break.
-        await sleep(100);
+        // The credit window lets the worker go straight into the count; wait
+        // until it is inside that step before the break.
+        computing = await reachedWithin(theQueryIsComputing(db, sql), 5_000);
         break;
       }
       expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
     } finally {
       await db.close();
     }
+    if (
+      !(await exercised(
+        computing,
+        'the count was not computing before the break',
+      ))
+    )
+      return;
   });
 
   it('stops a running statement when first() leaves it, with no signal', async () => {
@@ -90,16 +101,33 @@ describe('the sync build, isolated', {
     // gets the worker.
     const db = await createTestClient({
       poolSize: 1,
+      debug: true,
     });
+    let computing = false;
     try {
       await db.all('SELECT 1');
       // The second row is a 2 G-row count, one long step (20 M: ~4 343 ms).
       const sql = `SELECT 1 AS n UNION ALL SELECT (${longQuery(2_000_000_000)})`;
       expect(await db.first<{ n: number }>(sql)).toEqual({ n: 1 });
       expect(await db.all('SELECT 1 AS one')).toEqual([{ one: 1 }]);
+      // The cut proves nothing unless the worker was inside the count when the
+      // stop came. Its stage is recorded when it closes, with the reply that
+      // the SELECT 1 above has waited behind.
+      const record = (db.debug?.requests ?? [])
+        .flatMap((r) => r.queries)
+        .filter((q) => q.sql === sql)
+        .at(-1);
+      computing = record?.stages.computing !== undefined;
     } finally {
       await db.close();
     }
+    if (
+      !(await exercised(
+        computing,
+        'the count was not computing when first() left it',
+      ))
+    )
+      return;
   });
 
   it("does not carry a dead worker's abort into its replacement", async () => {
@@ -183,8 +211,8 @@ describe('the sync build, isolated', {
     // The cause is asserted rather than a time, which a slow runner stretches.
     // Firefox frees the file of a terminated worker at once, slot or not, so
     // only Chromium and Safari can fail this (red on Chrome with the slot cut).
-    expect(records[1]?.stages).toContain('opening the database');
-    expect(records[1]?.stages).not.toContain('waiting for a held file');
+    expect(records[1]?.stages).toContain('opening-database');
+    expect(records[1]?.stages).not.toContain('awaiting-held-file');
     // The replacement does not inherit KILLED_SLOT: a statement past the
     // progress handler's 100 000-op threshold still completes, twice.
     for (let run = 0; run < 2; run++) {

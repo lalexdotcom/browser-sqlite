@@ -81,7 +81,7 @@ describe('worker lifecycle — crash detection', () => {
       // termination, and the cleanup's deleteDatabase answers BUSY. Bounded
       // as the library's open is (30 s), not at waitUntil's 5 s: on Safari 26
       // and 27 a worker that instantiates its wasm after another has run hot
-      // wasm stalls 1-11 s in `instantiating wasm` (2026-10-23).
+      // wasm stalls 1-11 s in `instantiating-wasm` (2026-10-23).
       if (attempt === 0)
         await waitUntil(
           () => records[1]?.received.includes('ready') ?? false,
@@ -202,6 +202,37 @@ describe('worker lifecycle — crash detection', () => {
     await expect(running).rejects.toMatchObject({ code: 'PROTOCOL_ERROR' });
     expect(records[0].terminated).toBe(false);
     expect(records.length).toBe(1);
+  });
+});
+
+describe('worker lifecycle — boot stages', () => {
+  // Falsifiable: post the old English phrases, or drop a `boot(...)` call.
+  it("a debug client's worker reports its boot stages as codes", async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({ poolSize: 1, debug: true });
+    await db.all('SELECT 1');
+
+    expect(records[0]?.stages).toEqual(
+      expect.arrayContaining([
+        'loading-build',
+        'instantiating-wasm',
+        'loading-vfs-module',
+        'creating-vfs',
+        'opening-database',
+        'applying-pragmas',
+      ]),
+    );
+    expect(db.debug?.workers[0]?.boot).toBe('applying-pragmas');
+  });
+
+  // Falsifiable: make `boot()` in worker.ts post whatever `debug` says.
+  it('a client without debug receives no boot stage', async () => {
+    const records = interceptWorkers();
+    const db = await createTestClient({ poolSize: 1 });
+    await db.all('SELECT 1');
+
+    expect(records[0]?.received).toContain('ready');
+    expect(records[0]?.received).not.toContain('boot');
   });
 });
 

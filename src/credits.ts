@@ -24,6 +24,8 @@ export type CreditGate = {
   /** Spend one credit. Always costs one task turn first. */
   take: (callId: number) => Promise<'go' | 'stopped'>;
   isStopped: () => boolean;
+  /** Whether `take` would park for a credit: none left and no stop. */
+  wouldWait: () => boolean;
   tick: Tick;
 };
 
@@ -89,6 +91,7 @@ export const createCreditGate = (tick: Tick): CreditGate => {
     },
 
     isStopped: () => stopped,
+    wouldWait: () => credits <= 0 && !stopped,
     tick,
   };
 };

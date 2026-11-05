@@ -136,6 +136,8 @@ export type ClientMessageData =
       /** Bytes retained per worker; see `src/client.ts`. Internal. */
       statementCacheBytes?: number;
       wasm?: WasmLocation;
+      /** Sent for a client created with `debug`; the worker then posts its boot stages. */
+      debug?: true;
       /** Shared abort slots, one Int32 per worker. Isolated contexts only. */
       abortSlots?: SharedArrayBuffer;
       /** This worker's index into `abortSlots`. */
@@ -206,19 +208,35 @@ export type ClientMessageData =
  * finishes stopped.
  */
 export type BootStage =
-  | 'waiting for the client'
-  | 'loading the build'
-  | 'instantiating wasm'
-  | 'loading the VFS module'
-  | 'creating the VFS'
-  | 'waiting for the open lock'
-  | 'opening the database'
-  | 'waiting for a held file'
-  | 'applying pragmas';
+  | 'awaiting-client'
+  | 'loading-build'
+  | 'instantiating-wasm'
+  | 'loading-vfs-module'
+  | 'creating-vfs'
+  | 'awaiting-open-lock'
+  | 'opening-database'
+  | 'awaiting-held-file'
+  | 'applying-pragmas';
+
+/**
+ * The stage a query is in, posted as a `run` message only to a debug client.
+ * Public as the type of `WorkerDebugState.run`.
+ */
+export type RunStage =
+  | 'awaiting-turn'
+  | 'preparing'
+  | 'stepping'
+  | 'computing'
+  | 'awaiting-credit';
 
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
   | { type: 'boot'; callId: number; stage: BootStage }
+  /**
+   * A query entered `stage`. `elapsed` is the milliseconds spent in the stage
+   * it leaves, absent on the query's first stage.
+   */
+  | { type: 'run'; callId: number; stage: RunStage; elapsed?: number }
   /**
    * The worker found a feature of `declineWithout` missing and opened nothing:
    * the environment caps the pool (spec 2026-09-13).
@@ -246,6 +264,8 @@ export type WorkerMessageData =
        * "for a sub-millisecond effect, count the round trips").
        */
       prepared: number;
+      /** Milliseconds in the stage the query ended in; set for a debug client only. */
+      elapsed?: number;
       /**
        * Whether the connection is inside a transaction once this query has
        * ended — `sqlite3_get_autocommit() === 0`. SQLite can leave a
@@ -281,6 +301,8 @@ export type WorkerMessageData =
        * consumer sees.
        */
       errorCode?: SQLiteErrorCode | 'ROUTED_AS_READ';
+      /** Milliseconds in the stage the query failed in; set for a debug client only. */
+      elapsed?: number;
       /**
        * Whether the connection is inside a transaction once this query has
        * ended — `sqlite3_get_autocommit() === 0`. SQLite can leave a
@@ -289,7 +311,15 @@ export type WorkerMessageData =
        */
       inTransaction?: boolean | undefined;
     }
-  | { type: 'verdict'; callId: number; kind: Verdict }
+  | {
+      type: 'verdict';
+      callId: number;
+      kind: Verdict;
+      /** Milliseconds in the stage the verdict ended in; set for a debug client only. */
+      elapsed?: number;
+      /** 1 when this verdict compiled the statement, 0 on a cache hit; set for a debug client only. */
+      prepared?: number;
+    }
   /** The verdict's prepare failed: a failure says nothing of the statement's kind. */
   | {
       type: 'verdict-error';
@@ -297,6 +327,8 @@ export type WorkerMessageData =
       message: string;
       sqliteCode?: SQLiteResultCode;
       sqliteExtendedCode?: number;
+      /** Milliseconds in the stage the verdict failed in; set for a debug client only. */
+      elapsed?: number;
     }
   | { type: 'closed'; callId: number }
   /** Nothing of this worker's IndexedDB is live any more; terminate it. */
