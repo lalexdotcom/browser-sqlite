@@ -1138,7 +1138,10 @@ const open = (file: string, options: OpenOptions) => {
         true,
       );
       // Under the credit gate, as any chunk; each let go once handed over.
-      while (kept.length > 0) yield kept.shift() as RowsBlock;
+      while (kept.length > 0) {
+        yield kept.shift() as RowsBlock;
+        stages?.enter('stepping');
+      }
     };
 
     /** Not a generator: a read takes no extra level of delegation. */
@@ -1440,22 +1443,24 @@ const open = (file: string, options: OpenOptions) => {
 
           const elapsed = stages?.end();
           if (closing) {
-            reply({
+            const message: Extract<WorkerMessageData, { type: 'error' }> = {
               type: 'error',
               callId,
               message: 'The SQLite client has been closed.',
               inTransaction: await connectionInTransaction(),
-              ...(elapsed !== undefined ? { elapsed } : {}),
-            });
+            };
+            if (elapsed !== undefined) message.elapsed = elapsed;
+            reply(message);
           } else {
-            reply({
+            const message: Extract<WorkerMessageData, { type: 'done' }> = {
               type: 'done',
               callId,
               affected,
               prepared,
               inTransaction: await connectionInTransaction(),
-              ...(elapsed !== undefined ? { elapsed } : {}),
-            });
+            };
+            if (elapsed !== undefined) message.elapsed = elapsed;
+            reply(message);
           }
         } catch (e) {
           if (denied !== undefined && sqliteCodeOf(e) === SQLITE_AUTH) {
@@ -1469,10 +1474,9 @@ const open = (file: string, options: OpenOptions) => {
           // boundary and the client can only string-match the message.
           const sqliteCode = sqliteCodeOf(e);
           const elapsed = stages?.end();
-          reply({
+          const message: Extract<WorkerMessageData, { type: 'error' }> = {
             type: 'error',
             callId,
-            ...(elapsed !== undefined ? { elapsed } : {}),
             ...(typeof e === 'object'
               ? e instanceof Error
                 ? { message: e.message, cause: cloneable(e.cause) }
@@ -1490,7 +1494,9 @@ const open = (file: string, options: OpenOptions) => {
               ? { errorCode: (e as { errorCode: SQLiteErrorCode }).errorCode }
               : {}),
             inTransaction: await connectionInTransaction(),
-          });
+          };
+          if (elapsed !== undefined) message.elapsed = elapsed;
+          reply(message);
         } finally {
           allowControl = false;
           queryRunning?.resolve();

@@ -512,7 +512,7 @@ export const theQueryIsRunning =
       );
     });
 
-/** Whether the worker is inside a step of `sql` long enough to be computing: needs a `debug` client. */
+/** Whether the worker's `run` is `computing` for `sql`: a step long enough to fire the progress handler, and also between two chunks while credit is available (the stage stays `computing` until the query waits or ends): needs a `debug` client. */
 export const theQueryIsComputing =
   (db: Awaited<ReturnType<typeof createTestClient>>, sql: string) =>
   (): boolean =>

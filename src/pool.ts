@@ -728,7 +728,7 @@ export const createPoolWorker = (deps: {
       }
       case 'run': {
         // Posted by a debug worker only; a late one is ignored, as a chunk is.
-        if (data.callId === currentCallId) {
+        if (deferredChunk && data.callId === currentCallId) {
           debugWorker?.run(data.stage);
           debugQuery?.stage(data.stage, data.elapsed);
         }
