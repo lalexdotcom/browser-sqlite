@@ -3,10 +3,12 @@ import {
   createTestClient,
   interceptWorkers,
   killSilently,
+  reachedWithin,
   scaled,
   sleep,
   waitUntil,
 } from '../helpers';
+import { exercised } from '../helpers/exercised';
 
 /** 5000 rows, one column — enough chunks that running ahead is obvious. */
 const seed = async (db: Awaited<ReturnType<typeof createTestClient>>) => {
@@ -27,22 +29,36 @@ describe('back-pressure', () => {
   // posts all 5000 chunks while this consumer sleeps. Pins spec §3.3.
   it('does not let the worker run ahead of a slow consumer', async () => {
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({ poolSize: 1, debug: true });
     await seed(db);
 
     let seen = 0;
+    let parked = false;
     for await (const _rows of db.chunk('SELECT id FROM t', [], {
       chunkSize: 1,
     })) {
       seen += 1;
       if (seen === 5) {
-        await sleep(300);
+        // The worker has sent what its window allows and waits for a credit:
+        // its stage says so, where a sleep only hopes it had the time.
+        parked = await reachedWithin(
+          () => db.debug?.workers[0]?.run === 'awaiting-credit',
+          5_000,
+        );
+        // A worker that never parks (no credit wait) runs ahead instead; give
+        // it a bounded moment to do so, so the assertion below turns red.
+        if (!parked) await sleep(300);
         break;
       }
     }
 
     // Five consumed, plus at most one window of look-ahead.
     expect(chunksPosted(records[0])).toBeLessThanOrEqual(7);
+    // The bound proves nothing unless the worker was seen waiting on a credit.
+    if (
+      !(await exercised(parked, 'the worker was never seen awaiting a credit'))
+    )
+      return;
   });
 
   // Falsifiable: remove the `stop` message from pool.ts's drain, or the wake
@@ -84,7 +100,11 @@ describe('back-pressure', () => {
   // by design (B2); the caller must abort, as it does here.
   it('reclaims a worker killed while it is parked on a credit', async () => {
     const records = interceptWorkers();
-    const db = await createTestClient({ poolSize: 1, drainTimeout: 500 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: 500,
+      debug: true,
+    });
     await seed(db);
 
     const caller = new AbortController();
@@ -99,9 +119,9 @@ describe('back-pressure', () => {
     })();
 
     // The credit window full: the worker has sent all it may and waits for a
-    // credit, not inside a step.
+    // credit, not inside a step. Its own stage says so.
     await waitUntil(
-      () => chunksPosted(records[0]) >= 2,
+      () => db.debug?.workers[0]?.run === 'awaiting-credit',
       'the worker parked on a credit',
     );
     killSilently(records[0].worker); // silent death: no event of any kind
