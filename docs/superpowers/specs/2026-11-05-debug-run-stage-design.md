@@ -23,7 +23,7 @@ At the same time, `BootStage` — today a union of English phrases — becomes a
 
 - No event or subscription API on `db.debug`: it stays a tree read by polling.
 - No timeline (ordered list of transitions) per query: a fixed-size per-stage total instead (see § Stages).
-- No stage for the verdict path, the freshness barrier as such, or the `delete` worker. A barrier or a transaction's `BEGIN` is a query of its own (`internal: true`) and gets stages like any query.
+- No stage for the freshness barrier as such, or the `delete` worker. (The verdict path, first excluded here, has its own section: § Addendum — the verdict in the debug tree.) A barrier or a transaction's `BEGIN` is a query of its own (`internal: true`) and gets stages like any query.
 - No change to the `status` field or its values.
 
 ## Anti-goals
@@ -117,3 +117,26 @@ The savepoint statements a write opens or concludes before the caller's statemen
 - Where exactly `preparing` is posted in the multi-statement branch, whose compile happens inside wa-sqlite's `statements()` iterator.
 - Handle shapes in `src/debug.ts`; message names beyond those fixed above.
 - Test placement (unit file names, which browser file holds the run-stage tests).
+
+## Addendum — the verdict in the debug tree (2026-11-05)
+
+Found by the final review, decided with the user: the non-goal "no stage for the verdict path" is lifted. Before, the first time a client saw a SQL text through `all()`, `run()`, `chunk()` or `stream()`, it compiled it in a verdict that appeared nowhere in `db.debug`; the query that followed found the statement cached and showed no `preparing`. A reader concluded the statement was cached, which was false, and the wait and compile of a first call — what diagnosis wants — were invisible.
+
+### Decisions (the user's)
+
+- **A verdict that takes its own lease is a request of its own**, `kind: 'verdict'`, because `API.md` defines a request as one lease of a worker and `scheduler.acquire('verdict', …)` is one. It shows the wait for a worker (`startTime` → `acquireTime`), the worker and generation that served it, and one `internal` query for the classification, with its stages. One verdict can serve several concurrent callers (the memo's `waiters`): it appears once, as it happened. Each lease of `askVerdict`'s retry loop (a death, a passing failure, a borrowed worker that failed the prepare) is one request; the barrier a verdict applies is a query of that request, as any barrier is of its lease's request.
+- **A verdict asked on a worker a transaction already holds** (`opensSavepoint` → `kindAt`, a statement with its own `signal` in a read-write transaction) takes no lease: it is an `internal` query of the transaction's request.
+- `RequestDebugState.kind` becomes `'read' | 'write' | 'verdict'`: an `Added` entry, not `Breaking` (`db.debug` is outside semver).
+
+### Behaviour
+
+- **The worker** reports a verdict's stages as it does a query's, with the verdict's own `callId`: `awaiting-turn` when its mutex is held, `preparing` when it compiles (none when `verdictOf` reads the cache). A verdict can run while a query of the same worker is paused for credit, so it uses a tracker of its own, never the query's. Its `verdict` and `verdict-error` replies carry the last stage's `elapsed`, as a query's terminal reply does. Debug workers only; the same cost rule as § Anti-goals.
+- **The pool** keeps a debug handle per pending verdict, by `callId` (beside `verdicts`), never in `debugQuery`, which belongs to the query in flight and may be paused on the same worker. A `run` message whose `callId` is a pending verdict's goes to that handle; the verdict's reply closes it; `poison` fails it like the query's. A `run` for a verdict does not set `workers[i].run`.
+- **The verdict's query** attaches to the slot's active request, as a query does: the verdict request when the verdict took a free worker, the transaction's request when the transaction asked on its own worker.
+- **A borrowed lease** (`offer()`: a transaction lends its idle worker to a waiting verdict): the verdict request becomes the slot's active request for the lease's duration and the transaction's request is active again at its release — the debug tree's `acquired`/`released` must restore the previous active request, not clear it.
+- `API.md` § Debugging: the sentence saying a first-seen SQL text is compiled outside the debug tree is replaced by what is now true — the verdict request and its query.
+
+### Tests
+
+- Unit (`tests/unit/lib/debug.test.ts`): a `'verdict'` request; a borrowed lease restores the slot's previous active request at release, and a query issued after it attaches to that request again.
+- Browser (`tests/browser/pairs/run-stages.test.ts`): a first `db.all(SQL)` on a debug client with `poolSize: 1` leaves a `kind: 'verdict'` request ending before the read request, whose one query has `sql === SQL`, `internal: true` and a `preparing` stage; the read request's query has no `preparing`. In a read-write transaction, a statement given its own `signal` leaves an `internal` query with its SQL and a `preparing` stage in the transaction's request, before the statement's own query.
