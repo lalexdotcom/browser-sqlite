@@ -1,6 +1,6 @@
 # Follow-up — the verdict's compile and wait are invisible in `db.debug` (2026-11-05)
 
-**Status: IMPLEMENTED on `feat/debug-run-stage` (2026-11-05), awaiting merge** — the user chose to do it on the same branch, as a request of its own (`kind: 'verdict'`), for the reasons below; spec § Addendum, plan `docs/superpowers/plans/2026-11-05-debug-verdict-stage.md`; as built in `mem:follow-ups/debug-run-stage`. What follows is the problem as found. Part of `mem:follow-ups`; context in `mem:follow-ups/debug-run-stage`.
+**Status: CLOSED 2026-11-05** — merged with `feat/debug-run-stage` — the user chose to do it on the same branch, as a request of its own (`kind: 'verdict'`), for the reasons below; spec § Addendum, plan `docs/superpowers/plans/2026-11-05-debug-verdict-stage.md`; as built in `mem:follow-ups/debug-run-stage`. What follows is the problem as found. Part of `mem:follow-ups`; context in `mem:follow-ups/debug-run-stage`.
 
 The first time a client sees a SQL text through `all()`, `run()`, `chunk()` or `stream()`, it compiles it to classify it (the verdict, memoised per SQL). The verdict takes its worker through `scheduler.acquire('verdict', …)` (`src/client.ts`), not through the instrumented acquire, and runs before the debug query record exists: its lease wait, the worker mutex and its compile are in no request and no query. The query that follows on the same worker then finds the statement cached: `prepared: 0`, no `preparing` stage; on another worker, `preparing` shows. `API.md` § Debugging states the consumer-visible fact since the branch.
 

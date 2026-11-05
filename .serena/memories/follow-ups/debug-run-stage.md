@@ -1,6 +1,6 @@
 # Follow-up — a `run` sub-status for a busy worker, and `BootStage` as codes (user, 2026-11-05)
 
-**Status: IMPLEMENTED on `feat/debug-run-stage` (2026-11-05), awaiting the user's approval and merge.** Spec `docs/superpowers/specs/2026-11-05-debug-run-stage-design.md`, plan `docs/superpowers/plans/2026-11-05-debug-run-stage.md`. The text below is the design as first written; where the built version differs, § As built says so. Kept marked breaking (`feat(debug)!`) although `db.debug` is outside semver: no stable release yet, so it costs nothing (user, 2026-11-05).
+**Status: CLOSED 2026-11-05** — `feat/debug-run-stage` merged into `main` (`mem:history/2026-11-02-to-08`). Spec `docs/superpowers/specs/2026-11-05-debug-run-stage-design.md`, plan `docs/superpowers/plans/2026-11-05-debug-run-stage.md`. The text below is the design as first written; where the built version differs, § As built says so. Kept marked breaking (`feat(debug)!`) although `db.debug` is outside semver: no stable release yet, so it costs nothing (user, 2026-11-05).
 
 ## As built (2026-11-05)
 
