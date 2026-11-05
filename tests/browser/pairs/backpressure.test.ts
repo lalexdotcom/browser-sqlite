@@ -45,9 +45,10 @@ describe('back-pressure', () => {
           () => db.debug?.workers[0]?.run === 'awaiting-credit',
           5_000,
         );
-        // A worker that never parks (no credit wait) runs ahead instead; give
-        // it a bounded moment to do so, so the assertion below turns red.
-        if (!parked) await sleep(300);
+        // Parked or not, give a worker that runs ahead (credit granted early,
+        // or no credit wait) a bounded moment to do so, so the assertion below
+        // turns red.
+        await sleep(scaled(300));
         break;
       }
     }
