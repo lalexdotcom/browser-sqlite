@@ -201,11 +201,16 @@ describe('the run stages of a debug client', () => {
     }
   });
 
-  it("a verdict whose worker dies ends its query failed, and the retry's is served", async () => {
+  // Two workers, as run.test.ts's "asks once more": a pair that caps the pool
+  // at one worker has no second one to serve the retry.
+  it("a verdict whose worker dies ends its query failed, and the retry's is served", {
+    tags: ['requires:two-workers'],
+  }, async () => {
     const SQL = 'SELECT 5 AS x';
     const records = interceptWorkers();
     const db = await createTestClient({ debug: true, poolSize: 2 });
     try {
+      await db.run('CREATE TABLE t (a, b)');
       await waitUntil(() => {
         const workers = db.debug?.workers ?? [];
         return (
@@ -231,11 +236,8 @@ describe('the run stages of a debug client', () => {
         };
       }
       await db.run(SQL);
-      const verdicts = (db.debug?.requests ?? []).filter(
-        (request) => request.kind === 'verdict',
-      );
       expect(crashed).toBe(true);
-      const [dead, served] = verdicts.map((request) => request.queries[0]);
+      const [dead, served] = queriesOf(db, SQL);
       expect(dead?.error).toBeDefined();
       expect(dead?.endTime).toBeDefined();
       expect(served?.error).toBeUndefined();
