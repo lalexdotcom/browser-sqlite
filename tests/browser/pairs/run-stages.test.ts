@@ -167,6 +167,84 @@ describe('the run stages of a debug client', () => {
     }
   });
 
+  it("a verdict's query counts the statement it compiled", async () => {
+    const SQL = 'SELECT 7 + 1 AS v';
+    const db = await createTestClient({ debug: true, poolSize: 1 });
+    try {
+      await db.all(SQL);
+      const verdict = (db.debug?.requests ?? []).find(
+        (request) => request.kind === 'verdict',
+      );
+      expect(verdict?.queries[0]?.prepared).toBe(1);
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("a verdict served from the worker's statement cache compiles nothing", async () => {
+    // first() prepares SQL and caches it; all() then asks a verdict.
+    const SQL = 'SELECT 9 + 1 AS v';
+    const db = await createTestClient({ debug: true, poolSize: 1 });
+    try {
+      await db.first(SQL);
+      await db.all(SQL);
+      const verdict = (db.debug?.requests ?? []).find(
+        (request) => request.kind === 'verdict',
+      );
+      expect(verdict?.queries[0]?.sql).toBe(SQL);
+      expect(verdict?.queries[0]?.prepared).toBe(0);
+      expect(Object.keys(verdict?.queries[0]?.stages ?? {})).not.toContain(
+        'preparing',
+      );
+    } finally {
+      await db.close();
+    }
+  });
+
+  it("a verdict whose worker dies ends its query failed, and the retry's is served", async () => {
+    const SQL = 'SELECT 5 AS x';
+    const records = interceptWorkers();
+    const db = await createTestClient({ debug: true, poolSize: 2 });
+    try {
+      await waitUntil(() => {
+        const workers = db.debug?.workers ?? [];
+        return (
+          workers.length === 2 &&
+          workers.every((worker) => worker.status === 'READY')
+        );
+      }, 'every worker READY');
+      // The first verdict is posted, then its worker reports an error: the
+      // pool's death path, which fails the verdict's debug query.
+      let crashed = false;
+      for (const { worker } of records) {
+        const post = worker.postMessage.bind(worker) as (
+          message: unknown,
+          ...rest: unknown[]
+        ) => void;
+        worker.postMessage = (message: unknown, ...rest: unknown[]) => {
+          const first =
+            (message as { type?: string }).type === 'verdict' && !crashed;
+          if (first) crashed = true;
+          post(message, ...rest);
+          if (first)
+            worker.dispatchEvent(new ErrorEvent('error', { message: 'x' }));
+        };
+      }
+      await db.run(SQL);
+      const verdicts = (db.debug?.requests ?? []).filter(
+        (request) => request.kind === 'verdict',
+      );
+      expect(crashed).toBe(true);
+      const [dead, served] = verdicts.map((request) => request.queries[0]);
+      expect(dead?.error).toBeDefined();
+      expect(dead?.endTime).toBeDefined();
+      expect(served?.error).toBeUndefined();
+      expect(served?.endTime).toBeDefined();
+    } finally {
+      await db.close();
+    }
+  });
+
   it('a client without debug receives no run stage', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ poolSize: 1 });
