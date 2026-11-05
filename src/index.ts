@@ -18,6 +18,7 @@ export type {
   ClientDebugState,
   QueryDebugState,
   RequestDebugState,
+  RunStage,
   WorkerDebugState,
 } from './debug';
 export * from './delete';

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createClientDebug } from '../../../src/debug';
 
 describe('the pool-level request history', () => {
@@ -295,6 +295,70 @@ describe('the pool-level request history', () => {
     debug.createRequestDebugState('read').acquired(0);
     for (let i = 0; i < 200; i++) w0.query(`SELECT ${i}`);
     expect(debug.state.requests[0]?.queries.length).toBe(50);
+  });
+
+  describe('run stages', () => {
+    const start = () => {
+      const debug = make();
+      const w0 = debug.createWorkerDebugState(0, 'w0');
+      debug.createRequestDebugState('read').acquired(0);
+      const q = w0.query('SELECT 1');
+      if (!q) throw new Error('query not recorded');
+      return { debug, q };
+    };
+    const stagesOf = (debug: ReturnType<typeof make>) =>
+      debug.state.requests[0]?.queries[0]?.stages;
+
+    it("cumulates each stage's duration as the next one begins", () => {
+      const { debug, q } = start();
+      q.stage('preparing', undefined);
+      q.stage('stepping', 2);
+      q.stage('awaiting-credit', 5);
+      q.stage('stepping', 1);
+      q.done(0, 1, 3);
+      expect(stagesOf(debug)).toEqual({
+        preparing: 2,
+        stepping: 8,
+        'awaiting-credit': 1,
+      });
+    });
+
+    it('leaves stages empty for a query that announced none', () => {
+      const { debug, q } = start();
+      q.done(0, 0, undefined);
+      expect(stagesOf(debug)).toEqual({});
+    });
+
+    it("closes the current stage on the page's clock when the end brings no duration", () => {
+      const now = vi.spyOn(performance, 'now');
+      now.mockReturnValueOnce(100).mockReturnValueOnce(130);
+      try {
+        const { debug, q } = start();
+        q.stage('computing', undefined);
+        q.failed(new Error('x'));
+        expect(stagesOf(debug)?.computing).toBe(30);
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('ignores a stage after the end', () => {
+      const { debug, q } = start();
+      q.done(0, 0, undefined);
+      q.stage('stepping', 4);
+      expect(stagesOf(debug)).toEqual({});
+    });
+
+    it("sets and clears the worker's run stage", () => {
+      const debug = make();
+      const w0 = debug.createWorkerDebugState(0, 'w0');
+      w0.run('stepping');
+      expect(debug.state.workers[0]?.run).toBe('stepping');
+      w0.run(undefined);
+      expect(debug.state.workers[0] && 'run' in debug.state.workers[0]).toBe(
+        false,
+      );
+    });
   });
 
   it('exposes queue depths from the scheduler, never a stale copy', () => {

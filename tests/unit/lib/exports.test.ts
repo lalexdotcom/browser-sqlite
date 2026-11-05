@@ -8,6 +8,7 @@ import type {
   ClientDebugState,
   QueryDebugState,
   RequestDebugState,
+  RunStage,
   SQLiteChunkStream,
   SQLiteDB,
   SQLiteRunResult,
@@ -67,6 +68,7 @@ type _DebugTypesExported = [
   WorkerDebugState,
   RequestDebugState,
   QueryDebugState,
+  RunStage,
 ];
 
 /**
