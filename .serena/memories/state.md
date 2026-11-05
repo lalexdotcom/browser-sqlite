@@ -1,6 +1,6 @@
 # State — where the work stands
 
-**Updated 2026-11-04.** Rewrite this whole file when it stops being true; do not append a
+**Updated 2026-11-05.** Rewrite this whole file when it stops being true; do not append a
 new dated section under the old one, and move what closes to `mem:history` rather than
 keeping it here struck through (rewritten on 2026-10-08 from 38 000 characters, two thirds of
 them closed subjects).
@@ -70,11 +70,11 @@ here on purpose: a total alone cannot say which suite moved.
   that fails once on CI and passes on a re-run is not automatically noise here: a load-sensitive
   defect once reproduced about once in eighteen runs of `pnpm test` and never in isolation, and
   sixteen busy loops around a single-file Firefox run cut time-to-failure twentyfold (ABANDON-WEDGE,
-  `mem:measurements/aborts`).
+  `mem:measurements/aborts`). That is why a timed-out test is retried only above `BSQ_TIME_SCALE` 1, and listed apart when its retry passes (`mem:stack-and-build/ci`, 2026-11-04).
 
 ## In progress
 
-- **2026-11-04: in progress, the second half of making the suite reliable on starved runners** — a test over its own timeout because the runner silenced a worker (`abandon-transaction` on `chrome · OPFSAdaptiveVFS/async`, macOS 26, run 41714043416); the user's rule: no red on a library that works, and never fewer browsers or OS to get there (taking Chrome and Firefox off the macOS 26 matrix refused, user). Proposed: rerun a timed-out test once and report it apart. The first half (the OPFS probe, `test/handle-probe-startup`) merged.
+- **Nothing is in progress (2026-11-05).** `test/retry-timeouts-on-slow-runners` closed: what it did in `mem:history/2026-11-02-to-08`; what it left open in `mem:follow-ups/false-greens-remaining`, and the library change it led to (a debug `run` sub-status, `BootStage` as codes) in `mem:follow-ups/debug-run-stage`, for its own branch and session (user). The OS matrices have not run on its last commits. `main` is ahead of `origin/main` again (not pushed, by convention).
 - **Closed 2026-11-02 (late):** `main` is ahead of `origin/main` (not pushed, by convention); every branch of the day is merged and deleted. What the day did, in `mem:history/2026-11-02-to-08`: one Serena server for every session on TypeScript 7; wa-sqlite repinned to `e4f54a05` (#388 merged upstream); the backlog scoped to a **bugfix-only release** (`mem:follow-ups`, § Deferred); WriteAhead's restart-held test (then fixed for Windows: its holder follows the VFS's `#open` lock); `test-plan.ts` file arguments on Windows (verified on `windows-latest`); **WebKit 329813** filed by the user (Safari's `async` build ~12× slower after a few seconds: JSC's OMG tier on the Asyncify `sqlite3VdbeExec`), tracked in issue #11, `VFS.md`'s note shortened to the symptom and the bug; Safari's back/forward cache keeps a page's database held (`API.md`: close on `pagehide`, reopen on `pageshow`; a first open meeting a held file says so; doing it in the client is DEFERRED as `mem:follow-ups/bfcache-auto-suspend`); issue forms for bugs and feature requests (`.github/ISSUE_TEMPLATE/`); #386's library-side navigation test dropped (the library does not reach #362 there).
 - **Next workstream: the user's pick.** For the bugfix release, `mem:follow-ups` has nothing actionable left on our side: `multi-client-bulkwrite-interleave` waits for a sighting, `macos-ci-instability` is low priority, the WebKit-gated entries (`lifecycle-restart-held`'s Safari part, `safari-suite`, `safari-async-slowdown`) are shown only when their bug moves, and wa-sqlite #386/#387/#389 wait for review. Tooling outside the bugfix scope: the wa-sqlite WebDriver PR, `library-stock-browsers`. `matrix-windows-macos` closed 2026-11-03 (the OS matrices by hand; their place beside `tests-<os>.yaml` and the release left for later, user); macOS 26 stays red on runner speed (`macos-ci-instability`). `ci-live-progress` closed 2026-11-03: follow a run with `node scripts/ci-watch.ts <run-id>` in a background monitor (`mem:stack-and-build/ci`). The release itself is the user's call (`mem:conventions/releasing`).
 - **The next push of `main` runs CI on today's work**, including the issue forms (visible on GitHub only then) and the Windows suite's restart test (green on the spike run 41467529756).

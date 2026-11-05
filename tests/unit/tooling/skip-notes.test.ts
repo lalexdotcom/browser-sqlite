@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { formatSkipNotes } from '../../../scripts/skip-notes.ts';
+import {
+  formatNotExercised,
+  formatRetried,
+  formatSkipNotes,
+} from '../../../scripts/skip-notes.ts';
 
 /**
  * A browser-defect skip shows its reason in every run's output
@@ -81,6 +85,73 @@ describe('formatSkipNotes', () => {
         '  zeta',
         '    tests/browser/b.test.ts › t',
         '      on every cell that ran it (1)',
+        '',
+      ].join('\n'),
+    );
+  });
+});
+
+describe('formatRetried', () => {
+  it('prints nothing when no test needed its retry', () => {
+    expect(
+      formatRetried([{ file: FILE, test: 'a', cell: 'chrome · A/x' }]),
+    ).toBe('');
+  });
+
+  it('names each test that passed on its retry, with its cells', () => {
+    // Falsifiable: leave it out of the merged report and a pass on retry
+    // looks like any other pass once the run ends.
+    expect(
+      formatRetried([
+        { file: FILE, test: 'd > t', cell: 'firefox · A/x', retried: 1 },
+        { file: FILE, test: 'd > t', cell: 'chrome · A/x', retried: 1 },
+        { file: FILE, test: 'd > u', cell: 'chrome · A/x' },
+      ]),
+    ).toBe(
+      [
+        '',
+        'Passed on retry (1 test) — it ran out of time first: look at it',
+        `  ${FILE} › d > t`,
+        '    on chrome · A/x, firefox · A/x',
+        '',
+      ].join('\n'),
+    );
+  });
+});
+
+describe('formatNotExercised', () => {
+  it('prints nothing when every case was reached', () => {
+    expect(
+      formatNotExercised([{ file: FILE, test: 'a', cell: 'chrome · A/x' }]),
+    ).toBe('');
+  });
+
+  it('names each test whose case was not reached, with why and where', () => {
+    // Falsifiable: leave it out of the merged report and the test reads as a
+    // pass that proved its subject.
+    expect(
+      formatNotExercised([
+        {
+          file: FILE,
+          test: 'd > t',
+          cell: 'firefox · A/x',
+          notExercised: 'the verdict was not parked',
+        },
+        {
+          file: FILE,
+          test: 'd > t',
+          cell: 'chrome · A/x',
+          notExercised: 'the verdict was not parked',
+        },
+        { file: FILE, test: 'd > u', cell: 'chrome · A/x' },
+      ]),
+    ).toBe(
+      [
+        '',
+        'Not exercised (1 test) — a precondition was not reached, nothing was proven: look at it',
+        '  the verdict was not parked',
+        `    ${FILE} › d > t`,
+        '      on chrome · A/x, firefox · A/x',
         '',
       ].join('\n'),
     );

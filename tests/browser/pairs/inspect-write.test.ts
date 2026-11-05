@@ -1,6 +1,7 @@
 import { inspectDatabase, SQLiteError } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import {
+  exercised,
   interceptWorkers,
   scaled,
   sharedDatabase,
@@ -11,6 +12,13 @@ import {
 // The write-lock accounting `inspectDatabase` reports is generic — nothing
 // here is specific to one VFS family — so the no-client case below follows
 // the target, tagging only that the database outlives its worker.
+
+/**
+ * The deadline of a statement that waits on a verdict or the write lock.
+ * Wide: 300 ms could expire before the verdict was even asked on a starved
+ * runner, leaving the case unexercised (2026-11-05).
+ */
+const VERDICT_DEADLINE_MS = scaled(1_000);
 
 describe('inspectDatabase write', () => {
   it('is empty when nobody writes', {
@@ -136,23 +144,24 @@ describe('a verdict that gives up says who was holding', () => {
     const { b, transaction, commit, release, held } = await setUp();
 
     const failure = await b
-      .run('INSERT INTO t VALUES (2)', [], { timeout: 300 })
+      .run('INSERT INTO t VALUES (2)', [], { timeout: VERDICT_DEADLINE_MS })
       .then(
         () => undefined,
         (error: unknown) => error as SQLiteError,
       );
 
-    // The verdict was asked and is parked, or the case is not exercised.
-    expect(held.length).toBeGreaterThan(0);
-    expect(failure).toBeInstanceOf(SQLiteError);
-    expect(failure?.code).toBe('OPERATION_TIMEOUT');
-    expect(failure?.timeout).toBe(300);
-    expect(failure?.message).toContain('this tab');
-
+    const parked = held.length > 0;
     commit();
     await transaction;
     release();
     await expect(b.run('INSERT INTO t VALUES (3)')).resolves.toBeDefined();
+
+    // The verdict was asked and parked before the deadline expired.
+    if (!(await exercised(parked, 'the verdict was not parked'))) return;
+    expect(failure).toBeInstanceOf(SQLiteError);
+    expect(failure?.code).toBe('OPERATION_TIMEOUT');
+    expect(failure?.timeout).toBe(VERDICT_DEADLINE_MS);
+    expect(failure?.message).toContain('this tab');
   });
 
   // Falsifiable: drop the isDeadlineError gate in explainWriteLockTimeout in
@@ -186,7 +195,7 @@ describe('a verdict that gives up says who was holding', () => {
     release();
     // Asks the verdict, memoises it, then gives up on the lock.
     await expect(
-      b.run('INSERT INTO t VALUES (2)', [], { timeout: 100 }),
+      b.run('INSERT INTO t VALUES (2)', [], { timeout: VERDICT_DEADLINE_MS }),
     ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
 
     const ctl = new AbortController();
@@ -194,21 +203,31 @@ describe('a verdict that gives up says who was holding', () => {
       signal: ctl.signal,
     });
     waiting.catch(() => {});
-    // b queues on the write lock behind a's transaction, or the case is not
-    // exercised.
+    // b queues on the write lock behind a's transaction. Bounded: not
+    // queuing is a precondition missed, not a failure (`exercised` below).
     let queued = 0;
-    await waitUntil(async () => {
-      queued = (await inspectDatabase(shared.name, { vfs: TEST_TARGET.vfs }))
-        .write.waiting;
-      return queued >= 1;
-    }, 'b queued on the write lock').catch(() => {});
-    expect(queued).toBe(1);
+    await waitUntil(
+      async () => {
+        queued = (await inspectDatabase(shared.name, { vfs: TEST_TARGET.vfs }))
+          .write.waiting;
+        return queued >= 1;
+      },
+      'b queued on the write lock',
+      5_000,
+    ).catch(() => {});
+    const queuedOnLock = queued === 1;
     const reason = new SQLiteError('OPERATION_TIMEOUT', 'the caller gave up');
     ctl.abort(reason);
-    await expect(waiting).rejects.toBe(reason);
+    const outcome = await waiting.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
 
     commit();
     await transaction;
+    if (!(await exercised(queuedOnLock, 'b was not queued on the write lock')))
+      return;
+    expect(outcome).toBe(reason);
   });
 
   // Falsifiable: drop the `'silent'` argument kindFor passes to
@@ -220,7 +239,7 @@ describe('a verdict that gives up says who was holding', () => {
     const { b, release, held } = await setUp(false);
 
     const failure = await b
-      .run('INSERT INTO t VALUES (2)', [], { timeout: 300 })
+      .run('INSERT INTO t VALUES (2)', [], { timeout: VERDICT_DEADLINE_MS })
       .then(
         () => undefined,
         (error: unknown) => error as SQLiteError,
@@ -228,7 +247,9 @@ describe('a verdict that gives up says who was holding', () => {
 
     expect(held.length).toBeGreaterThan(0);
     expect(failure?.code).toBe('OPERATION_TIMEOUT');
-    expect(failure?.message).toBe('run() exceeded its timeout of 300 ms.');
+    expect(failure?.message).toBe(
+      `run() exceeded its timeout of ${VERDICT_DEADLINE_MS} ms.`,
+    );
     expect(failure?.cause).toBeUndefined();
 
     release();

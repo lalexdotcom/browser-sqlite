@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { PoolWorker } from '../../../src/pool';
 import { databasePath } from '../../../src/utils';
 import {
+  abandonOnceRunning,
   createTestClient,
   removeDatabaseFiles,
   scaled,
@@ -233,14 +234,13 @@ describe('params', () => {
     tags: ['requires:interruptible'],
     timeout: scaled(60_000),
   }, async () => {
-    const db = await createTestClient({ poolSize: 1 });
+    // debug: the abort lands once the statement runs, as the case needs.
+    const db = await createTestClient({ poolSize: 1, debug: true });
     const sql =
       'WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM c WHERE i < ?) SELECT max(i) AS m, ? AS tag FROM c';
-    const controller = new AbortController();
     const slow = db.all(sql, [50_000_000, 'first'], {
-      signal: controller.signal,
+      signal: abandonOnceRunning(db, sql).signal,
     });
-    setTimeout(() => controller.abort(), 50);
     await expect(slow).rejects.toBeDefined();
     expect(await db.all(sql, [3, 'second'])).toEqual([{ m: 3, tag: 'second' }]);
     await db.close();
@@ -257,7 +257,7 @@ describe('one converted params array, sent twice', () => {
       file: databasePath(TEST_TARGET.vfs, file),
       vfs: TEST_TARGET.vfs,
       build: TEST_TARGET.build,
-      drainTimeout: 5000,
+      drainTimeout: scaled(5000),
       logger: createLogger('test', false),
     });
     if ('declined' in opened)

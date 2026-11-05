@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, scaled } from '../helpers';
+import { abandonOnceRunning, createTestClient, scaled } from '../helpers';
 
 /**
  * spec 2026-09-11 on the one configuration the ordinary projects cannot reach:
@@ -13,6 +13,8 @@ const BIG_INSERT =
 const setUp = async () => {
   const db = await createTestClient({
     poolSize: 1,
+    // abandonOnceRunning sees the write running.
+    debug: true,
   });
   await db.run('CREATE TABLE t (a INTEGER)');
   await db.run('CREATE TABLE big (x INTEGER)');
@@ -33,7 +35,11 @@ describe('a savepointed write on the sync isolated build (spec 2026-09-11)', {
       try {
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
-          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          await tx
+            .run(BIG_INSERT, [], {
+              signal: abandonOnceRunning(db, BIG_INSERT).signal,
+            })
+            .catch(() => {});
           await tx.run('INSERT INTO t VALUES (2)');
         });
         expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
@@ -53,7 +59,7 @@ describe('a savepointed write on the sync isolated build (spec 2026-09-11)', {
 
   // Falsifiable: in `settled`, stop racing `running` against the own-abort
   // signal (`return await running;` unconditionally) — `tx.run` then waits
-  // for BIG_INSERT to finish instead of rejecting at 30 ms, nothing ever
+  // for BIG_INSERT to finish instead of rejecting at its abort, nothing ever
   // escapes the callback, and the transaction commits every abandoned row.
   it(
     'keeps nothing when the rejection escapes',
@@ -64,9 +70,9 @@ describe('a savepointed write on the sync isolated build (spec 2026-09-11)', {
         await expect(
           db.transaction(async (tx) => {
             await tx.run('INSERT INTO t VALUES (1)');
-            const ctl = new AbortController();
-            setTimeout(() => ctl.abort(reason), 30);
-            await tx.run(BIG_INSERT, [], { signal: ctl.signal });
+            await tx.run(BIG_INSERT, [], {
+              signal: abandonOnceRunning(db, BIG_INSERT, reason).signal,
+            });
           }),
         ).rejects.toBe(reason);
         expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([{ a: 0 }]);

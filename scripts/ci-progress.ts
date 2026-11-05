@@ -23,12 +23,20 @@ import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-/** A test that failed, as the live reporter wrote it, in the job it ran in. */
+/**
+ * A test that failed, as the live reporter wrote it, in the job it ran in;
+ * `retried` when it passed on its retry instead (`timeoutRetry`,
+ * scripts/processes.ts), `notExercised` when its case was not reached
+ * (`exercised`, tests/browser/helpers/exercised.ts); the summary lists each
+ * apart.
+ */
 export type Failure = {
   job: string;
   file: string;
   test: string;
   message: string;
+  retried?: true;
+  notExercised?: true;
 };
 
 export type Conclusion = 'success' | 'failure';
@@ -115,31 +123,58 @@ export function renderSummary(state: ProgressState): {
   summary: string;
 } {
   const ended = `${state.lines.length}/${state.total}`;
-  const failed = state.failures.length;
+  const failures = state.failures.filter((f) => !f.retried && !f.notExercised);
+  const retries = state.failures.filter((f) => f.retried);
+  const missed = state.failures.filter((f) => f.notExercised);
+  const failed = failures.length;
   const title = [
     ...(state.conclusion ? ['done'] : []),
     ended,
     ...(failed > 0 ? [`${failed} failed`] : []),
+    ...(retries.length > 0 ? [`${retries.length} retried`] : []),
+    ...(missed.length > 0 ? [`${missed.length} not exercised`] : []),
   ].join(' · ');
   const header = state.conclusion
     ? `**Done: ${state.conclusion}** · ${ended} jobs ended · started ${clock(state.started)}`
     : `**Running** · ${ended} jobs ended · started ${clock(state.started)}`;
   const failuresHeading = `### Failed tests (${failed})`;
+  const retriesHeading = `### Passed on retry (${retries.length})`;
   const jobsHeading = '### Jobs';
+  const missedHeading = `### Not exercised (${missed.length})`;
+  const retriesBlock = retries.length > 0 ? ['', retriesHeading] : [];
+  const missedBlock = missed.length > 0 ? ['', missedHeading] : [];
 
-  // The failures take the room first, the newest job lines what is left;
-  // each group that does not fit says how much it left out.
-  const fixed = [header, '', failuresHeading, '', jobsHeading].join('\n');
-  const reserve = 2 * (more(Number.MAX_SAFE_INTEGER).length + 1);
+  // The failures take the room first, then the retries, the newest job lines
+  // what is left; each group that does not fit says how much it left out.
+  const fixed = [
+    header,
+    '',
+    failuresHeading,
+    ...retriesBlock,
+    ...missedBlock,
+    '',
+    jobsHeading,
+  ].join('\n');
+  const reserve = 4 * (more(Number.MAX_SAFE_INTEGER).length + 1);
   let budget = SUMMARY_LIMIT - fixed.length - reserve;
-  const failureBullets = fitting(state.failures.map(failureBullet), budget);
+  const failureBullets = fitting(failures.map(failureBullet), budget);
   budget -= failureBullets.reduce((n, b) => n + b.length + 1, 0);
+  const retryBullets = fitting(retries.map(failureBullet), budget);
+  budget -= retryBullets.reduce((n, b) => n + b.length + 1, 0);
+  const missedBullets = fitting(missed.map(failureBullet), budget);
+  budget -= missedBullets.reduce((n, b) => n + b.length + 1, 0);
   const jobBullets = fitting(
     state.lines.map((l) => `- ${oneLine(l)}`).reverse(),
     budget,
   ).reverse();
   if (failureBullets.length < failed) {
     failureBullets.push(more(failed - failureBullets.length));
+  }
+  if (retryBullets.length < retries.length) {
+    retryBullets.push(more(retries.length - retryBullets.length));
+  }
+  if (missedBullets.length < missed.length) {
+    missedBullets.push(more(missed.length - missedBullets.length));
   }
   if (jobBullets.length < state.lines.length) {
     jobBullets.unshift(more(state.lines.length - jobBullets.length));
@@ -149,6 +184,8 @@ export function renderSummary(state: ProgressState): {
     '',
     failuresHeading,
     ...failureBullets,
+    ...(retries.length > 0 ? ['', retriesHeading, ...retryBullets] : []),
+    ...(missed.length > 0 ? ['', missedHeading, ...missedBullets] : []),
     '',
     jobsHeading,
     ...jobBullets,
@@ -225,8 +262,17 @@ export function readEvents(
           file: path,
           test,
           message,
+          retried,
+          notExercised,
         } = JSON.parse(line) as Omit<Failure, 'job'>;
-        failures.push({ job, file: path, test, message });
+        failures.push({
+          job,
+          file: path,
+          test,
+          message,
+          ...(retried ? { retried } : {}),
+          ...(notExercised ? { notExercised } : {}),
+        });
       } catch {
         // A line the reporter did not write whole: nothing to show for it.
       }

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, longQuery, scaled } from '../helpers';
+import {
+  abandonOnceRunning,
+  createTestClient,
+  exercised,
+  longQuery,
+  scaled,
+  theQueryIsRunning,
+} from '../helpers';
 
 /**
  * One INSERT whose single step() runs for hundreds of milliseconds (Chromium)
@@ -14,12 +21,6 @@ type Debuggable = { debug: { workers: { creationTime: number }[] } };
 /** The pool's workers by birth time: a change means one was evicted and respawned. */
 const workerIdentity = (db: unknown) =>
   (db as Debuggable).debug.workers.map((w) => w.creationTime).join(',');
-
-const abortAfter = (ms: number, reason: unknown) => {
-  const ctl = new AbortController();
-  setTimeout(() => ctl.abort(reason), ms);
-  return ctl.signal;
-};
 
 const setUp = async () => {
   const db = await createTestClient({ poolSize: 1, debug: true });
@@ -49,7 +50,9 @@ describe('a write abandoned inside a transaction', () => {
       await expect(
         db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
-          await tx.run(BIG_INSERT, [], { signal: abortAfter(30, reason) });
+          await tx.run(BIG_INSERT, [], {
+            signal: abandonOnceRunning(db, BIG_INSERT, reason).signal,
+          });
         }),
       ).rejects.toBe(reason);
 
@@ -75,7 +78,9 @@ describe('a write abandoned inside a transaction', () => {
       await db.transaction(async (tx) => {
         await tx.run('INSERT INTO t VALUES (1)');
         caught = await tx
-          .run(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+          .run(BIG_INSERT, [], {
+            signal: abandonOnceRunning(db, BIG_INSERT, reason).signal,
+          })
           .catch((e) => e);
         await tx.run('INSERT INTO t VALUES (2)');
       });
@@ -103,7 +108,9 @@ describe('a write abandoned inside a transaction', () => {
         const reason = new Error('abandon the write');
         await db.transaction(async (tx) => {
           await tx
-            .run(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+            .run(BIG_INSERT, [], {
+              signal: abandonOnceRunning(db, BIG_INSERT, reason).signal,
+            })
             .catch(() => {});
           await tx.run('INSERT INTO t VALUES (2)');
         });
@@ -160,11 +167,16 @@ describe('a write abandoned inside a transaction', () => {
       try {
         const before = workerIdentity(db);
         let caught: unknown;
+        let runningAtDeadline = false;
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
           caught = await tx
             .run(BIG_INSERT, [], { timeout: 30 })
             .catch((e) => e);
+          // The deadline is the subject, so no signal stands in for it; on a
+          // slow runner it can expire while the client still asks the worker
+          // whether this writes, before anything runs.
+          runningAtDeadline = theQueryIsRunning(db, BIG_INSERT)();
           await tx.run('INSERT INTO t VALUES (2)');
         });
 
@@ -181,6 +193,10 @@ describe('a write abandoned inside a transaction', () => {
           { n: 0 },
         ]);
         expect(workerIdentity(db)).toBe(before);
+        await exercised(
+          runningAtDeadline,
+          'the write was not running when its 30 ms deadline expired',
+        );
       } finally {
         await db.close();
       }
@@ -200,12 +216,15 @@ describe('a write abandoned inside a transaction', () => {
       const slow = longQuery(20_000_000);
       // Prepare and cache the exact statement first, so the measured run takes
       // the cached path and the abort lands inside step() (mem:lessons, 2026-09-05).
-      await db.all(slow, [], { timeout: 50 }).catch(() => {});
+      await db
+        .all(slow, [], { signal: abandonOnceRunning(db, slow).signal })
+        .catch(() => {});
       await db.transaction(async (tx) => {
         await tx.run('INSERT INTO t VALUES (1)');
         await tx
           .all(slow, [], {
-            signal: abortAfter(30, new Error('this read only')),
+            signal: abandonOnceRunning(db, slow, new Error('this read only'))
+              .signal,
           })
           .catch(() => {});
         await tx.run('INSERT INTO t VALUES (2)');

@@ -6,7 +6,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { PoolWorker, PoolWorkerQueryOptions } from '../../../src/pool';
 import { databasePath } from '../../../src/utils';
-import { removeDatabaseFiles, TEST_TARGET } from '../helpers';
+import { removeDatabaseFiles, scaled, TEST_TARGET } from '../helpers';
 
 /**
  * The worker half of the savepoint protocol (spec 2026-09-11, §4), reached
@@ -24,7 +24,7 @@ const spawn = async (): Promise<{ worker: PoolWorker; file: string }> => {
     file: databasePath(TEST_TARGET.vfs, file),
     vfs: TEST_TARGET.vfs,
     build: TEST_TARGET.build,
-    drainTimeout: 5000,
+    drainTimeout: scaled(5000),
     logger: createLogger('test', false),
   });
   // No declineWithout is passed above, so a decline here means the harness

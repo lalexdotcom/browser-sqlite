@@ -27,6 +27,21 @@ export const DETACHED = process.platform !== 'win32';
 export const timeScale = (): number =>
   parseTimeScale(process.env.BSQ_TIME_SCALE);
 
+/**
+ * Vitest's `retry` for a platform at `scale`: none at Linux speed; above it,
+ * one more attempt for a test or hook that ran out of time, and for nothing
+ * else. A slow runner can silence a worker for longer than any bound (a
+ * Chrome worker over 10 s, then a 60 s test, on macOS 26: run 41714043416),
+ * and a test with nothing wrong would go red; at scale 1 a timeout stays red
+ * at once, as a load-sensitive hang of the library did (ABANDON-WEDGE,
+ * `mem:measurements/aborts`). A test that needed its retry is reported apart
+ * (`scripts/skip-notes.ts`, `scripts/progress-reporter.ts`).
+ */
+export const timeoutRetry = (
+  scale: number,
+): 0 | { count: 1; condition: RegExp } =>
+  scale > 1 ? { count: 1, condition: /^(Test|Hook) timed out in / } : 0;
+
 /** A `BSQ_TIME_SCALE` value: 1 when unset or empty, else a positive number. */
 export function parseTimeScale(raw: string | undefined): number {
   if (raw === undefined || raw === '') return 1;

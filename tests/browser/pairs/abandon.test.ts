@@ -9,6 +9,8 @@ import {
   scaled,
   sleep,
   TEST_TARGET,
+  theQueryHasEnded,
+  waitUntil,
 } from '../helpers';
 
 const ROWS = 4000;
@@ -23,7 +25,8 @@ const seed = async (db: Awaited<ReturnType<typeof createTestClient>>) => {
 };
 
 /**
- * Whether the pool served a read within `ms`.
+ * Whether the pool served a read within `ms` — for proving it did NOT: a
+ * slower runner only makes that answer surer.
  *
  * The read is given a rejection sink before it is raced: against a wedged pool
  * it never settles, and at `close()` it rejects — long after this function has
@@ -37,6 +40,15 @@ const servesWithin = (
   read.catch(() => {});
   return Promise.race([read, sleep(ms).then(() => false)]);
 };
+
+/**
+ * Whether the pool serves a read, however long that takes: only the test's own
+ * timeout bounds it, so a pool that never comes back still fails the test. A
+ * fixed bound measured the runner instead — GitHub's macOS 27 runner took over
+ * 8 s to serve after a reclaim (2026-11-04, run 41847029385).
+ */
+const serves = async (db: Awaited<ReturnType<typeof createTestClient>>) =>
+  (await db.all<{ ok: number }>('SELECT 1 AS ok'))[0]?.ok === 1;
 
 /**
  * The abandoned generators, reachable until the test clears this in its
@@ -62,7 +74,10 @@ describe('an abandoned generator gives its worker back', () => {
       try {
         await seed(db);
         await abandon(() =>
-          db.chunk('SELECT n FROM t', [], { chunkSize: 10, timeout: 2000 }),
+          db.chunk('SELECT n FROM t', [], {
+            chunkSize: 10,
+            timeout: scaled(2000),
+          }),
         );
 
         // poolSize 1: the only worker is leased and parked between two step()
@@ -71,7 +86,7 @@ describe('an abandoned generator gives its worker back', () => {
         expect(await servesWithin(db, 300)).toBe(false);
 
         // After it, the reclaim has run and the pool serves again.
-        expect(await servesWithin(db, 8000)).toBe(true);
+        expect(await serves(db)).toBe(true);
       } finally {
         held.clear();
         await db.close();
@@ -96,7 +111,7 @@ describe('an abandoned generator gives its worker back', () => {
 
         expect(await servesWithin(db, 300)).toBe(false);
         controller.abort(new Error('the consumer changed its mind'));
-        expect(await servesWithin(db, 8000)).toBe(true);
+        expect(await serves(db)).toBe(true);
       } finally {
         held.clear();
         await db.close();
@@ -125,7 +140,7 @@ describe('an abandoned generator gives its worker back', () => {
           await nextTask();
         }
         expect(seen).toBe(ROWS);
-        expect(await servesWithin(db, 8000)).toBe(true);
+        expect(await serves(db)).toBe(true);
       } finally {
         await db.close();
       }
@@ -160,7 +175,8 @@ describe('a reclaim that arrives late', () => {
     'does not truncate the query the worker has moved on to',
     async () => {
       const controller = new AbortController();
-      const db = await createTestClient({ poolSize: 1 });
+      // debug: the test waits for the chunk's `done` (theQueryHasEnded).
+      const db = await createTestClient({ poolSize: 1, debug: true });
       try {
         await seed(db);
 
@@ -172,7 +188,12 @@ describe('a reclaim that arrives late', () => {
           // One chunk, then the generator is dropped. `done` has already
           // cleared deferredChunk while the drain sits at its yield.
           await rows.next();
-          await sleep(50);
+          // Its `done` landed, so the next statement does not meet the reuse
+          // guard: a fixed 50 ms could fall short on a slow runner.
+          await waitUntil(
+            theQueryHasEnded(db, 'SELECT n FROM t LIMIT 1'),
+            "the chunk's done",
+          );
           // The guard is not tripped, and this is the point: the transaction
           // ends normally, which is what leaves the stale transport behind.
           const ok = await tx.all<{ ok: number }>('SELECT 1 AS ok');
@@ -236,7 +257,7 @@ describe("interrupt() ignores a transport the worker isn't serving", () => {
       file: databasePath(TEST_TARGET.vfs, file),
       vfs: TEST_TARGET.vfs,
       build: TEST_TARGET.build,
-      drainTimeout: 5000,
+      drainTimeout: scaled(5000),
       logger: createLogger('test', false),
     });
     // No declineWithout is passed above, so a decline here means the harness

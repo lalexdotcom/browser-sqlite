@@ -1,4 +1,4 @@
-import { afterAll } from 'vitest';
+import { afterAll, inject } from 'vitest';
 
 /**
  * Registered as a setup file by every browser project: after each test file's
@@ -13,10 +13,12 @@ import { afterAll } from 'vitest';
  * this one follows every `afterAll` the file registers.
  */
 
+/** `BSQ_TIME_SCALE`: every bound below follows it, as the tests' own do. */
+const TIME_SCALE = inject('bsqTimeScale') ?? 1;
 /** A worker that just closed releases its handles a moment later. */
-const SETTLE_MS = 3_000;
+const SETTLE_MS = 3_000 * TIME_SCALE;
 const RETRY_MS = 50;
-const IDB_DELETE_MS = 5_000;
+const IDB_DELETE_MS = 5_000 * TIME_SCALE;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -96,4 +98,6 @@ afterAll(async () => {
       `This file left storage behind that could not be wiped: ${[...new Set([...problems, ...left])].join('; ')}`,
     );
   }
-}, 60_000);
+  // Raw 60 s failed a file on Windows Firefox (2026-11-04, run 41875605671),
+  // where each OPFS removal pays fsyncs.
+}, 60_000 * TIME_SCALE);

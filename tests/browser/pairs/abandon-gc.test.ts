@@ -52,10 +52,13 @@ describe('an abandoned generator is recovered at collection', () => {
         let served = false;
         for (let round = 0; round < 10 && !served; round++) {
           gc();
-          await sleep(100);
+          await sleep(scaled(100));
           const read = db.all('SELECT 1 AS ok').then(() => true);
           read.catch(() => {});
-          served = await Promise.race([read, sleep(200).then(() => false)]);
+          served = await Promise.race([
+            read,
+            sleep(scaled(200)).then(() => false),
+          ]);
         }
         expect(served).toBe(true);
       } finally {
@@ -100,10 +103,13 @@ describe('an abandoned generator is recovered at collection', () => {
         let served = false;
         for (let round = 0; round < 10 && !served; round++) {
           gc();
-          await sleep(100);
+          await sleep(scaled(100));
           const read = db.all('SELECT 1 AS ok').then(() => true);
           read.catch(() => {});
-          served = await Promise.race([read, sleep(200).then(() => false)]);
+          served = await Promise.race([
+            read,
+            sleep(scaled(200)).then(() => false),
+          ]);
         }
         expect(served).toBe(true);
         // And it was the collection that did it, not the D7 abort path: the
@@ -138,10 +144,13 @@ describe('an abandoned generator is recovered at collection', () => {
         let served = false;
         for (let round = 0; round < 10 && !served; round++) {
           gc();
-          await sleep(100);
+          await sleep(scaled(100));
           const read = db.all('SELECT 1 AS ok').then(() => true);
           read.catch(() => {});
-          served = await Promise.race([read, sleep(200).then(() => false)]);
+          served = await Promise.race([
+            read,
+            sleep(scaled(200)).then(() => false),
+          ]);
         }
         expect(served).toBe(true);
       } finally {
@@ -186,10 +195,13 @@ describe('an abandoned generator is recovered at collection', () => {
         let served = false;
         for (let round = 0; round < 10 && !served; round++) {
           gc();
-          await sleep(100);
+          await sleep(scaled(100));
           const read = db.all('SELECT 1 AS ok').then(() => true);
           read.catch(() => {});
-          served = await Promise.race([read, sleep(200).then(() => false)]);
+          served = await Promise.race([
+            read,
+            sleep(scaled(200)).then(() => false),
+          ]);
         }
         expect(served).toBe(true);
         // And it was the collection that did it, not the D7 abort path: the

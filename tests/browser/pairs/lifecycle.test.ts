@@ -148,7 +148,9 @@ describe('worker lifecycle — crash detection', () => {
         () => 'resolved',
         (error: { code?: string }) => `rejected:${error.code}`,
       ),
-      new Promise((resolve) => setTimeout(() => resolve('HUNG'), 10_000)),
+      new Promise((resolve) =>
+        setTimeout(() => resolve('HUNG'), scaled(10_000)),
+      ),
     ]);
     expect(outcome).toBe('rejected:WORKER_CRASHED');
   });
@@ -505,7 +507,7 @@ describe('worker lifecycle — startup readiness gate', () => {
         (e: { code?: string }) => `rejected:${e.code ?? 'UNKNOWN'}` as const,
       ),
       new Promise<'HUNG'>((resolve) =>
-        setTimeout(() => resolve('HUNG'), 8_000),
+        setTimeout(() => resolve('HUNG'), scaled(8_000)),
       ),
     ]);
     expect(outcome).not.toBe('HUNG');

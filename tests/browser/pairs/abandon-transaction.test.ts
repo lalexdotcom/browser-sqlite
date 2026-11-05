@@ -28,7 +28,7 @@ describe('an abandoned generator inside a transaction', {
   // ROLLBACK in turn, and gets the worker evicted — turning every assertion
   // below red. No CPU load and no flake needed: the trip is deterministic on
   // the current code, and its absence is deterministic with the fix.
-  it('commits, and evicts no worker', { timeout: 30_000 }, async () => {
+  it('commits, and evicts no worker', { timeout: scaled(30_000) }, async () => {
     const records = interceptWorkers();
     const db = await createTestClient({ ...TWO_WORKERS });
     try {

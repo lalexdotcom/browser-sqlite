@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { createTestClient, waitUntil } from '../helpers';
+import { createTestClient, scaled, waitUntil } from '../helpers';
 
 /**
  * `createVfsInstance` retries `create()` in the same worker while the VFS's
@@ -13,7 +13,7 @@ import { createTestClient, waitUntil } from '../helpers';
 /** No attempt seen, or none seen failing: release anyway rather than hang. */
 const WITNESS_TIMEOUT_MS = 3_000;
 /** How long to wait out the handles of the client just closed. */
-const SETTLE_BUDGET_MS = 3_000;
+const SETTLE_BUDGET_MS = scaled(3_000);
 
 /**
  * Takes, probes and releases exclusive OPFS access handles. A dedicated

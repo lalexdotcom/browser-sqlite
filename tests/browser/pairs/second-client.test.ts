@@ -10,6 +10,7 @@ import { databasePath } from '../../../src/utils';
 import {
   interceptWorkers,
   killSilently,
+  scaled,
   sharedDatabase,
   sleep,
   TEST_TARGET,
@@ -71,7 +72,7 @@ describe('a client whose worker 0 is lost before it answers the probe', () => {
     const file = `second-client-${crypto.randomUUID()}`;
     const LOST = 'worker 0 lost before it answered the probe';
     // A bound on a hang, not a timing claim.
-    const LOST_WITHIN = 10_000;
+    const LOST_WITHIN = scaled(10_000);
     const records = interceptWorkers();
     const record = records.push.bind(records);
     // Every worker told to probe is slot 0. interceptWorkers pushes a record

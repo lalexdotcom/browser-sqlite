@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SQLiteTransactionDB } from '../../../src/api';
-import { createTestClient, scaled } from '../helpers';
+import { createTestClient, exercised, scaled } from '../helpers';
 
 type Debuggable = { debug: { workers: { creationTime: number }[] } };
 const workerIdentity = (db: unknown) =>
@@ -306,11 +306,18 @@ describe('tx.signal', () => {
               }),
             );
           },
-          { timeout: 1000 },
+          { timeout: scaled(1000) },
         ),
       ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT' });
-      // The precondition: the callback ran before the deadline. If this fails, the deadline expired during lease + BEGIN.
-      expect(seen).toBeDefined();
+      // The precondition: the callback ran before the deadline; on a slow
+      // runner the deadline can expire during lease + BEGIN instead.
+      if (
+        !(await exercised(
+          seen !== undefined,
+          'the callback was not entered before its deadline',
+        ))
+      )
+        return;
       expect(seen.aborted).toBe(true);
       expect(seen.reason).toMatchObject({ code: 'OPERATION_TIMEOUT' });
     } finally {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  abandonOnceRunning,
   createTestClient,
+  exercised,
   interceptWorkers,
   scaled,
   theQueryIsRunning,
@@ -134,14 +136,15 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
   // the deadline whether or not the underlying step can be cut, so this no
   // longer loops over VFS (spec 2026-09-15, A5).
   it(
-    'rejects at the deadline, and the next statement pays for the rest (T2)',
+    'rejects at its abort, and the next statement pays for the rest (T2)',
     async () => {
       const db = await setUp();
       try {
         let runningAtRejection = false;
         await db.transaction(async (tx) => {
-          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
-          // Rejected at the deadline: the write is still running.
+          const { signal } = abandonOnceRunning(db, BIG_INSERT);
+          await tx.run(BIG_INSERT, [], { signal }).catch(() => {});
+          // Rejected at its abort: the write is still running.
           runningAtRejection = theQueryIsRunning(db, BIG_INSERT)();
           await tx.run('INSERT INTO t VALUES (1)');
         });
@@ -181,7 +184,8 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
         let runningAtRejection = false;
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
-          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          const { signal } = abandonOnceRunning(db, BIG_INSERT);
+          await tx.run(BIG_INSERT, [], { signal }).catch(() => {});
           second = await tx
             .run('INSERT INTO t VALUES (9)', [], { timeout: 20 })
             .catch((e) => e);
@@ -211,10 +215,22 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
     async () => {
       const db = await setUp();
       try {
+        const abandon = abandonOnceRunning(db, BIG_INSERT);
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
-          await tx.run(BIG_INSERT, [], { timeout: 30 }).catch(() => {});
+          await tx
+            .run(BIG_INSERT, [], { signal: abandon.signal })
+            .catch(() => {});
         });
+        // Abandoned while it ran: a write rejected before it was posted
+        // would leave nothing to undo, and the test would prove nothing.
+        if (
+          !(await exercised(
+            abandon.abandonedRunning(),
+            'the write was not seen running before the commit',
+          ))
+        )
+          return;
         expect(await rowsOf(db)).toEqual([0, 1]);
         expect(await bigCount(db)).toBe(0);
       } finally {
@@ -309,7 +325,13 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
           { timeout: TX_TIMEOUT },
         )
         .catch((e) => e);
-      expect(abandonedRunning).toBe(true);
+      if (
+        !(await exercised(
+          abandonedRunning,
+          'the endless write was not seen running',
+        ))
+      )
+        return;
       expect(outcome).toMatchObject({
         code: 'OPERATION_TIMEOUT',
         timeout: TX_TIMEOUT,
@@ -467,8 +489,10 @@ describe('a consumer savepoint and a RELEASE riding on a write (spec 2026-10-04)
         await db.transaction(async (tx) => {
           const sp = await tx.savepoint('u');
           await tx.run('INSERT INTO t VALUES (1)');
+          // Wide: the refusal comes after the worker answers whether this
+          // writes, and a 30 ms deadline could expire first (2026-11-04).
           first = await tx
-            .run(`${BIG_INSERT}; RELEASE u`, [], { timeout: 30 })
+            .run(`${BIG_INSERT}; RELEASE u`, [], { timeout: scaled(5_000) })
             .catch((e) => e);
           await tx.run('INSERT INTO t VALUES (2)');
           await sp.release();

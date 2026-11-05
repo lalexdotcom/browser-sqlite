@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  abandonOnceRunning,
   createTestClient,
   interceptWorkers,
   killedStatementRuns,
   killSilently,
   longQuery,
+  scaled,
   theQueryIsRunning,
   waitUntil,
 } from '../helpers';
@@ -48,13 +50,14 @@ describe('a long single step', () => {
       // Both workers must stay alive, so the pair has to keep two.
       // Interruptible too: uncut, the teardown drains the whole 20M-row query.
       poolSize: 2,
-      drainTimeout: 60_000,
+      drainTimeout: scaled(60_000),
       debug: true,
     });
     await db.run('CREATE TABLE t (a)');
 
+    const query = longQuery(20_000_000);
     await expect(
-      db.all(longQuery(20_000_000), [], { signal: AbortSignal.timeout(200) }),
+      db.all(query, [], { signal: abandonOnceRunning(db, query).signal }),
     ).rejects.toThrow();
 
     // At least two macrotask boundaries separate us from the worker returning
@@ -89,11 +92,13 @@ describe('a worker killed silently', () => {
     await db.run('CREATE TABLE t (a)');
 
     const sql = longQuery(20_000_000);
-    const running = db.all(sql, [], {
-      signal: AbortSignal.timeout(200),
-    });
+    // Aborted after the kill, not at a fixed time: a 200 ms deadline could
+    // reject the query before it ran, and the wait below would never end.
+    const abort = new AbortController();
+    const running = db.all(sql, [], { signal: abort.signal });
     await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
     killSilently(records[0].worker); // silent death: no event of any kind
+    abort.abort();
 
     await expect(running).rejects.toThrow();
     // drainTimeout, then the replacement's boot. Bounded as the library's open

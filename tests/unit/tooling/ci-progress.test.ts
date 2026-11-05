@@ -117,6 +117,50 @@ describe('renderSummary', () => {
   });
 });
 
+describe('renderSummary, tests passed on a retry', () => {
+  const retried = (n: number): Failure => ({
+    ...failure(n, `passed on retry 1`),
+    retried: true,
+  });
+
+  it('lists them apart, after the failures, and counts them in the title', () => {
+    const { title, summary } = renderSummary(
+      state({ failures: [failure(1), retried(2)] }),
+    );
+    // Falsifiable: render them with the failures and the run reads 2 failed.
+    expect(title).toBe('3/27 · 1 failed · 1 retried');
+    expect(summary).toContain('### Failed tests (1)');
+    const at = summary.indexOf('### Passed on retry (1)');
+    expect(at).toBeGreaterThan(summary.indexOf('### Failed tests (1)'));
+    expect(at).toBeLessThan(summary.indexOf('### Jobs'));
+    expect(summary.slice(at)).toContain('› suite > test 2 — passed on retry 1');
+  });
+
+  it('leaves the section out when nothing was retried', () => {
+    expect(renderSummary(state()).summary).not.toContain('Passed on retry');
+  });
+});
+
+describe('renderSummary, tests whose case was not reached', () => {
+  it('lists them apart and counts them in the title', () => {
+    const missed: Failure = {
+      ...failure(3, 'not exercised: the verdict was not parked'),
+      notExercised: true,
+    };
+    const { title, summary } = renderSummary(
+      state({ failures: [failure(1), missed] }),
+    );
+    // Falsifiable: render it with the failures and the run reads 2 failed.
+    expect(title).toBe('3/27 · 1 failed · 1 not exercised');
+    const at = summary.indexOf('### Not exercised (1)');
+    expect(at).toBeGreaterThan(summary.indexOf('### Failed tests (1)'));
+    expect(at).toBeLessThan(summary.indexOf('### Jobs'));
+    expect(summary.slice(at)).toContain(
+      '› suite > test 3 — not exercised: the verdict was not parked',
+    );
+  });
+});
+
 describe('progressConfig', () => {
   const CI_ENV = {
     CI: 'true',
@@ -345,6 +389,27 @@ describe('readEvents', () => {
         { job: 'unit', file: 'g', test: 'b', message: 'n' },
       ]);
       expect(readEvents(dir, offsets)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the retried mark of a test that passed on its retry', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ci-events-'));
+    try {
+      writeFileSync(
+        join(dir, 'unit.ndjson'),
+        '{"file":"f","test":"a","message":"passed on retry 1","retried":true}\n',
+      );
+      expect(readEvents(dir, new Map())).toEqual([
+        {
+          job: 'unit',
+          file: 'f',
+          test: 'a',
+          message: 'passed on retry 1',
+          retried: true,
+        },
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

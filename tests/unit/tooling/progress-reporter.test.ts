@@ -6,6 +6,8 @@ import type { TestCase, TestModule, TestSuite } from 'vitest/node';
 import { ROOT } from '../../../scripts/parallel.ts';
 import ProgressReporter, {
   failureEvent,
+  notExercisedEvent,
+  retriedEvent,
 } from '../../../scripts/progress-reporter.ts';
 
 /**
@@ -18,10 +20,15 @@ const testCase = (
   state: string,
   errors?: { message?: string }[],
   fullName = 's > t',
+  retryCount = 0,
 ) => ({
   fullName,
   module: { moduleId: join(ROOT, 'tests/browser/x.test.ts') },
   result: () => ({ state, ...(errors ? { errors } : {}) }),
+  diagnostic: () => ({
+    retryCount,
+    flaky: state === 'passed' && retryCount > 0,
+  }),
 });
 
 describe('failureEvent', () => {
@@ -47,6 +54,54 @@ describe('failureEvent', () => {
     expect(JSON.parse(failureEvent(testCase('failed')) as string).message).toBe(
       '',
     );
+  });
+});
+
+describe('retriedEvent', () => {
+  it('writes a test that passed on a retry as one line, marked retried', () => {
+    const line = retriedEvent(testCase('passed', undefined, 's > t', 1));
+    expect(JSON.parse(line as string)).toEqual({
+      file: 'tests/browser/x.test.ts',
+      test: 's > t',
+      message: 'passed on retry 1',
+      retried: true,
+    });
+  });
+
+  it('writes nothing for a test that passed first time, or failed after its retry', () => {
+    expect(retriedEvent(testCase('passed'))).toBeUndefined();
+    // Falsifiable: mark every retried test and a test red twice shows twice.
+    expect(
+      retriedEvent(testCase('failed', [{ message: 'x' }], 's > t', 1)),
+    ).toBeUndefined();
+  });
+});
+
+describe('notExercisedEvent', () => {
+  const annotated = (annotations: { type: string; message: string }[]) => ({
+    ...testCase('passed'),
+    annotations: () => annotations,
+  });
+
+  it('writes a test whose case was not reached as one line, with why', () => {
+    const line = notExercisedEvent(
+      annotated([
+        { type: 'not-exercised', message: 'the verdict was not parked' },
+      ]),
+    );
+    expect(JSON.parse(line as string)).toEqual({
+      file: 'tests/browser/x.test.ts',
+      test: 's > t',
+      message: 'not exercised: the verdict was not parked',
+      notExercised: true,
+    });
+  });
+
+  it('writes nothing for a test with no such annotation', () => {
+    expect(
+      notExercisedEvent(annotated([{ type: 'notice', message: 'x' }])),
+    ).toBeUndefined();
+    expect(notExercisedEvent(testCase('passed'))).toBeUndefined();
   });
 });
 

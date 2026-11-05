@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sweepLockName } from '../../../src/locks';
-import { createTestClient } from '../helpers';
+import { createTestClient, scaled } from '../helpers';
 
 describe('bulkWrite inside a transaction', () => {
   it('writes nothing when the transaction rolls back', async () => {
@@ -174,7 +174,7 @@ describe('the staging sweep under a transaction', () => {
                   'the transaction stalled: the sweep waited for a lock it should have skipped',
                 ),
               ),
-            5000,
+            scaled(5000),
           ),
         ),
       ]);

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, longQuery } from '../helpers';
+import {
+  abandonOnceRunning,
+  createTestClient,
+  longQuery,
+  scaled,
+} from '../helpers';
 
 describe('query timeout', () => {
   it('rejects with OPERATION_TIMEOUT and leaves the client usable', {
@@ -18,8 +23,14 @@ describe('query timeout', () => {
       // the statement, so the timeout below lands inside step() (mem:lessons,
       // 2026-09-05).
       await db.all('SELECT 1');
-      await db.all(slow, [], { timeout: 50 }).catch(() => {});
-      await expect(db.all(slow, [], { timeout: 200 })).rejects.toMatchObject({
+      await db
+        .all(slow, [], { signal: abandonOnceRunning(db, slow).signal })
+        .catch(() => {});
+      // Wide enough for the verdict a read asks each time (not memoised):
+      // 200 ms could expire before the statement was posted (2026-11-04).
+      await expect(
+        db.all(slow, [], { timeout: scaled(1_000) }),
+      ).rejects.toMatchObject({
         code: 'OPERATION_TIMEOUT',
       });
       // Immediate by contract, whether the statement stopped or not: rejected
