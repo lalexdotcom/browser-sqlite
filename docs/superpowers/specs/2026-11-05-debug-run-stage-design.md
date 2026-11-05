@@ -51,7 +51,7 @@ At the same time, `BootStage` — today a union of English phrases — becomes a
 
 - **Run stages:** `RunStage = 'awaiting-turn' | 'preparing' | 'stepping' | 'computing' | 'awaiting-credit'`, public and exported exactly as `BootStage` is (`src/debug.ts`, `src/index.ts`).
 - **`stepping` and `computing` are two codes**, because `db.debug` is polled: a second `stepping` identical to the first would be invisible.
-  - `stepping`: at the first `sqlite3_step()` of a statement (and again at the first step after another stage). It exists on every build and every VFS, so it separates "stuck in prepare" from "stuck in step" even for a short statement.
+  - `stepping`: at the first `sqlite3_step()` of a statement (and again at the first step after a wait). It exists on every build and every VFS, so it separates "stuck in prepare" from "stuck in step" even for a short statement.
   - `computing`: at the first call of the progress handler (every `PROGRESS_OPS` = 100 000 VM instructions) — "in a long computation". Only the progress handler can cut a step (`src/worker/worker.ts`, the handler returns 1 once stopped), so a statement that never reached `computing` could not have been cut. Absent where the handler is not installed (`sync` without the shared abort slot), which is also where no step can be cut.
 - **Durations, reported per transition.** Each run-stage message carries the duration of the stage it ends, measured on the worker's own clock (`performance.now()`); the page knows the previous stage (a worker's messages arrive in order) and adds the duration to it. The query's final reply carries the duration of its last stage. A duration is a difference on one clock, so the page and worker `timeOrigin`s never need reconciling.
 - **The four false-green tests are fixed in this branch** (§ Tests).
@@ -69,7 +69,7 @@ A debug worker keeps, per query, the current stage and the instant it began. It 
 
 - **`awaiting-turn`**: the query waits for the worker's SQLite mutex (`holdSqlite()` returned a promise) — at the start of the query, and again when the query takes the mutex back after a credit wait. Not announced when the mutex was free.
 - **`preparing`**: before SQLite compiles a statement of the query. Not announced on a statement-cache hit. A multi-statement query announces it before each statement it compiles, so `preparing` and `stepping` alternate.
-- **`stepping`**: before the first `sqlite3_step()` after any other stage (or none).
+- **`stepping`**: before the first `sqlite3_step()` of a statement, and before the first one after a wait (`awaiting-credit`, `awaiting-turn`). Never after `computing`: a long statement stays `computing` until it ends or waits, so a statement whose every row is costly does not alternate `stepping` and `computing` row by row.
 - **`computing`**: in the progress handler, at its first call while the worker is inside the query's step (the existing `stepping` flag around `step_asap()` is set), and again at the next such call after any other stage. Recorded before the handler tests for the stop, so a call that cuts the step at its first occurrence still leaves its trace. Not from a handler call outside the step — the prepare of a verdict served while the query waits for credit.
 - **`awaiting-credit`**: the query has a chunk ready and no credit to send it (`gate.take()` would wait). Not announced when the credit was already there.
 
