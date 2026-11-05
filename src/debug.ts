@@ -26,7 +26,7 @@ export type QueryDebugState = {
 };
 
 export type RequestDebugState = {
-  readonly kind: 'read' | 'write';
+  readonly kind: 'read' | 'write' | 'verdict';
   /** At the call, before the connection guard and the cross-tab write lock. */
   readonly startTime: number;
   /** The cross-tab write lock was granted — a write on a VFS that shares storage. */
@@ -97,7 +97,11 @@ export type WorkerDebugHandle = {
 
 export type RequestDebugHandle = {
   readonly locked: () => void;
-  readonly acquired: (index: number) => void;
+  /**
+   * `borrowed`: the lease is lent by a transaction for a verdict. The slot's
+   * active request is kept, and `released` makes it active again.
+   */
+  readonly acquired: (index: number, borrowed?: boolean) => void;
   /** Ends the request at once unless it holds a worker; then `released` does. */
   readonly failed: (error: unknown) => void;
   readonly released: () => void;
@@ -268,7 +272,7 @@ export const createClientDebug = (
   };
 
   const createRequestDebugState = (
-    kind: 'read' | 'write',
+    kind: RequestDebugState['kind'],
   ): RequestDebugHandle => {
     const request: Writable<RequestDebugState> = {
       kind,
@@ -284,14 +288,19 @@ export const createClientDebug = (
       request.endTime = Date.now();
       evict();
     };
+    // A borrowed lease's slot keeps the request it interrupted, to restore it.
+    let interrupted:
+      | { previous: Writable<RequestDebugState> | undefined }
+      | undefined;
     return {
       locked: () => {
         request.lockTime = Date.now();
       },
-      acquired: (index) => {
+      acquired: (index, borrowed = false) => {
         request.acquireTime = Date.now();
         request.worker = index;
         request.generation = generations[index] ?? 0;
+        if (borrowed) interrupted = { previous: active[index] };
         active[index] = request;
       },
       failed: (error) => {
@@ -301,7 +310,7 @@ export const createClientDebug = (
       released: () => {
         // A dead worker's lease can come back after its slot was re-lent.
         if (request.worker !== undefined && active[request.worker] === request)
-          active[request.worker] = undefined;
+          active[request.worker] = interrupted?.previous;
         end();
       },
     };

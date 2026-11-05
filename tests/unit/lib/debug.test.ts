@@ -179,6 +179,36 @@ describe('the pool-level request history', () => {
     ]);
   });
 
+  it('records a verdict request', () => {
+    const debug = make();
+    debug.createRequestDebugState('verdict');
+    expect(debug.state.requests[0]?.kind).toBe('verdict');
+  });
+
+  it('gives the slot back to the request a borrowed lease interrupted', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    debug.createRequestDebugState('write').acquired(0);
+    const verdict = debug.createRequestDebugState('verdict');
+    verdict.acquired(0, true);
+    w0.query('SELECT 1');
+    verdict.released();
+    w0.query('SELECT 2');
+    const [tx, lent] = debug.state.requests;
+    expect(lent?.queries.map((q) => q.sql)).toEqual(['SELECT 1']);
+    expect(tx?.queries.map((q) => q.sql)).toEqual(['SELECT 2']);
+    expect(tx?.endTime).toBeUndefined();
+  });
+
+  it('clears the slot at the release of an unborrowed lease, as before', () => {
+    const debug = make();
+    const w0 = debug.createWorkerDebugState(0, 'w0');
+    const request = debug.createRequestDebugState('read');
+    request.acquired(0);
+    request.released();
+    expect(w0.query('SELECT 1')).toBeUndefined();
+  });
+
   it('adds rows and affected up from the query to the request', () => {
     const debug = make();
     const w0 = debug.createWorkerDebugState(0, 'w0');
