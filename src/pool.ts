@@ -723,6 +723,10 @@ export const createPoolWorker = (deps: {
         // this message. A connection worker never sends it.
         break;
       }
+      case 'run': {
+        // Posted by a debug worker only; the pool does not track run stages yet.
+        break;
+      }
       default: {
         const _unexpected: never = data;
         throw new Error(

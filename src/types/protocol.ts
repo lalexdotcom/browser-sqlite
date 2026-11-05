@@ -218,9 +218,25 @@ export type BootStage =
   | 'awaiting-held-file'
   | 'applying-pragmas';
 
+/**
+ * The stage a query is in, posted as a `run` message only to a debug client.
+ * Public as the type of `WorkerDebugState.run`.
+ */
+export type RunStage =
+  | 'awaiting-turn'
+  | 'preparing'
+  | 'stepping'
+  | 'computing'
+  | 'awaiting-credit';
+
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
   | { type: 'boot'; callId: number; stage: BootStage }
+  /**
+   * A query entered `stage`. `elapsed` is the milliseconds spent in the stage
+   * it leaves, absent on the query's first stage.
+   */
+  | { type: 'run'; callId: number; stage: RunStage; elapsed?: number }
   /**
    * The worker found a feature of `declineWithout` missing and opened nothing:
    * the environment caps the pool (spec 2026-09-13).
@@ -248,6 +264,8 @@ export type WorkerMessageData =
        * "for a sub-millisecond effect, count the round trips").
        */
       prepared: number;
+      /** Milliseconds in the stage the query ended in; set for a debug client only. */
+      elapsed?: number;
       /**
        * Whether the connection is inside a transaction once this query has
        * ended — `sqlite3_get_autocommit() === 0`. SQLite can leave a
@@ -283,6 +301,8 @@ export type WorkerMessageData =
        * consumer sees.
        */
       errorCode?: SQLiteErrorCode | 'ROUTED_AS_READ';
+      /** Milliseconds in the stage the query failed in; set for a debug client only. */
+      elapsed?: number;
       /**
        * Whether the connection is inside a transaction once this query has
        * ended — `sqlite3_get_autocommit() === 0`. SQLite can leave a
