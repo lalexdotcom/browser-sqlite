@@ -1427,7 +1427,7 @@ const open = (file: string, options: OpenOptions) => {
             // SQLite call is in flight, and the consumer's next pull, which
             // sends the credit, may itself be waiting on a verdict.
             releaseSqlite();
-            if (gate.wouldWait()) stages?.enter('awaiting-credit');
+            if (stages && gate.wouldWait()) stages.enter('awaiting-credit');
             const taken = await gate.take(callId);
             const back = holdSqlite();
             if (back) {
