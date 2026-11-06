@@ -424,7 +424,7 @@ built before either queries) and `after` (B built once A has written). Chromium 
 
 **Why measured.** Two Windows matrix reds (runs 41875605671 `failed-client`, 42051847349 `default-build`, both Firefox `OPFSCoopSyncVFS`) were `deleteDatabase` `TIMEOUT`s after 30 s, each test already 22-32 s late before its delete started (those tests take 2-8 s in every other run and cell). Their logs could not say where the delete worker was.
 
-**Method.** Throwaway branch `spike/delete-timeout-windows` (`cd14a9aa`, kept locally, remote deleted), run 42194408995: the client and delete workers posted each step on a `BroadcastChannel` the test printed per round; `DELETE_TIMEOUT` 180 s; Firefox 155, `BSQ_TIME_SCALE=4`, the three builds `sync`/`async`/`jspi` at once (as the matrix runs three cells at once), 60 rounds each of three shapes — open + write, `close()`, delete; `failed-client`'s (worker failed, delete before `close()`); `default-build`'s (no `WebAssembly.Suspending`, `jspi` only). 420 rounds, 0 failures.
+**Method.** Throwaway branch `spike/delete-timeout-windows` (`cd14a9aa`, deleted locally and on GitHub at the closure on 2026-11-06, so the commit is no longer reachable), run 42194408995: the client and delete workers posted each step on a `BroadcastChannel` the test printed per round; `DELETE_TIMEOUT` 180 s; Firefox 155, `BSQ_TIME_SCALE=4`, the three builds `sync`/`async`/`jspi` at once (as the matrix runs three cells at once), 60 rounds each of three shapes — open + write, `close()`, delete; `failed-client`'s (worker failed, delete before `close()`); `default-build`'s (no `WebAssembly.Suspending`, `jspi` only). 420 rounds, 0 failures.
 
 | delete worker step | median | max |
 |---|---|---|
