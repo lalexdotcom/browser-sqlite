@@ -1,0 +1,58 @@
+name: Spike (IndexedDB UnknownError, whole cells, Windows)
+
+# SPIKE (spike/idb-unknown-error-diag, throwaway): the matrix's own Firefox
+# cells of the IndexedDB pairs, each run again and again in one job (the red
+# came from a whole cell, ~60 files in one profile), with Firefox's IndexedDB
+# and QuotaManager logs on (BSQ_MOZ_LOG_DIR, scripts/browsers.ts) and a failed
+# deletion naming its step. Every .matrix/ is uploaded. A dispatch needs the
+# workflow on the default branch: a push of the spike starts it.
+on:
+  push:
+    branches: [spike/idb-unknown-error-diag]
+
+jobs:
+  cells:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      BSQ_TIME_SCALE: '4'
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        pair: [IDBMirrorVFS/jspi, IDBMirrorVFS/async, IDBBatchAtomicVFS/jspi]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          browsers: firefox
+      - name: Cells ${{ matrix.pair }}
+        env:
+          PAIR: ${{ matrix.pair }}
+        run: |
+          reds=0
+          for i in 1 2 3 4 5 6; do
+            export BSQ_MOZ_LOG_DIR="$GITHUB_WORKSPACE/.matrix/moz-log/run-$i"
+            mkdir -p "$BSQ_MOZ_LOG_DIR"
+            echo "::group::run $i of $PAIR"
+            if node scripts/test-matrix.ts --pair "$PAIR" --engine firefox; then
+              echo "::endgroup::"; echo "RUN $i: green"
+              # A green run's Firefox logs are only volume.
+              rm -rf "$BSQ_MOZ_LOG_DIR"
+            else
+              echo "::endgroup::"; echo "::warning::RUN $i of $PAIR: RED"
+              reds=$((reds + 1))
+            fi
+          done
+          echo "REDS: $reds of 6"
+      - name: Report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: spike-${{ strategy.job-index }}
+          path: .matrix/
+          retention-days: 7
+          include-hidden-files: true
+          if-no-files-found: warn

@@ -193,10 +193,31 @@ export const browserCapabilities = (
     name === 'chrome' && env.BSQ_EXPOSE_GC === '1'
       ? ['--js-flags=--expose-gc', ...(extra.args ?? [])]
       : extra.args;
+  // SPIKE (spike/idb-unknown-error-diag, throwaway): Firefox's own IndexedDB
+  // and QuotaManager logs, to name what an IndexedDB UnknownError hides.
+  // `moz:firefoxOptions.env` did not reach Firefox here (measured: no file);
+  // the environment geckodriver inherits does, and geckodriver is spawned
+  // right after the capabilities are read, so each session gets its own file.
+  const mozLog =
+    name === 'firefox' && env.BSQ_MOZ_LOG_DIR
+      ? {
+          prefs: {
+            'dom.quotaManager.loggingEnabled': true,
+            'dom.indexedDB.logging.details': true,
+          },
+        }
+      : undefined;
+  if (mozLog) {
+    process.env.MOZ_LOG =
+      'IndexedDB:5,QuotaManager:5,mozStorage:3,timestamp,rotate:50';
+    process.env.MOZ_LOG_FILE = `${env.BSQ_MOZ_LOG_DIR}/firefox-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+  const prefs =
+    extra.prefs || mozLog ? { ...extra.prefs, ...mozLog?.prefs } : undefined;
   const options = {
     binary: binaries.browser,
     ...(args?.length ? { args } : {}),
-    ...(extra.prefs ? { prefs: extra.prefs } : {}),
+    ...(prefs ? { prefs } : {}),
   };
   return {
     browserName: name,
