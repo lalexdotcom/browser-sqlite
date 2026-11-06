@@ -1,6 +1,6 @@
 # Follow-up — `deleteDatabase` waits for an open in progress instead of refusing with BUSY (user, 2026-11-03)
 
-**Status: OPEN** — the Windows `TIMEOUT`s are diagnosed and fixed on `fix/delete-without-vfs` (2026-11-06, below); the `wait` and `timeout` options are not designed, and the user has not said whether they are still wanted once that fix is seen on the Windows matrix.
+**Status: OPEN** — the Windows `TIMEOUT`s are diagnosed and fixed on `fix/delete-without-vfs` (2026-11-06, below); the `wait` and `timeout` options are not designed and stay in the backlog (user, 2026-11-06); as fine-tuning of the existing API they may go into the current release (`mem:follow-ups`).
 
 Part of `mem:follow-ups`, opened 2026-11-03 while fixing `verdict.test.ts`'s cleanup on the macOS 26 matrix (`test/macos26-flakes`).
 

@@ -23,7 +23,7 @@ been work on nothing.
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
 | `debug-run-stage` | A `run` sub-status of a busy worker (debug-only, on the model of `boot`); `BootStage` as codes, not text | CLOSED 2026-11-05 — `feat/debug-run-stage` merged |
 | `debug-verdict-visibility` | A first `all()`/`run()`/`chunk()`/`stream()` compiles in its verdict, outside any debug query: its wait and compile show in no stage | CLOSED 2026-11-05 — merged with `feat/debug-run-stage` (a request `kind: 'verdict'`) |
-| `delete-database-wait` | `deleteDatabase` waits for an open in progress instead of refusing with `BUSY` (an option, default unchanged) | OPEN — the Windows `TIMEOUT`s diagnosed (an unused VFS instance, not a hold) and fixed on `fix/delete-without-vfs` (2026-11-06); `wait`/`timeout` options not designed, still wanted or not: the user's call |
+| `delete-database-wait` | `deleteDatabase` waits for an open in progress instead of refusing with `BUSY` (an option, default unchanged) | OPEN — the Windows `TIMEOUT`s diagnosed (an unused VFS instance, not a hold) and fixed on `fix/delete-without-vfs` (2026-11-06); `wait`/`timeout` options not designed, kept in the backlog (user, 2026-11-06) |
 | `upstream-delete-api` | Ask wa-sqlite whether a VFS should offer a database deletion, or list a database's resources, instead of the library duplicating that knowledge | OPEN — the user's idea (2026-11-06); a discussion to open after `fix/delete-without-vfs` |
 
 ## Open — tests and CI
