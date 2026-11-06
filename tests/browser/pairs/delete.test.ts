@@ -54,6 +54,30 @@ describe('deleteDatabase', () => {
   // conformance invariant 7 deletes on every VFS. Deletion does not read the
   // build, so no test here varies it.
 
+  // Where the database IS its OPFS files, deleting it is removing them: the
+  // worker loads no engine and creates no VFS instance, whose start-up cost
+  // (OPFSCoopSyncVFS's temporary directory) reached 37 s on Windows Firefox.
+  // Falsifiable: load the build before the folder branch — the .wasm below
+  // does not exist, and the delete fails.
+  it('deletes without loading the engine, where the database is its files', {
+    tags: ['requires:opfs-file'],
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
+    const database = sharedDatabase();
+    const file = database.name;
+    const db = database.open();
+    await db.run('CREATE TABLE t (a INTEGER)');
+    await db.close();
+
+    await deleteDatabase(file, {
+      vfs,
+      build,
+      wasmUrl: () => new URL('/bsq-no-such.wasm', location.href).href,
+    });
+
+    expect(await tableCount(file, { vfs, build })).toBe(0);
+  });
+
   it('rejects with INVALID_OPTION when vfs is missing', {
     tags: ['standalone'],
   }, async () => {

@@ -427,7 +427,7 @@ await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. |
-| `build` | `SQLiteBuild` | first build the VFS declares that the browser supports | Which wa-sqlite build to load. It does not affect where the database lives — only which builds can instantiate the VFS. |
+| `build` | `SQLiteBuild` | first build the VFS declares that the browser supports | Which wa-sqlite build to load, where deleting needs the VFS — a VFS whose database is its own OPFS files is deleted without one. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#wasmurl). A deployment that needs it to open a database needs it to delete one. |
 
 Deleting a database that is not there throws — most often because `vfs` is not the one it was created with.

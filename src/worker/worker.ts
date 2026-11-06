@@ -1706,21 +1706,55 @@ const opfsEntryExists = async (path: string): Promise<boolean> => {
 };
 
 /**
+ * Deletes a VFS-with-a-folder database: the database IS its OPFS entries, so
+ * removing them is the deletion. No engine is loaded and no VFS created — none
+ * of these VFS has a `jDelete` that deletes a database (`OPFSCoopSyncVFS`
+ * truncates a file it never removes, `OPFSWriteAheadVFS` throws for anything
+ * but its own temporaries), and creating one costs: `OPFSCoopSyncVFS` sweeps
+ * the OPFS root and opens a directory of temporary handles, 5 s median and
+ * 37 s at worst on Windows Firefox (DELETE-VFS-CREATE,
+ * `mem:measurements/cross-tab-and-delete`).
+ */
+const deleteFolderDatabase = async (
+  file: string,
+  vfs: SQLiteVFS,
+): Promise<boolean> => {
+  // Presence from the entry, because an open probe cannot answer here.
+  // SQLITE_CANTOPEN does NOT mean "not there" on every VFS: OPFSCoopSyncVFS
+  // returns it for a file that exists but is empty, because its jOpen only
+  // reaches a path recorded in `accessiblePaths` and it records one only for a
+  // file with a size. A database opened and never written was therefore
+  // reported absent (measured 2026-09-18; `delete.test.ts` pins it). The same
+  // code comes back when the file's exclusive handle is held by a context that
+  // has died, so reading it as absence would also let a deletion silently skip
+  // a live database's files.
+  if (!(await opfsEntryExists(file))) return false;
+
+  // Sidecars first, the main file (suffix '') last. If a sidecar removal
+  // then failed while the main file went first, the entry the presence check
+  // reads would already be gone: the next deleteDatabase answers
+  // DATABASE_NOT_FOUND and nothing public can remove the sidecar left
+  // behind. Removing the main file last means a failure here always still
+  // leaves it in place, so a retried deleteDatabase finds the database and
+  // tries again. No test can inject the failed removal this guards against.
+  for (const suffix of [
+    ...DATABASE_FILE_SUFFIXES.filter((suffix) => suffix !== ''),
+    ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
+  ]) {
+    await removeOpfsEntry(`${file}${suffix}`);
+  }
+  await removeOpfsEntry(file);
+  return true;
+};
+
+/**
  * Deletes a database without opening it.
  *
- * The VFS is instantiated because `jDelete` is the only correct removal on
- * `AccessHandlePoolVFS` — it un-associates the SQLite path and returns the slot
- * to the pool, where deleting the OPFS file by name would match nothing.
- *
- * The second pass exists because two of the seven persistent `jDelete`
- * implementations do not delete: `OPFSCoopSyncVFS` truncates a file it never
- * removes, and is a silent no-op for a database that is not open — which is
- * every database here, since nothing is opened; `OPFSWriteAheadVFS` throws for
- * anything that is not a bound temporary file. Both keep the database at the
- * plain OPFS path, so the remedy is the `removeEntry` the other two OPFS VFS
- * already perform internally. It runs for every VFS with a folder rather than
- * for an exception list, because it is idempotent and a list would be a second
- * place to update when a VFS is added.
+ * A VFS with a folder goes to `deleteFolderDatabase`. Elsewhere the VFS is
+ * instantiated because `jDelete` is the only correct removal:
+ * `AccessHandlePoolVFS` un-associates the SQLite path and returns the slot to
+ * the pool, where deleting the OPFS file by name would match nothing, and an
+ * IndexedDB VFS keeps no file at all.
  */
 const deleteDatabaseFiles = async (data: {
   file: string;
@@ -1729,6 +1763,9 @@ const deleteDatabaseFiles = async (data: {
   wasm?: WasmLocation;
 }): Promise<boolean> => {
   const { file, vfs, build, wasm } = data;
+
+  // A folder is the declaration that the database IS the OPFS entry at its path.
+  if (folderOf(vfs) !== undefined) return deleteFolderDatabase(file, vfs);
 
   const { default: factory } = await WA_SQLITE_BUILDS[build]();
   const module = await factory(wasmModuleArg(wasm));
@@ -1744,71 +1781,39 @@ const deleteDatabaseFiles = async (data: {
   )) as any;
 
   const { storage } = VFS_CAPABILITIES[vfs];
-  // A folder is the declaration that the database IS the OPFS entry at its path.
-  const byPath = folderOf(vfs) !== undefined;
 
-  // Presence, and it is decided differently per storage.
-  //
-  // On a VFS with a `folder` the database IS the file at that name, so the entry answers
-  // — and it has to, because an open probe cannot. SQLITE_CANTOPEN does NOT
-  // mean "not there" on every VFS: OPFSCoopSyncVFS returns it for a file that
-  // exists but is empty, because its jOpen only reaches a path recorded in
-  // `accessiblePaths` and it records one only for a file with a size. A
-  // database opened and never written was therefore reported absent (measured
-  // 2026-09-18; `delete.test.ts` pins it). The same code comes back when the
-  // file's exclusive handle is held by a context that has died, so reading it
-  // as absence would also let a deletion silently skip a live database's files.
-  //
-  // Everywhere else the probe stands: open without SQLITE_OPEN_CREATE and read
-  // SQLITE_CANTOPEN (14) as absence. Any other error is a genuine failure and
-  // must not be swallowed as DATABASE_NOT_FOUND — a corrupt database returns
-  // SQLITE_CORRUPT, and a WASM/VFS start-up failure throws before open_v2 is
-  // reached at all.
+  // Presence: open without SQLITE_OPEN_CREATE and read SQLITE_CANTOPEN (14) as
+  // absence. Any other error is a genuine failure and must not be swallowed as
+  // DATABASE_NOT_FOUND — a corrupt database returns SQLITE_CORRUPT, and a
+  // WASM/VFS start-up failure throws before open_v2 is reached at all.
   const sqlite = SQLite.Factory(module);
   sqlite.vfs_register(vfsInstance, true);
-  if (byPath) {
-    if (!(await opfsEntryExists(file))) {
-      // Nothing to delete. Close the VFS instance and report absence — no
-      // jDelete and no OPFS second pass, because those would operate on
-      // files just confirmed to be absent.
-      await vfsInstance.close?.();
+  try {
+    const db = await sqlite.open_v2(file, SQLITE_OPEN_READWRITE);
+    // Database exists; close the handle at once and proceed to deletion.
+    // The same vfsInstance services both this probe and the jDelete calls
+    // below, so no re-acquisition of OPFS access handles is needed.
+    await sqlite.close(db);
+  } catch (error: unknown) {
+    // Closed on every outcome: the client terminates this worker on the
+    // reply, and an IndexedDB VFS's close() waits for its transactions.
+    await vfsInstance.close?.();
+    if ((error as { code?: unknown })?.code === SQLITE_CANTOPEN) {
       return false;
     }
-  } else {
-    try {
-      const db = await sqlite.open_v2(file, SQLITE_OPEN_READWRITE);
-      // Database exists; close the handle at once and proceed to deletion.
-      // The same vfsInstance services both this probe and the jDelete calls
-      // below, so no re-acquisition of OPFS access handles is needed.
-      await sqlite.close(db);
-    } catch (error: unknown) {
-      // Closed on every outcome: the client terminates this worker on the
-      // reply, and an IndexedDB VFS's close() waits for its transactions.
-      await vfsInstance.close?.();
-      if ((error as { code?: unknown })?.code === SQLITE_CANTOPEN) {
-        return false;
-      }
-      throw error;
-    }
+    throw error;
   }
 
   try {
-    // Not on a VFS with a folder: the OPFS pass below removes every file there,
-    // after the VFS has closed, so jDelete adds nothing there — and OPFSWriteAheadVFS's
-    // refuses anything but its own temporary files, logging an error per call
-    // (three per deletion, on every engine; 2026-09-14). No test can see that
-    // console: it belongs to the delete worker.
-    if (!byPath) {
-      // On AccessHandlePoolVFS each sibling also occupies its own pool slot.
-      for (const suffix of DATABASE_FILE_SUFFIXES) {
-        // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
-        // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
-        // when syncDir is truthy — with 0 the delete is queued on #chain but
-        // the worker exits before it commits, leaving the data intact.
-        // OPFSAdaptiveVFS, OPFSAnyContextVFS and IDBMirrorVFS honour the same
-        // flag with `if (syncDir) await result`; the remaining VFS ignore it.
-        await vfsInstance.jDelete(`${file}${suffix}`, 1);
-      }
+    // On AccessHandlePoolVFS each sibling also occupies its own pool slot.
+    for (const suffix of DATABASE_FILE_SUFFIXES) {
+      // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
+      // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
+      // when syncDir is truthy — with 0 the delete is queued on #chain but
+      // the worker exits before it commits, leaving the data intact.
+      // IDBMirrorVFS honours the same flag with `if (syncDir) await result`;
+      // AccessHandlePoolVFS ignores it.
+      await vfsInstance.jDelete(`${file}${suffix}`, 1);
     }
 
     // Commit barrier for IndexedDB VFS. This call is a barrier, not a check —
@@ -1844,23 +1849,6 @@ const deleteDatabaseFiles = async (data: {
     }
   } finally {
     await vfsInstance.close?.();
-  }
-
-  if (byPath) {
-    // Sidecars first, the main file (suffix '') last. If a sidecar removal
-    // then failed while the main file went first, the file this VFS opens to
-    // probe existence would already be gone: the next deleteDatabase answers
-    // DATABASE_NOT_FOUND and nothing public can remove the sidecar left
-    // behind. Removing the main file last means a failure here always still
-    // leaves it in place, so a retried deleteDatabase finds the database and
-    // tries again. No test can inject the failed removal this guards against.
-    for (const suffix of [
-      ...DATABASE_FILE_SUFFIXES.filter((suffix) => suffix !== ''),
-      ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
-    ]) {
-      await removeOpfsEntry(`${file}${suffix}`);
-    }
-    await removeOpfsEntry(file);
   }
 
   return true;
