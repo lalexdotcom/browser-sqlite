@@ -6,7 +6,7 @@
 
 **An entry waiting on a bug we filed is presented only if that bug has moved (user, 2026-11-02).** Such a row says "bug-gated", names the bug and the state last seen. When listing the backlog, check each gated bug first (e.g. `curl -s "https://bugs.webkit.org/rest/bug/<id>?include_fields=status,resolution,last_change_time"` and its comments): unchanged since the state recorded → leave the entry out of the list; changed (a comment, an assignee, a status, a fix) → present it with what moved, then update the recorded state.
 
-**The current release is bugfix only (user, 2026-11-02): no new feature, no new behaviour.** New features and changes of default are DEFERRED to a later version.
+**The current release: no big feature, but fine-tuning of the existing API is fine (user, 2026-11-06).** Bugfixes were the priority of rc.11 (published 2026-11-03), which is where "bugfix only, no new feature, no new behaviour" (user, 2026-11-02) applied; since then, avoid adding a big feature, but an adjustment of the existing API — such as `deleteDatabase` options (`mem:follow-ups/delete-database-wait`) — is not ruled out. The entries DEFERRED on 2026-11-02 below stay deferred as the user decided them.
 
 **Never delete an entry; mark it (user, 2026-10-26).** A closed follow-up keeps its memory and its row, with the status CLOSED: deleting it breaks the links that point to it. Inside an entry, the text above the status line is what the follow-up was; update the status rather than rewriting the history of it. `CHANGELOG.md` and `git log` record what was fixed, `mem:measurements` holds the numbers, `mem:vfs` the VFS behaviour, `mem:lessons` what a closure taught.
 
