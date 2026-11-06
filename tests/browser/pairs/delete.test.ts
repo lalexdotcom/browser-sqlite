@@ -78,6 +78,33 @@ describe('deleteDatabase', () => {
     expect(await tableCount(file, { vfs, build })).toBe(0);
   });
 
+  // A failure names the step it stopped at, since the browser's own error
+  // (an IndexedDB UnknownError, say) does not say which operation hit it.
+  // Falsifiable: post the worker's error message alone.
+  it('names the step a failed deletion stopped at', {
+    tags: ['requires:shared-storage', 'excludes:opfs-file'],
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
+    const database = sharedDatabase();
+    const file = database.name;
+    const db = database.open();
+    await db.run('CREATE TABLE t (a INTEGER)');
+    await db.close();
+
+    await expect(
+      deleteDatabase(file, {
+        vfs,
+        build,
+        wasmUrl: () => new URL('/bsq-no-such.wasm', location.href).href,
+      }),
+    ).rejects.toMatchObject({
+      code: 'WORKER_CRASHED',
+      message: expect.stringContaining(
+        `deleting ${file} failed while instantiating the .wasm: `,
+      ),
+    });
+  });
+
   it('rejects with INVALID_OPTION when vfs is missing', {
     tags: ['standalone'],
   }, async () => {

@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **Breaking:** **The boot stages of `db.debug.workers[i].boot` are codes,** and a worker reports them only for a client created with `debug`. The `BootStage` type is now `'awaiting-client' | 'loading-build' | 'instantiating-wasm' | 'loading-vfs-module' | 'creating-vfs' | 'awaiting-open-lock' | 'opening-database' | 'awaiting-held-file' | 'applying-pragmas'`, where it held English phrases (`'waiting for the client'`, `'loading the build'`, …). Compare against the codes.
+- **A `deleteDatabase()` that fails in its worker says which step it stopped at,** in its message (`deleting <name> failed while <step>: …`), where it gave only the browser's error.
 
 ### Fixed
 

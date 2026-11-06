@@ -1705,6 +1705,9 @@ const opfsEntryExists = async (path: string): Promise<boolean> => {
   }
 };
 
+/** The step a deletion is at, for the message of a failure. */
+type DeleteProgress = { step: string };
+
 /**
  * Deletes a VFS-with-a-folder database: the database IS its OPFS entries, so
  * removing them is the deletion. No engine is loaded and no VFS created — none
@@ -1718,7 +1721,9 @@ const opfsEntryExists = async (path: string): Promise<boolean> => {
 const deleteFolderDatabase = async (
   file: string,
   vfs: SQLiteVFS,
+  at: DeleteProgress,
 ): Promise<boolean> => {
+  at.step = 'checking that the database exists';
   // Presence from the entry, because an open probe cannot answer here.
   // SQLITE_CANTOPEN does NOT mean "not there" on every VFS: OPFSCoopSyncVFS
   // returns it for a file that exists but is empty, because its jOpen only
@@ -1741,8 +1746,10 @@ const deleteFolderDatabase = async (
     ...DATABASE_FILE_SUFFIXES.filter((suffix) => suffix !== ''),
     ...VFS_CAPABILITIES[vfs].extraFileSuffixes,
   ]) {
+    at.step = `removing ${file}${suffix}`;
     await removeOpfsEntry(`${file}${suffix}`);
   }
+  at.step = `removing ${file}`;
   await removeOpfsEntry(file);
   return true;
 };
@@ -1756,23 +1763,30 @@ const deleteFolderDatabase = async (
  * the pool, where deleting the OPFS file by name would match nothing, and an
  * IndexedDB VFS keeps no file at all.
  */
-const deleteDatabaseFiles = async (data: {
-  file: string;
-  vfs: SQLiteVFS;
-  build: SQLiteBuild;
-  wasm?: WasmLocation;
-}): Promise<boolean> => {
+const deleteDatabaseFiles = async (
+  data: {
+    file: string;
+    vfs: SQLiteVFS;
+    build: SQLiteBuild;
+    wasm?: WasmLocation;
+  },
+  at: DeleteProgress,
+): Promise<boolean> => {
   const { file, vfs, build, wasm } = data;
 
   // A folder is the declaration that the database IS the OPFS entry at its path.
-  if (folderOf(vfs) !== undefined) return deleteFolderDatabase(file, vfs);
+  if (folderOf(vfs) !== undefined) return deleteFolderDatabase(file, vfs, at);
 
+  at.step = `loading the ${build} build`;
   const { default: factory } = await WA_SQLITE_BUILDS[build]();
+  at.step = 'instantiating the .wasm';
   const module = await factory(wasmModuleArg(wasm));
+  at.step = `loading ${vfs}`;
   const vfsModule = (await VFSConfigs[vfs].fs()) as unknown as Record<
     string,
     VFSClass
   >;
+  at.step = `creating ${vfs}`;
   const vfsInstance = (await createVfsInstance(
     vfsModule[vfs],
     vfs,
@@ -1781,6 +1795,7 @@ const deleteDatabaseFiles = async (data: {
   )) as any;
 
   const { storage } = VFS_CAPABILITIES[vfs];
+  at.step = 'checking that the database exists';
 
   // Presence: open without SQLITE_OPEN_CREATE and read SQLITE_CANTOPEN (14) as
   // absence. Any other error is a genuine failure and must not be swallowed as
@@ -1804,9 +1819,13 @@ const deleteDatabaseFiles = async (data: {
     throw error;
   }
 
+  // The close below runs on every outcome; only after a success does it
+  // become the step a failure is reported at.
+  let deleted = false;
   try {
     // On AccessHandlePoolVFS each sibling also occupies its own pool slot.
     for (const suffix of DATABASE_FILE_SUFFIXES) {
+      at.step = `deleting ${file}${suffix}`;
       // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
       // IDBBatchAtomicVFS.js:119-133) only awaits its IndexedDB transaction
       // when syncDir is truthy — with 0 the delete is queued on #chain but
@@ -1844,10 +1863,13 @@ const deleteDatabaseFiles = async (data: {
     // inherits the barrier, which is either needed (like IDBBatchAtomicVFS) or
     // inert (like IDBMirrorVFS).
     if (storage === 'indexeddb') {
+      at.step = 'waiting for IndexedDB to commit the deletion';
       const pResOut = new DataView(new ArrayBuffer(4));
       await vfsInstance.jAccess(`${file}`, 0, pResOut);
     }
+    deleted = true;
   } finally {
+    if (deleted) at.step = `closing ${vfs}`;
     await vfsInstance.close?.();
   }
 
@@ -1915,7 +1937,10 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
       // Every outcome is answered with terminate(): deleteDatabaseFiles closes
       // its VFS first, which waits for the jAccess barrier's readonly
       // transaction, among others, on an IndexedDB VFS.
-      deleteDatabaseFiles(data)
+      // The step a failure is reported at: a bare browser error (an
+      // IndexedDB UnknownError, say) says nothing of which operation hit it.
+      const at: DeleteProgress = { step: 'starting' };
+      deleteDatabaseFiles(data, at)
         .then((found) => {
           if (found) {
             self.postMessage({ type: 'deleted', callId: 0 });
@@ -1932,10 +1957,9 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
           self.postMessage({
             type: 'error',
             callId: 0,
-            message:
-              error instanceof Error
-                ? error.message
-                : `Failed to delete ${data.file}`,
+            message: `failed while ${at.step}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
             cause: cloneable(error),
             ...(sqliteCode !== undefined ? { sqliteCode } : {}),
           });

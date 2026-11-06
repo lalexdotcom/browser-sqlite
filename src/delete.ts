@@ -205,7 +205,13 @@ const runDelete = (
         );
       }
       if (data.type === 'error') {
-        return settle(startupError(data));
+        // The worker's message names the step: "failed while …: <error>".
+        return settle(
+          startupError({
+            ...data,
+            message: `deleting ${name} ${data.message}`,
+          }),
+        );
       }
     };
 
