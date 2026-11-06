@@ -419,3 +419,19 @@ built before either queries) and `after` (B built once A has written). Chromium 
   handle race picks either side, as AHP-2TAB did. This is what the per-realm memo (spec A1) removes.
 - **Open latency** (`createSQLiteClient` → resolved `SELECT 1`, n=20, median): Chromium 58 ms before the
   guard, 55 after; Firefox 69 before, 63 after. The guard costs no measurable time.
+
+## DELETE-VFS-CREATE — where a deletion spends its time on Windows Firefox `OPFSCoopSyncVFS`, 2026-11-06, GitHub `windows-latest`
+
+**Why measured.** Two Windows matrix reds (runs 41875605671 `failed-client`, 42051847349 `default-build`, both Firefox `OPFSCoopSyncVFS`) were `deleteDatabase` `TIMEOUT`s after 30 s, each test already 22-32 s late before its delete started (those tests take 2-8 s in every other run and cell). Their logs could not say where the delete worker was.
+
+**Method.** Throwaway branch `spike/delete-timeout-windows` (`cd14a9aa`, kept locally, remote deleted), run 42194408995: the client and delete workers posted each step on a `BroadcastChannel` the test printed per round; `DELETE_TIMEOUT` 180 s; Firefox 155, `BSQ_TIME_SCALE=4`, the three builds `sync`/`async`/`jspi` at once (as the matrix runs three cells at once), 60 rounds each of three shapes — open + write, `close()`, delete; `failed-client`'s (worker failed, delete before `close()`); `default-build`'s (no `WebAssembly.Suspending`, `jspi` only). 420 rounds, 0 failures.
+
+| delete worker step | median | max |
+|---|---|---|
+| **creating the VFS instance (`OPFSCoopSyncVFS.create`)** | **5.4 s** | **37.6 s** |
+| each `removeEntry` | 0.23 s | 5.4 s |
+| start, build, `.wasm`, presence check, VFS close | < 30 ms | 0.16 s |
+
+A whole delete: 6.0 s median, **40.9 s max** (would have been a `TIMEOUT`). The client pays the same step at open: 5.1 s median, 14.9 s max. **No held handle anywhere** (no retry in the VFS's log, every delete completed). **The peaks are the machine's:** round #25 of the three processes — three browsers, three OPFS — peaked together, 25.6, 37.6 and 36.7 s. Later, `jspi` running alone (the `default-build` shape), the VFS creation fell to 1.2 s.
+
+**Reading.** `OPFSCoopSyncVFS.create()` (`#initialize`) sweeps the OPFS root for orphaned `.ahp-*` temporary directories (one per terminated instance: the VFS has no `close()` that removes its own, its Web Lock goes with the worker) and creates its own with 10 pre-opened temporary files (`DEFAULT_TEMPORARY_FILES`) — the most OPFS file operations of any step, each 50-200 ms on Windows Firefox (OPFS-PROBE, `mem:measurements/held-handles`). On a VFS with a folder the delete worker used that instance for nothing (presence from the OPFS entry, no `jDelete`, removal by `removeEntry`). **Acted on:** `fix/delete-without-vfs` (2026-11-06) deletes those databases with no engine and no VFS.
