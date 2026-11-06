@@ -44,6 +44,7 @@ been work on nothing.
 | `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | OPEN — PR open, waiting for review |
 | `safari-async-slowdown` | Safari's `async` build slows down after a few seconds of work | OPEN — cause: JSC's OMG tier on the Asyncify `sqlite3VdbeExec`. **Bug-gated: WebKit 329813**, last seen 2026-11-02: NEW, filed that day, no comment |
 | `wa-sqlite-389-adaptive-journal` | `OPFSAdaptiveVFS` keeps its journal's access handle between transactions (PR #389) | OPEN — PR open, waiting for review |
+| `wa-sqlite-393-coopsync-hot-journal` | Carry PR #393 (not ours): `OPFSCoopSyncVFS` misses a hot journal left by a connection terminated mid-transaction, so another tab's open connection reads it half-applied (issue #392) | OPEN — 2026-11-06: to test, then carry in `patches/`; PR open, not reviewed |
 
 ## Deferred — a later version
 
