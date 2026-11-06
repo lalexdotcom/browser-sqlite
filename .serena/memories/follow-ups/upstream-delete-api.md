@@ -1,0 +1,11 @@
+# Follow-up — ask upstream whether a VFS should say how to delete a database, or which resources a database uses (user, 2026-11-06)
+
+**Status: OPEN** — to open as a wa-sqlite discussion once `fix/delete-without-vfs` is closed; nothing sent yet.
+
+Part of `mem:follow-ups`, opened 2026-11-06 while diagnosing `deleteDatabase`'s Windows `TIMEOUT`s (`mem:follow-ups/delete-database-wait`).
+
+**The gap.** Neither SQLite nor wa-sqlite has a "delete a database" operation: SQLite's VFS interface has `xDelete(file)` only, called for journals and temporary files, never for a main database; each wa-sqlite VFS implements `jDelete` for what SQLite asks of it — `OPFSCoopSyncVFS` truncates the file and keeps it, `OPFSWriteAheadVFS` throws `unexpected file deletion` for anything but its own temporaries. The only extra methods are `AccessHandlePoolVFS.removeCapacity` and `IDBBatchAtomicVFS.reset()`. So the library duplicates what the VFS knows: `folder` and `extraFileSuffixes` in `VFS_CAPABILITIES`, and a deletion by OPFS entries (`deleteFolderDatabase` in `src/worker/worker.ts`). That duplication already failed once: `OPFSWriteAheadVFS`'s `-wa0`/`-wa1` were left behind (DELETE-WA, `mem:measurements/cross-tab-and-delete`).
+
+**The user's idea (2026-11-06):** a discussion upstream — should a VFS offer a way to delete a database, or at least list the resources a database uses, for a consumer to remove? Knowledge provided by the VFS is more reliable than a copy kept by its consumer.
+
+**Points for its shape (Claude, not decided):** a new API beyond SQLite's VFS contract, so rhashimoto's call, and a discussion before any PR; a **static** method (e.g. `OPFSCoopSyncVFS.deleteDatabase(name, options)`) or a static resource list rather than an instance method, because creating an `OPFSCoopSyncVFS` instance is what cost 5 s median and up to 37 s on Windows Firefox (DELETE-VFS-CREATE). Write it under `mem:conventions/upstream` (evidence that stands on upstream alone).

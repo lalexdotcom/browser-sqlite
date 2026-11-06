@@ -138,6 +138,7 @@ The entries live in the sub-memories below, by theme, each in the order it was w
 - EXISTS-PROBE
 - Delete campaign
 - `deleteDatabase` hangs
+- DELETE-VFS-CREATE
 - SECOND-CLIENT
 
 ## `mem:measurements/scheduler-and-pool` — scheduler, barrier, pool and streaming
