@@ -381,7 +381,7 @@ describe('deleteDatabase under a live connection', () => {
  * `close()` then `deleteDatabase()` is the sequence a consumer writes, and
  * before the retry it failed with WORKER_CRASHED / NoModificationAllowedError.
  *
- * Falsifiable: make createVfsInstance in src/worker/worker.ts rethrow
+ * Falsifiable: make createVfsInstance in src/worker/create-vfs.ts rethrow
  * instead of waiting (verified red, 2026-09-16).
  */
 describe('deleting after a worker died inside a statement', () => {
