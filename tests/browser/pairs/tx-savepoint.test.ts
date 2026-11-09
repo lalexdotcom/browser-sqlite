@@ -347,6 +347,10 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
 describe('the savepoint asks SQLite (spec 2026-10-26, § Transactions)', () => {
   // Falsifiable: in src/transaction.ts's `abandon`, drop `pending = 'undo'` —
   // the next message then releases the abandoned write instead of undoing it.
+  //
+  // Aborted once it is SEEN running, not after 30 ms (2026-11-09): on a
+  // starved Windows runner the 30 ms timer fired after the whole write had
+  // committed its million rows, so nothing was aborted.
   it(
     'undoes a tx.run() write aborted by its own signal while it runs, and goes on',
     async () => {
@@ -354,14 +358,22 @@ describe('the savepoint asks SQLite (spec 2026-10-26, § Transactions)', () => {
       try {
         const before = workerIdentity(db);
         const reason = new Error('this write only');
+        const abandon = abandonOnceRunning(db, BIG_INSERT, reason);
         let caught: unknown;
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
           caught = await tx
-            .run(BIG_INSERT, [], { signal: abortAfter(30, reason) })
+            .run(BIG_INSERT, [], { signal: abandon.signal })
             .catch((e) => e);
           await tx.run('INSERT INTO t VALUES (2)');
         });
+        if (
+          !(await exercised(
+            abandon.abandonedRunning(),
+            'the write was not seen running before it ended',
+          ))
+        )
+          return;
         expect(caught).toBe(reason);
         expect(await rowsOf(db)).toEqual([0, 1, 2]);
         expect(await bigCount(db)).toBe(0);

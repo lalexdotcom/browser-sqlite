@@ -24,7 +24,6 @@ been work on nothing.
 | `debug-run-stage` | A `run` sub-status of a busy worker (debug-only, on the model of `boot`); `BootStage` as codes, not text | CLOSED 2026-11-05 — `feat/debug-run-stage` merged |
 | `debug-verdict-visibility` | A first `all()`/`run()`/`chunk()`/`stream()` compiles in its verdict, outside any debug query: its wait and compile show in no stage | CLOSED 2026-11-05 — merged with `feat/debug-run-stage` (a request `kind: 'verdict'`) |
 | `delete-database-wait` | `deleteDatabase` waits for an open in progress instead of refusing with `BUSY` (an option, default unchanged) | OPEN — the Windows `TIMEOUT`s diagnosed (an unused VFS instance, not a hold) and fixed on `fix/delete-without-vfs` (2026-11-06); `wait`/`timeout` options not designed, kept in the backlog (user, 2026-11-06) |
-| `idb-unknown-error-delete` | `deleteDatabase` fails with an IndexedDB `UnknownError` (`WORKER_CRASHED`) in a test cleanup, Windows Firefox `IDBMirrorVFS/jspi` | OPEN — DIAGNOSED 2026-11-09: Firefox's IndexedDB open gives up after 10 s on a database file still busy with the previous connection's close, which an I/O stall of the Windows runner stretched to ~17 s; a client's open is hit too; the fix is the user's call |
 | `close-immediate` | An option for `close()` that interrupts the statements in flight instead of draining them (up to `drainTimeout`, 60 s) | OPEN — the user's request (2026-11-09); not designed |
 | `upstream-delete-api` | Ask wa-sqlite whether a VFS should offer a database deletion, or list a database's resources, instead of the library duplicating that knowledge | OPEN — the user's idea (2026-11-06); a discussion to open after `fix/delete-without-vfs` |
 
@@ -36,6 +35,7 @@ been work on nothing.
 | `library-stock-browsers` | What stays open after the Vitest + WebdriverIO migration | OPEN — the iOS simulator, the WASM built once |
 | `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10). **Bug-gated: WebKit 328618**, last seen 2026-11-02: NEW, unassigned, InRadar since 2026-10-30, no comment |
 | `macos-worker-startup` | Worker startups of 10-15 s on the macOS 26 runner: the runner's, or the users'? | OPEN — backlog (user, 2026-11-03); the user's Mac fast on Safari 27.2 (STARTUP-PROBE-MAC); the Safari case fits SAFARI-WASM-INSTANTIATE; Chrome stalls a plain worker over 10 s there (rerun 41714043416, 20/22) |
+| `windows-chrome-cell-stall` | A Windows Chrome cell (`OPFSWriteAheadVFS/async`) stops producing output after 9 files and is cut at the planner's 3600 s bound, no test failed | OPEN — first sighting 2026-11-09 (run 42622390499); cause unknown, where it stalled unknown |
 | `macos-ci-instability` | macOS workflows fail without a library cause: timers ~5× slower in Chrome and Firefox than on Linux (not in Safari), a lost Safari session | OPEN — low priority: the runner's, not macOS's (user's Mac fast); `BSQ_TIME_SCALE=2` on macOS since 2026-10-26; runner cause and Safari sessions open |
 
 ## Open — upstream (wa-sqlite)
@@ -80,6 +80,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
+| `idb-unknown-error-delete` | An IndexedDB VFS's open or deletion fails with `UnknownError` on Windows Firefox (Firefox gives up after 10 s on a file still busy with the previous close) | CLOSED — 2026-11-09, `fix/idb-open-unknown-error`: `createVfsInstance` retries an `UnknownError` for 10 s counted from the first one; Ubuntu matrix green, Windows twice green on every IndexedDB pair |
 | `matrix-windows-macos` | The matrix on Windows and macOS | CLOSED — 2026-11-03, `ci/matrix-os`: `matrix.yaml` a module called by CI, `matrix-<os>.yaml` by hand (Safari on macOS); Windows and macOS 27 green, macOS 26 red on runner speed (`macos-ci-instability`) |
 | `ci-live-progress` | Reading a GitHub run's progress from `gh` while it runs (logs come only at job end) | CLOSED — 2026-11-03, `feat/ci-live-progress`: a progress check run per planner on CI (`[n/N]` lines, each failed test as it fails), `scripts/ci-watch.ts` to follow it |
 | `test-plan-windows-file-arg` | On Windows `scripts/test-plan.ts` rejects every file argument (`collectFamily` compared `resolve()`'s `\` with Vitest's `/`) | CLOSED — 2026-11-02, `fix/test-plan-windows-file-arg`: compared as relative paths, unit-tested under `path.win32`, verified on `windows-latest` (run 41459385537) |

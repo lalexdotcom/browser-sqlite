@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - **On `OPFSCoopSyncVFS`, `OPFSAdaptiveVFS`, `OPFSWriteAheadVFS` and `OPFSAnyContextVFS`, `deleteDatabase()` no longer loads SQLite and its `.wasm`:** it removes the database's files directly. It is faster, and on `OPFSCoopSyncVFS` it no longer fails with `TIMEOUT` while starting a VFS it does not use, as it did in Firefox on Windows.
+- **On `IDBMirrorVFS` and `IDBBatchAtomicVFS` in Firefox, opening or deleting a database no longer fails with an IndexedDB `UnknownError` while a connection just closed is still releasing the storage:** the open is retried for a few more seconds.
 
 ## [1.0.0-rc.11] - 2026-11-03
 
