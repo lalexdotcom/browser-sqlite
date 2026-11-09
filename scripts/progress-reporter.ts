@@ -8,7 +8,7 @@
  * variable it does nothing. A test that passed on a retry (`timeoutRetry`,
  * scripts/processes.ts) is reported once, as retried, never as failed.
  */
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import type { Reporter, TestCase, TestModule, TestSuite } from 'vitest/node';
 import { ROOT } from './parallel.ts';
@@ -80,20 +80,91 @@ function eventLine(
   message: string,
   mark?: 'retried' | 'notExercised',
 ): string {
-  // Forward slashes on every platform: path.relative writes `\` on Windows.
-  const file = relative(ROOT, moduleId).replace(/\\/g, '/');
+  const file = fileOf(moduleId);
   const event = mark
     ? { file, test, message, [mark]: true }
     : { file, test, message };
   return `${JSON.stringify(event)}\n`;
 }
 
+// Forward slashes on every platform: path.relative writes `\` on Windows.
+function fileOf(moduleId: string): string {
+  return relative(ROOT, moduleId).replace(/\\/g, '/');
+}
+
+/**
+ * Where a job's reporter keeps what it is running: beside its events file,
+ * which ci-progress reads as failures, one per line.
+ */
+function inFlightFile(eventsFile: string): string {
+  return `${eventsFile.replace(/\.ndjson$/, '')}.inflight.json`;
+}
+
+/** What a job is running, as its reporter last saw it; times in epoch ms. */
+type InFlight = {
+  file?: { name: string; since: number };
+  test?: { name: string; since: number };
+  ended?: { name: string; at: number };
+};
+
+/**
+ * One line for a job cut at its bound (`now`): the test or the file it was
+ * in, or what ended last, so a stalled job says where it stalled.
+ */
+export function inFlightReport(eventsFile: string, now: number): string {
+  let state: InFlight;
+  try {
+    state = JSON.parse(readFileSync(inFlightFile(eventsFile), 'utf8'));
+  } catch {
+    return 'in flight: nothing reported, no file started';
+  }
+  const before = (ms: number) =>
+    `${Math.round((now - ms) / 1000)}s before the cut`;
+  const { file, test, ended } = state;
+  const last = ended && `last ended: ${ended.name}, ${before(ended.at)}`;
+  if (file && test) {
+    return `in flight: ${file.name} › ${test.name}, started ${before(test.since)}`;
+  }
+  if (file) {
+    return ended?.name.startsWith(`${file.name} › `)
+      ? `in flight: ${file.name}, no test running; ${last}`
+      : `in flight: ${file.name}, no test started, the file started ${before(file.since)}`;
+  }
+  return last
+    ? `in flight: no file running; ${last}`
+    : 'in flight: nothing reported, no file started';
+}
+
 export default class ProgressReporter implements Reporter {
+  // What runs now, saved at each step so the planner can read it if it has
+  // to cut the job (inFlightReport).
+  #inFlight: InFlight = {};
+
+  onTestModuleStart(testModule: TestModule) {
+    const { ended } = this.#inFlight;
+    this.#inFlight = {
+      file: { name: fileOf(testModule.moduleId), since: Date.now() },
+      ...(ended ? { ended } : {}),
+    };
+    this.#save();
+  }
+
+  onTestCaseReady(testCase: TestCase) {
+    this.#inFlight.test = { name: testCase.fullName, since: Date.now() };
+    this.#save();
+  }
+
   onTestCaseResult(testCase: TestCase) {
     const line = failureEvent(testCase) ?? retriedEvent(testCase);
     if (line) append(line);
     const missed = notExercisedEvent(testCase);
     if (missed) append(missed);
+    delete this.#inFlight.test;
+    this.#inFlight.ended = {
+      name: `${fileOf(testCase.module.moduleId)} › ${testCase.fullName}`,
+      at: Date.now(),
+    };
+    this.#save();
   }
 
   // A file that fails to load, or in a hook, marks its tests skipped, not
@@ -103,6 +174,10 @@ export default class ProgressReporter implements Reporter {
     if (errors.length > 0) {
       append(errorEvent(testModule.moduleId, '(file)', errors));
     }
+    this.#inFlight = {
+      ended: { name: fileOf(testModule.moduleId), at: Date.now() },
+    };
+    this.#save();
   }
 
   onTestSuiteResult(testSuite: TestSuite) {
@@ -110,6 +185,11 @@ export default class ProgressReporter implements Reporter {
     if (errors.length > 0) {
       append(errorEvent(testSuite.module.moduleId, testSuite.fullName, errors));
     }
+  }
+
+  #save() {
+    const file = process.env.BSQ_PROGRESS_EVENTS;
+    if (file) writeFileSync(inFlightFile(file), JSON.stringify(this.#inFlight));
   }
 }
 
