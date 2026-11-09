@@ -71,6 +71,7 @@ import {
 } from './plan-io.ts';
 import { deadIsFatal } from './plan-report.ts';
 import { packageBin, timeScale } from './processes.ts';
+import { inFlightReport } from './progress-reporter.ts';
 import { RECOMMENDED_VFS } from './recommended-vfs.ts';
 import {
   allPairs,
@@ -466,9 +467,17 @@ async function main() {
                 timeoutMs: JOB_TIMEOUT_MS,
               },
             );
+      // A job cut at its bound says what it was running (progress-reporter.ts).
+      const inFlight = timedOut
+        ? `${job.id}: ${inFlightReport(join(events, `${job.id}.ndjson`), Date.now())}`
+        : undefined;
       writeFileSync(
         join(logs, `${job.id}.log`),
-        error ? `${output}\n${error.message}\n` : output,
+        error
+          ? `${output}\n${error.message}\n`
+          : inFlight
+            ? `${output}\n${inFlight}\n`
+            : output,
       );
       let state: BlobState = existsSync(blob) ? 'ok' : 'missing';
       if (state === 'ok') {
@@ -500,6 +509,10 @@ async function main() {
       const line = `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ' (NO BLOB)'}`;
       console.log(line);
       progress.line(line);
+      if (inFlight) {
+        console.log(`  ${inFlight}`);
+        progress.line(inFlight);
+      }
       return { job, timedOut, error, blob: state, exitCode };
     },
     (job) =>
