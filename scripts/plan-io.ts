@@ -135,6 +135,56 @@ export async function probeFeatures(
   return features;
 }
 
+/**
+ * A probe whose page never reached Vitest within `connectTimeout`, as on a
+ * Windows runner (run 42215479058): one more attempt, through `retry`.
+ * Any other failure, and a failed retry, are thrown as they are.
+ */
+export async function retryUnconnectedSession<T>(
+  attempt: () => Promise<T>,
+  retry: () => Promise<T>,
+  log: (line: string) => void,
+): Promise<T> {
+  try {
+    return await attempt();
+  } catch (error) {
+    const unconnected = (error instanceof Error ? error.message : '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) =>
+        line.startsWith('Failed to connect to the browser session'),
+      );
+    if (unconnected === undefined) throw error;
+    log(`test-plan: retrying in a Vitest of its own — ${unconnected}`);
+    return retry();
+  }
+}
+
+/**
+ * probeFeatures, retried once when its page never connected. The retry runs
+ * in a Vitest of its own: in the same one the failed session's late page
+ * holds the project's only orchestrator and the retry waits forever
+ * (measured 2026-11-10).
+ */
+export async function probeFeaturesRetrying(
+  vitest: Vitest,
+  family: Family,
+): Promise<PlatformFeature[]> {
+  const name = `probe ${family.isolated ? 'isolated ' : ''}${family.browser}`;
+  return retryUnconnectedSession(
+    () => probeFeatures(vitest, family),
+    async () => {
+      const fresh = await openVitest({ projects: [name] });
+      try {
+        return await probeFeatures(fresh, family);
+      } finally {
+        await fresh.close();
+      }
+    },
+    (line) => console.warn(line),
+  );
+}
+
 /** Any project of the family: they share their files and how they parse. */
 const referenceProject = (vitest: Vitest, family: Family): TestProject => {
   const prefix = `${family.isolated ? 'isolated ' : ''}${family.browser} · `;

@@ -67,7 +67,7 @@ import {
   openVitest,
   type PlannedCell,
   type PlannedRun,
-  probeFeatures,
+  probeFeaturesRetrying,
 } from './plan-io.ts';
 import { deadIsFatal } from './plan-report.ts';
 import { packageBin, timeScale } from './processes.ts';
@@ -257,7 +257,7 @@ async function main() {
         matched.push(...collected.files);
         families.push({
           ...family,
-          features: await probeFeatures(vitest, family),
+          features: await probeFeaturesRetrying(vitest, family),
           tests: collected.tests,
         });
       }
