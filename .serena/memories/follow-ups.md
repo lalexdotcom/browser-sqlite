@@ -23,7 +23,6 @@ been work on nothing.
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
 | `debug-run-stage` | A `run` sub-status of a busy worker (debug-only, on the model of `boot`); `BootStage` as codes, not text | CLOSED 2026-11-05 — `feat/debug-run-stage` merged |
 | `debug-verdict-visibility` | A first `all()`/`run()`/`chunk()`/`stream()` compiles in its verdict, outside any debug query: its wait and compile show in no stage | CLOSED 2026-11-05 — merged with `feat/debug-run-stage` (a request `kind: 'verdict'`) |
-| `delete-database-wait` | `deleteDatabase` waits for an open in progress instead of refusing with `BUSY` (an option, default unchanged) | OPEN — the Windows `TIMEOUT`s diagnosed (an unused VFS instance, not a hold) and fixed on `fix/delete-without-vfs` (2026-11-06); 2026-11-12 (user): no `wait` — its case was `close()` resolving before the open lock was free, fixed on `fix/close-awaits-open-lock`; a `timeout` option with a default replaces `DELETE_TIMEOUT`, next |
 | `close-immediate` | An option for `close()` that interrupts the statements in flight instead of draining them (up to `drainTimeout`, 60 s) | OPEN — the user's request (2026-11-09); not designed |
 | `upstream-delete-api` | Ask wa-sqlite whether a VFS should offer a database deletion, or list a database's resources, instead of the library duplicating that knowledge | OPEN — posted 2026-11-12 as wa-sqlite Discussion #395; waiting for rhashimoto's answer |
 
@@ -80,6 +79,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
+| `delete-database-wait` | `deleteDatabase` waits for an open in progress instead of refusing with `BUSY` (an option, default unchanged) | CLOSED — 2026-11-12: `fix/close-awaits-open-lock` (close() waits for the open lock, so no `wait`) and `feat/delete-timeout` (`timeout` option, `TIMEOUT` renamed `WORKER_TIMEOUT`) |
 | `idb-unknown-error-delete` | An IndexedDB VFS's open or deletion fails with `UnknownError` on Windows Firefox (Firefox gives up after 10 s on a file still busy with the previous close) | CLOSED — 2026-11-09, `fix/idb-open-unknown-error`: `createVfsInstance` retries an `UnknownError` for 10 s counted from the first one; Ubuntu matrix green, Windows twice green on every IndexedDB pair |
 | `matrix-windows-macos` | The matrix on Windows and macOS | CLOSED — 2026-11-03, `ci/matrix-os`: `matrix.yaml` a module called by CI, `matrix-<os>.yaml` by hand (Safari on macOS); Windows and macOS 27 green, macOS 26 red on runner speed (`macos-ci-instability`) |
 | `ci-live-progress` | Reading a GitHub run's progress from `gh` while it runs (logs come only at job end) | CLOSED — 2026-11-03, `feat/ci-live-progress`: a progress check run per planner on CI (`[n/N]` lines, each failed test as it fails), `scripts/ci-watch.ts` to follow it |
