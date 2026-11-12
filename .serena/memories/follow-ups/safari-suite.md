@@ -1,6 +1,6 @@
 # Safari in the library's suite — what its first runs left to fix (2026-10-22)
 
-**Status: OPEN** — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder open (issue #10).
+**Status: OPEN** — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder open (issue #10). A WebKit fix is proposed (PR #79929, revised 2026-11-10 after changes requested, not merged as of 2026-11-12; detail in `mem:follow-ups/lifecycle-restart-held`).
 
 Part of `mem:follow-ups`. **The wiring is done on `feat/safari-suite`** (spec `docs/superpowers/specs/2026-10-22-safari-suite-design.md`): Safari is a third, opt-in browser (`--browser safari`, `test:safari*`, `test:conformance:safari`, `test:matrix --engine safari`), macOS only, its jobs one at a time, both macOS workflows test `chrome,firefox,safari`. How it works: `mem:stack-and-build`, `mem:stack-and-build/ci`. The numbers: SAFARI-LIB-SUITE, `mem:measurements/test-browsers/library`.
 
