@@ -34,6 +34,12 @@ export type DeleteDatabaseOptions = {
    * it to delete one.
    */
   wasmUrl?: string | ((build: SQLiteBuild) => string);
+  /**
+   * Milliseconds within which the deletion must complete, counted from the
+   * call, after which it is abandoned and rejected with `TIMEOUT`.
+   * @defaultValue 30000
+   */
+  timeout?: number;
 };
 
 /**
@@ -64,6 +70,8 @@ export const deleteDatabase = async (
   file: string,
   options: DeleteDatabaseOptions,
 ): Promise<void> => {
+  // From the call, like every timeout of the library.
+  const startedAt = performance.now();
   if (!options?.vfs) {
     throw new SQLiteError(
       'INVALID_OPTION',
@@ -133,6 +141,7 @@ export const deleteDatabase = async (
           wasm: resolveWasmLocation(options.wasmUrl, build, location.href),
         },
         logicalFile,
+        { budget: options.timeout ?? DEFAULT_DELETE_TIMEOUT, startedAt },
       ),
     );
 
@@ -156,14 +165,13 @@ export const deleteDatabase = async (
 };
 
 /**
- * How long a delete may take before the worker is presumed unable to answer.
- * Matches `openTimeout`'s default, because the failure it catches is the same
- * one: a VFS that cannot acquire what it needs — `AccessHandlePoolVFS` whose
- * six slots are held elsewhere reaches neither success nor error. Not a public
- * option: a caller has nothing useful to tune here, and a delete that takes
- * thirty seconds has already failed.
+ * The default of `timeout`: how long a delete may take before the worker is
+ * presumed unable to answer. Matches `openTimeout`'s default, because the
+ * failure it catches is the same one: a VFS that cannot acquire what it needs —
+ * `AccessHandlePoolVFS` whose six slots are held elsewhere reaches neither
+ * success nor error.
  */
-const DELETE_TIMEOUT = 30_000;
+const DEFAULT_DELETE_TIMEOUT = 30_000;
 
 const runDelete = (
   message: {
@@ -173,18 +181,22 @@ const runDelete = (
     wasm: ReturnType<typeof resolveWasmLocation>;
   },
   name: string,
+  deadline: { budget: number; startedAt: number },
 ): Promise<void> =>
   new Promise<void>((resolve, reject) => {
     const worker = spawnWorker(`SQLite delete / ${name}`);
 
-    const timer = setTimeout(() => {
-      settle(
-        new SQLiteError(
-          'TIMEOUT',
-          `deleting ${name} timed out after ${DELETE_TIMEOUT} ms. The database is most likely held open by another client or tab.`,
-        ),
-      );
-    }, DELETE_TIMEOUT);
+    const timer = setTimeout(
+      () => {
+        settle(
+          new SQLiteError(
+            'TIMEOUT',
+            `deleting ${name} did not complete within ${deadline.budget} ms: the worker deleting it did not answer.`,
+          ),
+        );
+      },
+      deadline.budget - (performance.now() - deadline.startedAt),
+    );
 
     const settle = (error?: SQLiteError) => {
       clearTimeout(timer);

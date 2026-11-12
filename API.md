@@ -429,6 +429,7 @@ await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 | `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. |
 | `build` | `SQLiteBuild` | first build the VFS declares that the browser supports | Which wa-sqlite build to load, where deleting needs the VFS — a VFS whose database is its own OPFS files is deleted without one. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#wasmurl). A deployment that needs it to open a database needs it to delete one. |
+| `timeout` | `number` (ms) | `30000` | Milliseconds within which the deletion must complete, counted from the call. Past it, the deletion is abandoned and rejects with `TIMEOUT`. |
 
 Deleting a database that is not there throws — most often because `vfs` is not the one it was created with.
 
@@ -436,7 +437,7 @@ What a VFS keeps for itself is left alone — an IndexedDB store it shares betwe
 
 **The database must not be open, in this tab or any other.**<br>`DATABASE_IN_USE` says a client still holds it, and retrying will not help — closing every client on it is what releases it. A client your application stopped using but never closed keeps blocking until its tab goes, and this library cannot revoke a connection it did not open: another library or native code on the same origin is invisible to it.
 
-The other codes: `DATABASE_NOT_FOUND` means there was nothing at that name. `BUSY` is the transient case — another open or another delete was in flight at that moment, and retrying is the remedy. `TIMEOUT` means the VFS could not answer within 30 seconds.
+The other codes: `DATABASE_NOT_FOUND` means there was nothing at that name. `BUSY` is the transient case — another open or another delete was in flight at that moment, and retrying is the remedy. `TIMEOUT` means the VFS could not answer within `timeout`.
 
 
 ## inspectDatabase
