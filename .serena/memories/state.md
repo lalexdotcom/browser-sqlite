@@ -23,7 +23,7 @@ unmeasured ground.
   ~17 min against 3-9 for the others, under the 25-minute job limit — not looked into, and not
   seen at rc.9.
   Procedure: `mem:conventions/releasing`.
-- **The vendored wa-sqlite sits on upstream `master` `e4f54a05`** (2026-11-02: our #388 `step_asap()` merged on 2026-11-01, after #381, #382, #384, #385; `package.json` has the SHA), and **the patch carries three PRs of ours**: #386 (the `OPFSCoopSyncVFS` startup sweep), #387 (`getIDBFactory`/`prefix`, unused here) and #389 (`OPFSAdaptiveVFS` keeps its journal's access handle between transactions). The worker steps through upstream's `step_asap()`. Heads and merges in
+- **The vendored wa-sqlite sits on upstream's release `v1.2.0` (`46317457`, repinned 2026-11-12)**, which over the previous pin `e4f54a05` (our #388 `step_asap()`, merged 2026-11-01) changes only the demo and the version — the built worker is byte-identical; `package.json` has the SHA, and **the patch carries three PRs of ours**: #386 (the `OPFSCoopSyncVFS` startup sweep), #387 (`getIDBFactory`/`prefix`, unused here) and #389 (`OPFSAdaptiveVFS` keeps its journal's access handle between transactions). The worker steps through upstream's `step_asap()`. Heads and merges in
   `mem:stack-and-build/wa-sqlite`, reports in `mem:upstream`. A patch is added, regenerated or
   removed through `pnpm patch` / `pnpm patch-commit` / `pnpm patch-remove`, never by hand.
 - **`main` may sit ahead of `origin/main` indefinitely** — the convention, not an oversight. It
