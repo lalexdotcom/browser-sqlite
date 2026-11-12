@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **Breaking:** **The boot stages of `db.debug.workers[i].boot` are codes,** and a worker reports them only for a client created with `debug`. The `BootStage` type is now `'awaiting-client' | 'loading-build' | 'instantiating-wasm' | 'loading-vfs-module' | 'creating-vfs' | 'awaiting-open-lock' | 'opening-database' | 'awaiting-held-file' | 'applying-pragmas'`, where it held English phrases (`'waiting for the client'`, `'loading the build'`, …). Compare against the codes.
+- **Breaking:** **The error code `TIMEOUT` is renamed `WORKER_TIMEOUT`.** It is raised, as before, when a worker does not become ready within `openTimeout` or when `deleteDatabase()` does not complete in time. Replace `error.code === 'TIMEOUT'` with `error.code === 'WORKER_TIMEOUT'`. `OPERATION_TIMEOUT`, a call's `timeout` spent, is unchanged.
 
 ### Fixed
 

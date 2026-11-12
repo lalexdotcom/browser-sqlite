@@ -36,7 +36,7 @@ export type DeleteDatabaseOptions = {
   wasmUrl?: string | ((build: SQLiteBuild) => string);
   /**
    * Milliseconds within which the deletion must complete, counted from the
-   * call, after which it is abandoned and rejected with `TIMEOUT`.
+   * call, after which it is abandoned and rejected with `WORKER_TIMEOUT`.
    * @defaultValue 30000
    */
   timeout?: number;
@@ -190,7 +190,7 @@ const runDelete = (
       () => {
         settle(
           new SQLiteError(
-            'TIMEOUT',
+            'WORKER_TIMEOUT',
             `deleting ${name} did not complete within ${deadline.budget} ms: the worker deleting it did not answer.`,
           ),
         );

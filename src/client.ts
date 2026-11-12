@@ -119,7 +119,7 @@ const DEFAULT_STATEMENT_CACHE_BYTES = 8 * 1024 * 1024;
 /**
  * How long before `openTimeout` a replacement that cannot get its
  * predecessor's file gives up and says so: the worker's error must reach the
- * client before the `TIMEOUT` timer in `spawn` does, which would hide the
+ * client before the `WORKER_TIMEOUT` timer in `spawn` does, which would hide the
  * reason.
  */
 const HELD_REPORT_MARGIN_MS = 1_000;
@@ -2041,7 +2041,7 @@ export const createSQLiteClient = (
         handleDeath(
           index,
           new SQLiteError(
-            'TIMEOUT',
+            'WORKER_TIMEOUT',
             `Worker ${index + 1} did not become ready within ${openTimeout} ms. ` +
               openTimeoutCause(held),
           ),
@@ -2070,10 +2070,10 @@ export const createSQLiteClient = (
       abortSlots,
       afterDeath,
       // Measured here, at spawn: the worker's own clock starts after its boot,
-      // and the client's `TIMEOUT` timer above starts now.
+      // and the client's `WORKER_TIMEOUT` timer above starts now.
       // A boot slower than `openTimeout - 1 s` (or a small `openTimeout`) leaves
       // no room: the worker falls back to the idle budget and the client's
-      // `TIMEOUT` may then win.
+      // `WORKER_TIMEOUT` may then win.
       openDeadline:
         afterDeath === 'busy'
           ? Date.now() + openTimeout - HELD_REPORT_MARGIN_MS

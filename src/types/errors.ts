@@ -11,8 +11,9 @@
  * `inspectDatabase` where Web Locks is missing, because reporting zero clients
  * there would be indistinguishable from a database nobody holds.
  * `OPERATION_TIMEOUT` is the `timeout` a caller set on a call being spent. It is
- * deliberately not `TIMEOUT`, which means a deadline this library imposed on
- * itself — a worker that never became ready, a deletion that did not complete.
+ * deliberately not `WORKER_TIMEOUT`, which is a worker of this library that did
+ * not answer in time — one that never became ready within `openTimeout`, or the
+ * worker of a `deleteDatabase` past its `timeout`.
  * `STATEMENT_FAILED` is a statement SQLite refused or failed for any reason
  * but a lock conflict — a constraint, a syntax error, a full disk. `message` is
  * SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode`
@@ -34,7 +35,7 @@ export type SQLiteErrorCode =
   | 'CLIENT_CLOSED'
   | 'WORKER_CRASHED'
   | 'WORKER_ERROR'
-  | 'TIMEOUT'
+  | 'WORKER_TIMEOUT'
   | 'PROTOCOL_ERROR'
   | 'INVALID_IDENTIFIER'
   | 'INVALID_OPTION'

@@ -398,7 +398,7 @@ await db.close();
 
 **Stored data is not deleted.**<br>`close()` releases workers and connections; it removes nothing. To remove the database itself, use [`deleteDatabase`](#deletedatabase).
 
-**A page you leave is not closed, and some engines keep its database held.**<br>Navigating away or reloading leaves the page without running `close()`, and the browser does not always release the database at once. Safari keeps it held for as long as the page sits in its back/forward cache, ready for the Back button. The next page that opens the same database then exhausts its [`openTimeout`](#opentimeout) and reports `TIMEOUT`, or fails at once with `WORKER_CRASHED`, depending on the VFS.<br> **If your application navigates or reloads** while a client is open, close it when the page is hidden, and open a new one when the page comes back from the cache:
+**A page you leave is not closed, and some engines keep its database held.**<br>Navigating away or reloading leaves the page without running `close()`, and the browser does not always release the database at once. Safari keeps it held for as long as the page sits in its back/forward cache, ready for the Back button. The next page that opens the same database then exhausts its [`openTimeout`](#opentimeout) and reports `WORKER_TIMEOUT`, or fails at once with `WORKER_CRASHED`, depending on the VFS.<br> **If your application navigates or reloads** while a client is open, close it when the page is hidden, and open a new one when the page comes back from the cache:
 
 ```typescript
 const open = () => createSQLiteClient('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
@@ -429,7 +429,7 @@ await deleteDatabase('myapp.sqlite', { vfs: 'OPFSAdaptiveVFS' });
 | `vfs` | `SQLiteVFS` | — (required) | The VFS the database was created with. |
 | `build` | `SQLiteBuild` | first build the VFS declares that the browser supports | Which wa-sqlite build to load, where deleting needs the VFS — a VFS whose database is its own OPFS files is deleted without one. It does not affect where the database lives — only which builds can instantiate the VFS. |
 | `wasmUrl` | `string \| ((build: SQLiteBuild) => string)` | `undefined` | Same meaning as on [`createSQLiteClient`](#wasmurl). A deployment that needs it to open a database needs it to delete one. |
-| `timeout` | `number` (ms) | `30000` | Milliseconds within which the deletion must complete, counted from the call. Past it, the deletion is abandoned and rejects with `TIMEOUT`. |
+| `timeout` | `number` (ms) | `30000` | Milliseconds within which the deletion must complete, counted from the call. Past it, the deletion is abandoned and rejects with `WORKER_TIMEOUT`. |
 
 Deleting a database that is not there throws — most often because `vfs` is not the one it was created with.
 
@@ -437,7 +437,7 @@ What a VFS keeps for itself is left alone — an IndexedDB store it shares betwe
 
 **The database must not be open, in this tab or any other.**<br>`DATABASE_IN_USE` says a client still holds it, and retrying will not help — closing every client on it is what releases it. A client your application stopped using but never closed keeps blocking until its tab goes, and this library cannot revoke a connection it did not open: another library or native code on the same origin is invisible to it.
 
-The other codes: `DATABASE_NOT_FOUND` means there was nothing at that name. `BUSY` is the transient case — another open or another delete was in flight at that moment, and retrying is the remedy. `TIMEOUT` means the VFS could not answer within `timeout`.
+The other codes: `DATABASE_NOT_FOUND` means there was nothing at that name. `BUSY` is the transient case — another open or another delete was in flight at that moment, and retrying is the remedy. `WORKER_TIMEOUT` means the VFS could not answer within `timeout`.
 
 
 ## inspectDatabase
@@ -651,8 +651,8 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 | `CLIENT_CLOSED` | A query was queued after `close()` was called. |
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. When SQLite refused to open the database — a file that is not a database, a `pragmas` entry it rejected — `sqliteCode` carries its result code. When another context holds the database file — a page left without `close()`, another tab — the message says so; see [`close()`](#clientclose). |
 | `WORKER_ERROR` | A statement failed in its worker without SQLite reporting it — a JavaScript exception, kept as `cause`. It has no `sqliteCode`, and the worker keeps serving. |
-| `TIMEOUT` | A worker did not post `ready` within `openTimeout` milliseconds. The most common cause is a database held under an exclusive lock by another tab or client. |
-| `OPERATION_TIMEOUT` | The `timeout` set on a call was spent. The error carries it as `error.timeout`. Deliberately not `TIMEOUT`, which means a deadline this library imposed on itself — a worker that never became ready, a deletion that did not complete. |
+| `WORKER_TIMEOUT` | A worker of this library did not answer in time: a pool worker that did not post `ready` within `openTimeout` milliseconds — most often because another tab or client holds the database under an exclusive lock — or the worker of a [`deleteDatabase`](#deletedatabase) that did not complete within its `timeout`. |
+| `OPERATION_TIMEOUT` | The `timeout` set on a call was spent. The error carries it as `error.timeout`. Deliberately not `WORKER_TIMEOUT`, which is a worker that did not answer, not a budget spent. |
 | `PROTOCOL_ERROR` | A message was received from a worker that could not be deserialized (`messageerror`). The worker survives; only the in-flight request is rejected. |
 | `STATEMENT_FAILED` | SQLite refused or failed a statement for any reason other than a lock conflict: a constraint, a syntax error, a full disk, a file that is not a database. `message` is SQLite's own; `sqliteCode` carries its result code, and `sqliteExtendedCode` its subtype when SQLite reports one. Transaction control sent as SQL is refused with `sqliteCode` `23` (`SQLITE_AUTH`); see [*client*.run](#clientrun). |
 | `BUSY` | A transient conflict, worth retrying. Either SQLite reported a lock conflict — `SQLITE_BUSY` or `SQLITE_LOCKED`, with its result code on `sqliteCode` and, when SQLite reports one, its subtype on `sqliteExtendedCode` — or a database was being opened or deleted elsewhere at that moment. **A read that SQLite reported busy is retried once for you**; if it reaches you, the retry failed too. Writes are never retried, and neither is a `BUSY` without a `sqliteCode`. |
