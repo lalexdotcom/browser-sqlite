@@ -13,5 +13,5 @@ Part of `mem:follow-ups`.
 **To do.**
 1. Test #393 on its own: upstream's suite with the PR (Chrome only, `mem:conventions/upstream`), and its test red without it.
 2. Reproduce in the library first: a cross-client test (two clients on `OPFSCoopSyncVFS`, one terminated inside a transaction past the page cache, the other reading) red on the current patch.
-3. Carry the PR's `src/` hunk in `patches/wa-sqlite@1.1.2.patch` per `mem:stack-and-build/wa-sqlite`. Check the overlap with #386's hunk, carried in the same file (`OPFSCoopSyncVFS.js`), and the PR's base (`master` at `4631745`) against the pin `e4f54a05`. Then the library test green, and a CHANGELOG entry under *Fixed*.
+3. Carry the PR's `src/` hunk in `patches/wa-sqlite@1.2.0.patch` per `mem:stack-and-build/wa-sqlite`. Check the overlap with #386's hunk, carried in the same file (`OPFSCoopSyncVFS.js`), and the PR's base (`master` at `4631745`) against the pin `e4f54a05`. Then the library test green, and a CHANGELOG entry under *Fixed*.
 4. **When it merges:** repin, drop its hunk, replace the CHANGELOG entry by the bump of wa-sqlite (`mem:conventions/upstream`).

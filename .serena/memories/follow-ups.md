@@ -19,7 +19,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
-| `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21), WriteAhead on Firefox tested (2026-11-02); Safari open. **Bug-gated: WebKit 328618**, last seen 2026-11-02: NEW, unassigned, InRadar since 2026-10-30, no comment |
+| `lifecycle-restart-held` | A restarted worker meets its predecessor's held file | OPEN — fixed for Firefox (2026-10-21), WriteAhead on Firefox tested (2026-11-02); Safari open. **Bug-gated: WebKit 328618**, last seen 2026-11-12: NEW, unassigned; fix proposed as WebKit PR #79929 (2026-11-06), changes requested by kmiller68 the same day (too costly; trap the loop back-edges instead), revised that way 2026-11-10 (`b208ce72`), not re-reviewed |
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
 | `debug-run-stage` | A `run` sub-status of a busy worker (debug-only, on the model of `boot`); `BootStage` as codes, not text | CLOSED 2026-11-05 — `feat/debug-run-stage` merged |
 | `debug-verdict-visibility` | A first `all()`/`run()`/`chunk()`/`stream()` compiles in its verdict, outside any debug query: its wait and compile show in no stage | CLOSED 2026-11-05 — merged with `feat/debug-run-stage` (a request `kind: 'verdict'`) |
@@ -33,7 +33,7 @@ been work on nothing.
 |---|---|---|
 | `false-greens-remaining` | Tests that can still pass without exercising their case (`abort-slot`, `early-exit`), and what the starved-runner work left open (`tx-timeout` on Windows, a file lost when a worker never starts, the library's unscaled budgets, the matrices not re-run) | OPEN — 2026-11-05; the four tests fixed (`feat/debug-run-stage`, merged), the rest open |
 | `library-stock-browsers` | What stays open after the Vitest + WebdriverIO migration | OPEN — the iOS simulator, the WASM built once |
-| `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10). **Bug-gated: WebKit 328618**, last seen 2026-11-02: NEW, unassigned, InRadar since 2026-10-30, no comment |
+| `safari-suite` | Safari in the library's suite | OPEN — green on Safari 26/27 since 2026-10-23; WebKit 328618's remainder (issue #10). **Bug-gated: WebKit 328618**, last seen 2026-11-12: NEW, unassigned; fix proposed as WebKit PR #79929, revised 2026-11-10 after changes requested, not re-reviewed (detail in `lifecycle-restart-held`) |
 | `macos-worker-startup` | Worker startups of 10-15 s on the macOS 26 runner: the runner's, or the users'? | OPEN — backlog (user, 2026-11-03); the user's Mac fast on Safari 27.2 (STARTUP-PROBE-MAC); the Safari case fits SAFARI-WASM-INSTANTIATE; Chrome stalls a plain worker over 10 s there (rerun 41714043416, 20/22) |
 | `windows-chrome-cell-stall` | A Windows Chrome cell (`OPFSWriteAheadVFS/async`) stops producing output after 9 files and is cut at the planner's 3600 s bound, no test failed | OPEN — first sighting 2026-11-09 (run 42622390499); cause unknown; since 2026-11-09 a cut job prints an `in flight:` line naming where it stalled — read it at the next sighting; not reproduced in 104 replays on `windows-latest` |
 | `macos-ci-instability` | macOS workflows fail without a library cause: timers ~5× slower in Chrome and Firefox than on Linux (not in Safari), a lost Safari session | OPEN — low priority: the runner's, not macOS's (user's Mac fast); `BSQ_TIME_SCALE=2` on macOS since 2026-10-26; runner cause and Safari sessions open |
@@ -45,7 +45,7 @@ been work on nothing.
 | `wa-sqlite-webdriver-pr` | wa-sqlite's suite on stock browsers (Discussion #373) | OPEN — accepted 2026-10-10; the PR is ours to send |
 | `wa-sqlite-386-coopsync-bfcache` | `OPFSCoopSyncVFS.create()` after a bfcache navigation (#362, PR #386) | OPEN — PR open, waiting for review; the library-side navigation test dropped 2026-11-02 (the library does not reach #362 there, with or without #386) |
 | `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | OPEN — PR open, waiting for review |
-| `safari-async-slowdown` | Safari's `async` build slows down after a few seconds of work | OPEN — cause: JSC's OMG tier on the Asyncify `sqlite3VdbeExec`. **Bug-gated: WebKit 329813**, last seen 2026-11-02: NEW, filed that day, no comment |
+| `safari-async-slowdown` | Safari's `async` build slows down after a few seconds of work | OPEN — cause: JSC's OMG tier on the Asyncify `sqlite3VdbeExec`. **Bug-gated: WebKit 329813**, last seen 2026-11-12: NEW, unassigned, InRadar since 2026-11-09 (rdar 192262404), no human comment |
 | `wa-sqlite-389-adaptive-journal` | `OPFSAdaptiveVFS` keeps its journal's access handle between transactions (PR #389) | OPEN — PR open, waiting for review |
 | `wa-sqlite-393-coopsync-hot-journal` | Carry PR #393 (not ours): `OPFSCoopSyncVFS` misses a hot journal left by a connection terminated mid-transaction, so another tab's open connection reads it half-applied (issue #392) | OPEN — 2026-11-06: to test, then carry in `patches/`; PR open, not reviewed |
 

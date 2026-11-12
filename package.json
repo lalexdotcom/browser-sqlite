@@ -91,7 +91,7 @@
 		"typescript": "^7.0.2",
 		"vite": "8.3.4",
 		"vitest": "5.0.3",
-		"wa-sqlite": "github:rhashimoto/wa-sqlite#e4f54a0554f2ff1ee2af2cc3be1fb16fb2320310",
+		"wa-sqlite": "github:rhashimoto/wa-sqlite#4631745762f5e24d226254158e5ceada2d5fbe1e",
 		"webdriverio": "10.0.2"
 	},
 	"lint-staged": {
@@ -114,7 +114,7 @@
 			"geckodriver"
 		],
 		"patchedDependencies": {
-			"wa-sqlite@1.1.2": "patches/wa-sqlite@1.1.2.patch"
+			"wa-sqlite@1.2.0": "patches/wa-sqlite@1.2.0.patch"
 		}
 	},
 	"private": false,
