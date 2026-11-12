@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { initLockName } from '../../../src/locks';
+import { resolveDatabase } from '../../../src/utils';
 import {
   createTestClient,
   interceptWorkers,
   sharedDatabase,
+  TEST_TARGET,
   waitUntil,
 } from '../helpers';
 
@@ -117,6 +120,52 @@ describe('close()', () => {
     const second = db.close();
     expect(first).toBe(second);
     await first;
+  });
+
+  /**
+   * A worker close() terminates while it opens the database holds the open
+   * lock until the browser gets round to releasing a terminated worker's
+   * locks. A close() that resolved before that left the database looking busy:
+   * a deleteDatabase right after it failed with BUSY (Chrome on GitHub's macOS
+   * 26 runner, 2026-11-03, a worker the client had restarted). The lock held
+   * here stands for that worker's.
+   */
+  // Falsifiable: in close(), release the connection lock without first
+  // waiting for the open lock — close() then resolves while this test still
+  // holds it.
+  it('resolves only once the open lock is free', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const shared = sharedDatabase();
+    const db = shared.open({ poolSize: 1 });
+    await db.run('SELECT 1');
+
+    const { path } = resolveDatabase(shared.name, TEST_TARGET.vfs);
+    const openLock = initLockName(TEST_TARGET.vfs, path);
+    const held = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    void navigator.locks.request(openLock, () => {
+      held.resolve();
+      return release.promise;
+    });
+    await held.promise;
+
+    let closed = false;
+    const closing = db.close().then(() => {
+      closed = true;
+    });
+    await waitUntil(
+      async () =>
+        closed ||
+        ((await navigator.locks.query()).pending ?? []).some(
+          (lock) => lock.name === openLock,
+        ),
+      'close() to settle or to wait for the open lock',
+    );
+    expect(closed, 'close() resolved while the open lock was held').toBe(false);
+
+    release.resolve();
+    await closing;
   });
 
   // Falsifiable: remove the drainTimeout race around the handshake — the test

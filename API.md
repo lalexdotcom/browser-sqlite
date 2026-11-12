@@ -394,7 +394,7 @@ Drains in-flight work, rejects queued work, closes each database connection, the
 await db.close();
 ```
 
-**`close()` is async.**<br>Always `await db.close()`: the promise settles once every worker has closed and been terminated, or once `drainTimeout` has elapsed, and discarding it means the caller cannot tell when teardown is complete. Calling it a second time returns the same promise — the operation runs exactly once.
+**`close()` is async.**<br>Always `await db.close()`: the promise settles once every worker has closed and been terminated and the database is released — a [`deleteDatabase`](#deletedatabase) or a new client can take it at once — or once `drainTimeout` has elapsed, and discarding it means the caller cannot tell when teardown is complete. Calling it a second time returns the same promise — the operation runs exactly once.
 
 **Stored data is not deleted.**<br>`close()` releases workers and connections; it removes nothing. To remove the database itself, use [`deleteDatabase`](#deletedatabase).
 

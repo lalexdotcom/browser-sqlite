@@ -31,6 +31,7 @@ import {
   clientMarkerName,
   connectionLockName,
   createLocks,
+  initLockName,
   sharesStorage,
   writeLockName,
 } from './locks';
@@ -1858,6 +1859,25 @@ export const createSQLiteClient = (
     }
   };
 
+  /**
+   * Resolves once `bsq:init` is free, or after `drainTimeout`. A wait that runs
+   * out is abandoned, not left to grant the lock to nobody.
+   */
+  const openLockFree = async () => {
+    const giveUp = new AbortController();
+    const timer = setTimeout(() => giveUp.abort(), drainTimeout);
+    try {
+      const release = await locks.hold(initLockName(vfs, dbFile), {
+        signal: giveUp.signal,
+      });
+      release();
+    } catch (error) {
+      if (!giveUp.signal.aborted) throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   let closing: Promise<void> | undefined;
 
   /**
@@ -1916,6 +1936,14 @@ export const createSQLiteClient = (
       // being closed. Await `connLockPromise` to handle the edge case where
       // `close()` is called before the first query ever ran (lock in flight).
       if (connLockPromise !== undefined) await connLockPromise;
+      // A worker terminated while it opened the database holds the open lock
+      // until the browser releases a terminated worker's locks, which it does
+      // in its own time. Resolving before then left the database looking busy:
+      // a deleteDatabase right after close() failed with BUSY (Chrome on
+      // GitHub's macOS 26 runner, 2026-11-03, a worker the client had
+      // restarted). Waited for while still holding bsq:conn — the order a
+      // client takes them in, so no cycle — and bounded like the rest.
+      if (sharesStorage(vfs)) await openLockFree();
       connRelease?.();
       markerClosed = true;
       markerRelease?.();
