@@ -18,7 +18,7 @@ describe('SQLiteError', () => {
   });
 
   it('is an Error', () => {
-    expect(new SQLiteError('TIMEOUT', 'late')).toBeInstanceOf(Error);
+    expect(new SQLiteError('WORKER_TIMEOUT', 'late')).toBeInstanceOf(Error);
   });
 
   it('carries DATABASE_IN_USE on both code and name', () => {

@@ -32,7 +32,7 @@ describe('handle starvation during open (reduced mode)', () => {
   // `requires:env-capped-pool` selects the pairs that rotate one handle on
   // this engine; `requires:shared-second-client` keeps out a pair whose second
   // client is refused outright with DATABASE_IN_USE on Firefox.
-  it('fails the second client with TIMEOUT while a write transaction holds the handle', {
+  it('fails the second client with WORKER_TIMEOUT while a write transaction holds the handle', {
     tags: ['requires:env-capped-pool', 'requires:shared-second-client'],
   }, async () => {
     const { vfs, build } = TEST_TARGET;
@@ -73,7 +73,7 @@ describe('handle starvation during open (reduced mode)', () => {
     // roster can answer and the message must name other clients of this
     // library rather than hedge about a lock that may be held by anyone.
     await expect(starved.all('SELECT 1')).rejects.toMatchObject({
-      code: 'TIMEOUT',
+      code: 'WORKER_TIMEOUT',
       message: expect.stringContaining(
         'Other clients of this library still hold the database.',
       ),

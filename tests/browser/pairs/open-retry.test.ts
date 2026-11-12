@@ -598,7 +598,7 @@ describe('reopening a database after its worker died', () => {
     expect((failure as Error).message).toContain(
       'Use the async or jspi build, or cross-origin isolation',
     );
-    expect(failure).not.toMatchObject({ code: 'TIMEOUT' });
+    expect(failure).not.toMatchObject({ code: 'WORKER_TIMEOUT' });
   });
 
   it('keeps the reason when the replacement is itself restarted', {
@@ -616,6 +616,6 @@ describe('reopening a database after its worker died', () => {
       code: 'WORKER_CRASHED',
       message: expect.stringContaining('WebKit #328618'),
     });
-    expect(failure).not.toMatchObject({ code: 'TIMEOUT' });
+    expect(failure).not.toMatchObject({ code: 'WORKER_TIMEOUT' });
   });
 });

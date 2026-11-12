@@ -50,6 +50,24 @@ describe('deleteDatabase', () => {
     expect(await tableCount(file, { vfs, build })).toBe(0);
   });
 
+  // Falsifiable: ignore `timeout` and keep the fixed 30 s — the deletion
+  // completes and the call resolves.
+  it('rejects with WORKER_TIMEOUT once its timeout is spent', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
+    const database = sharedDatabase();
+    const db = database.open();
+    await db.run('CREATE TABLE t (a INTEGER)');
+    await db.close();
+
+    // One millisecond: less than starting the worker that deletes it. The
+    // cleanup deletes what this one left.
+    await expect(
+      deleteDatabase(database.name, { vfs, build, timeout: 1 }),
+    ).rejects.toMatchObject({ code: 'WORKER_TIMEOUT' });
+  });
+
   // The deletion tests below follow their pair through TEST_TARGET, and
   // conformance invariant 7 deletes on every VFS. Deletion does not read the
   // build, so no test here varies it.
