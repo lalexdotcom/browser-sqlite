@@ -25,7 +25,7 @@ been work on nothing.
 | `debug-verdict-visibility` | A first `all()`/`run()`/`chunk()`/`stream()` compiles in its verdict, outside any debug query: its wait and compile show in no stage | CLOSED 2026-11-05 — merged with `feat/debug-run-stage` (a request `kind: 'verdict'`) |
 | `delete-database-wait` | `deleteDatabase` waits for an open in progress instead of refusing with `BUSY` (an option, default unchanged) | OPEN — the Windows `TIMEOUT`s diagnosed (an unused VFS instance, not a hold) and fixed on `fix/delete-without-vfs` (2026-11-06); `wait`/`timeout` options not designed, kept in the backlog (user, 2026-11-06) |
 | `close-immediate` | An option for `close()` that interrupts the statements in flight instead of draining them (up to `drainTimeout`, 60 s) | OPEN — the user's request (2026-11-09); not designed |
-| `upstream-delete-api` | Ask wa-sqlite whether a VFS should offer a database deletion, or list a database's resources, instead of the library duplicating that knowledge | OPEN — the user's idea (2026-11-06); a discussion to open after `fix/delete-without-vfs` |
+| `upstream-delete-api` | Ask wa-sqlite whether a VFS should offer a database deletion, or list a database's resources, instead of the library duplicating that knowledge | OPEN — posted 2026-11-12 as wa-sqlite Discussion #395; waiting for rhashimoto's answer |
 
 ## Open — tests and CI
 

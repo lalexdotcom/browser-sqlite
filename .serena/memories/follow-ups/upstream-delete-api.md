@@ -1,6 +1,6 @@
 # Follow-up — ask upstream whether a VFS should say how to delete a database, or which resources a database uses (user, 2026-11-06)
 
-**Status: OPEN** — to open as a wa-sqlite discussion once `fix/delete-without-vfs` is closed; nothing sent yet.
+**Status: OPEN** — posted 2026-11-12 as wa-sqlite Discussion [#395](https://github.com/rhashimoto/wa-sqlite/discussions/395) (report `docs/upstream/2026-11-12-wa-sqlite-395-delete-api.md`); waiting for rhashimoto's answer. What the user decided for it: lead with a deletion method, say why a resource list was set aside, leave the shape (static or instance) open, no PR offered until the shape is agreed.
 
 Part of `mem:follow-ups`, opened 2026-11-06 while diagnosing `deleteDatabase`'s Windows `TIMEOUT`s (`mem:follow-ups/delete-database-wait`).
 
