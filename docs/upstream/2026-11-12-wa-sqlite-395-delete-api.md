@@ -36,6 +36,10 @@ Discussion [#395][d395], category Ideas, opened 2026-11-12. The body, validated 
 
 Deliberately left out (user): no PR offered until the idea and its shape are agreed; no measurements, no cost of the instance setup beyond naming it; the rest left to come out of the discussion. It does not cite this library.
 
+**sgbeal (sqlite.org's JS bindings) commented the same day.** SQLite's C API exposes no filesystem operation, and their JS bindings followed that; but deleting a database is an unavoidable need, so they added VFS-specific ways, kept narrow so that they cannot serve as general OPFS maintenance and do not tie their compatibility guarantees to it — e.g. a constructor option that wipes the database before it is opened. Likewise importing: VFS-specific methods that write a database image into persistent storage and refuse anything that does not look like a database. "A necessary evil", so that a client is never blocked on a corrupt database it cannot replace.
+
+**Replied under his comment, validated by the user** ([discussioncomment-19567341](https://github.com/rhashimoto/wa-sqlite/discussions/395#discussioncomment-19567341)): a wipe-before-open option does not fit a reset decided from the database itself (a schema version that cannot be migrated, data tied to a user who signed out), which needs the database opened first and deleted once closed; the need weighs more in a browser, where OPFS and IndexedDB are reachable only from the developer tools, so the application is the only one that can recover; and the method stays as narrow as he describes — one database and what belongs to it. rhashimoto has not answered yet.
+
 ## What stays ours
 
 - `DATABASE_FILE_SUFFIXES`, `VFS_CAPABILITIES[vfs].folder`/`extraFileSuffixes` and `deleteFolderDatabase`, until wa-sqlite offers a deletion; then `deleteDatabase()` calls it, and the copy of each layout goes.
