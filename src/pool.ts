@@ -122,6 +122,13 @@ export type PoolWorker = Worker & {
    * needs that form, so nothing may ask for it.
    */
   interrupt: (on: object) => void;
+  /**
+   * Whether the worker is serving a query right now — claimed at the start of
+   * a query, released when it ends. Includes a worker parked on a credit
+   * between the chunks of a stream. `close({ immediate: true })` reads it to
+   * tell a worker it must cut from one it can still close cleanly.
+   */
+  serving: () => boolean;
   /** Resolves when no query is in flight on this worker. */
   quiesce: () => Promise<void>;
   /**
@@ -1127,6 +1134,7 @@ export const createPoolWorker = (deps: {
       if (abortSlots)
         Atomics.store(new Int32Array(abortSlots), index, currentCallId);
     },
+    serving: () => servingQuery !== undefined,
     quiesce: () => idle?.promise ?? Promise.resolve(),
     free: () => freed?.promise ?? Promise.resolve(),
     close: async () => {

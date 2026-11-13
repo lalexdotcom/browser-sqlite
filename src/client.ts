@@ -1950,7 +1950,21 @@ export const createSQLiteClient = (
       // spec the signal cancels a pending request only. Those writes hold a
       // scheduler lease and are drained by shutdown() below.
       closeAbort.abort(closingError);
-      if (immediate) immediateAbort.abort(closingError);
+      const cut = new Set<PoolWorker>();
+      if (immediate) {
+        immediateAbort.abort(closingError);
+        // A statement that cannot be stopped is cut now, not after a grace
+        // that could only watch it run: terminating poisons the transport, so
+        // the call rejects with CLIENT_CLOSED and its lease comes back to the
+        // drain below. An idle worker keeps its clean close.
+        if (build === 'sync' && abortSlots === undefined) {
+          for (const worker of pool) {
+            if (!worker?.serving()) continue;
+            worker.terminate(closingError);
+            cut.add(worker);
+          }
+        }
+      }
       // Shutting the front door: queued scheduler waiters reject at once and
       // no new leases can be taken while in-flight work drains.
       const draining = scheduler.shutdown(closingError);
@@ -1959,7 +1973,7 @@ export const createSQLiteClient = (
       await bounded(draining, patience);
       await Promise.all(
         pool.map(async (worker) => {
-          if (!worker) return;
+          if (!worker || cut.has(worker)) return;
           await bounded(worker.close(), patience);
           // The reason in-flight and later requests reject with. Without it a
           // transaction's callback met a silent hang instead of an error.
