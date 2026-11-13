@@ -177,4 +177,46 @@ describe('close({ immediate: true })', () => {
     expect(result).toBe('CLIENT_CLOSED');
     expect(n).toBe(0);
   });
+
+  // Falsifiable: return `closing` without escalating — the draining close
+  // waits the query out (well past the bound, drainTimeout left at 60 s).
+  it('makes a draining close immediate', async () => {
+    // drainTimeout left at its default: a drain would wait it out.
+    const db = await createTestClient({ poolSize: 1, debug: true });
+    const long = db.all(longQuery(20_000_000));
+    long.catch(() => {});
+    await waitUntil(
+      theQueryIsRunning(db, longQuery(20_000_000)),
+      'the query to be running',
+    );
+
+    const draining = db.close();
+    const t0 = performance.now();
+    const again = db.close({ immediate: true });
+
+    expect(again).toBe(draining);
+    await expect(long).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
+    await again;
+    expect(performance.now() - t0).toBeLessThan(scaled(5_000));
+  });
+
+  // Pins the outcome: a drain-mode call changes nothing of an immediate one.
+  it('ignores a draining close() called during an immediate one', async () => {
+    const db = await createTestClient({ poolSize: 1, debug: true });
+    const long = db.all(longQuery(20_000_000));
+    long.catch(() => {});
+    await waitUntil(
+      theQueryIsRunning(db, longQuery(20_000_000)),
+      'the query to be running',
+    );
+
+    const t0 = performance.now();
+    const immediate = db.close({ immediate: true });
+    const draining = db.close();
+
+    expect(draining).toBe(immediate);
+    await immediate;
+    expect(performance.now() - t0).toBeLessThan(scaled(5_000));
+    await expect(long).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
+  });
 });

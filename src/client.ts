@@ -1921,18 +1921,25 @@ export const createSQLiteClient = (
   };
 
   let closing: Promise<void> | undefined;
+  /** Makes the close in progress immediate; set by the first `close()`. */
+  let escalate: (() => void) | undefined;
 
   /**
    * Drains in-flight work, rejects queued work, closes each database
    * connection, then terminates all workers. Bounded by `drainTimeout`.
    * Under `immediate` the statements in flight are interrupted instead, and
    * every wait on a worker is bounded by `CLOSE_IMMEDIATE_GRACE_MS`.
-   * A second call returns the same promise object — runs exactly once.
+   * A second call returns the same promise object — runs exactly once. If it
+   * asks for `immediate` while the first is draining, that close turns
+   * immediate from there; a draining call never slows an immediate one.
    */
   const close = (options?: SQLiteCloseOptions): Promise<void> => {
-    if (closing) return closing;
-    const immediate = options?.immediate === true;
-    const patience = immediate ? CLOSE_IMMEDIATE_GRACE_MS : drainTimeout;
+    if (closing) {
+      // A drain in progress becomes immediate from here; an immediate close
+      // is not made patient again. Either way it is the same promise.
+      if (options?.immediate === true) escalate?.();
+      return closing;
+    }
     closing = (async () => {
       logger.info('client closing');
       // A client closed before worker 0 answered takes no lock (spec
@@ -1950,8 +1957,15 @@ export const createSQLiteClient = (
       // spec the signal cancels a pending request only. Those writes hold a
       // scheduler lease and are drained by shutdown() below.
       closeAbort.abort(closingError);
+
+      // The steps `immediate` adds. One path for a close that starts
+      // immediate and one that is made so while it drains.
+      let immediate = false;
       const cut = new Set<PoolWorker>();
-      if (immediate) {
+      const escalated = Promise.withResolvers<void>();
+      const goImmediate = () => {
+        if (immediate) return;
+        immediate = true;
         immediateAbort.abort(closingError);
         // A statement that cannot be stopped is cut now, not after a grace
         // that could only watch it run: terminating poisons the transport, so
@@ -1964,17 +1978,35 @@ export const createSQLiteClient = (
             cut.add(worker);
           }
         }
-      }
+        escalated.resolve();
+      };
+      escalate = goImmediate;
+      if (options?.immediate === true) goImmediate();
+
+      // Waits on a worker or on the drain: `drainTimeout` for a draining
+      // close, `CLOSE_IMMEDIATE_GRACE_MS` for an immediate one. A wait in
+      // progress when the close is made immediate is cut short and gets the
+      // grace from that moment.
+      const waitOn = async (promise: Promise<unknown>) => {
+        if (!immediate) {
+          await bounded(
+            Promise.race([promise, escalated.promise]),
+            drainTimeout,
+          );
+        }
+        if (immediate) await bounded(promise, CLOSE_IMMEDIATE_GRACE_MS);
+      };
+
       // Shutting the front door: queued scheduler waiters reject at once and
       // no new leases can be taken while in-flight work drains.
       const draining = scheduler.shutdown(closingError);
       // A transaction's lease is held by user code, so this wait is bounded like
       // the rest: a callback that never returns must not make close() hang.
-      await bounded(draining, patience);
+      await waitOn(draining);
       await Promise.all(
         pool.map(async (worker) => {
           if (!worker || cut.has(worker)) return;
-          await bounded(worker.close(), patience);
+          await waitOn(worker.close());
           // The reason in-flight and later requests reject with. Without it a
           // transaction's callback met a silent hang instead of an error.
           worker.terminate(closingError);
