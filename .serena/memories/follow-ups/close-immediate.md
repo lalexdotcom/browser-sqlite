@@ -1,6 +1,6 @@
 # Follow-up — an option for `close()` that interrupts everything at once
 
-**Status: BUILT on `feat/close-immediate` (2026-11-13), closes at its merge.** Opened 2026-11-09 (user): "il faut prévoir une option pour close qui interrompe tout immédiatement". Designed 2026-11-12/13 with the user: spec `docs/superpowers/specs/2026-11-12-close-immediate-design.md`, plan `docs/superpowers/plans/2026-11-13-close-immediate.md`.
+**Status: CLOSED — `feat/close-immediate` merged 2026-11-13.** Opened 2026-11-09 (user): "il faut prévoir une option pour close qui interrompe tout immédiatement". Designed 2026-11-12/13 with the user: spec `docs/superpowers/specs/2026-11-12-close-immediate-design.md`, plan `docs/superpowers/plans/2026-11-13-close-immediate.md`.
 
 Part of `mem:follow-ups`.
 
@@ -20,3 +20,9 @@ Part of `mem:follow-ups`.
 - **`PoolWorker.terminate` must not return early once dead:** `handleDeath` calls it after `die()` already poisoned the worker, and it must still terminate the thread. A double terminate in `close` is avoided by re-checking the `cut` set instead.
 - **A bulk load's `close()` rejects with `BULK_WRITE_FAILED` whose `cause` is `CLIENT_CLOSED`**, under the option as under the default close — kept so the default does not change, and the error carries `rowsWritten`.
 - A `stream()` consumer can still receive rows of the chunk it was in, after `close()` resolved, then `CLIENT_CLOSED`; `chunk()`'s next `next()` rejects.
+
+## How the tests prove it (no duration bet, `mem:follow-ups/time-based-tests`)
+
+- `close-immediate.test.ts` hands the client `drainTimeout` (and, for the clean-close test, `closeImmediateGrace`) of an hour, and the statements to cut run 2 G iterations: a broken option fails the test by its timeout. No elapsed-time assertion.
+- **A paused `chunk()`/`stream()` is ended by two mechanisms, each enough alone:** the abort reaches the signal its first `next()` merged, and the grace terminates the worker. Only both removed together turn those tests red (mutation, 2026-11-13).
+- The single-terminate test: a draining `close()` with `drainTimeout: 200` reaches its wait for the worker's answer (`post:close` in the trace), then `close({ immediate: true })`; red with the `cut` re-check removed (two `terminate`). Escalation during that wait is otherwise covered by `close-waits.test.ts` (fake timers), a browser comparison there being a duration bet: `drainTimeout` bounds both waits.
