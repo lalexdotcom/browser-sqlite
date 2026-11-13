@@ -423,13 +423,13 @@ window.addEventListener('pageshow', (event) => {
 
 #### `immediate`
 
-**`close({ immediate: true })` does not wait for the statements in flight.**<br>Each one is interrupted and its call rejects with `CLIENT_CLOSED`, and `close()` waits no `drainTimeout`. A [`stream()`](#clientstream) or [`chunk()`](#clientchunk) being consumed rejects with `CLIENT_CLOSED` too, after any rows already delivered to you, and a [`bulkWrite()`](#clientbulkwrite) or [`output()`](#clientoutput) load rejects its `close()` with `BULK_WRITE_FAILED`, whose `cause` is `CLIENT_CLOSED`. A [`transaction()`](#clienttransaction) is abandoned and rejects with `CLIENT_CLOSED`, as it is by any `close()`.
+**`close({ immediate: true })` does not wait for the statements in flight.**<br>Each one is interrupted and its call rejects with `CLIENT_CLOSED`, and `close()` does not wait `drainTimeout` for them. A [`chunk()`](#clientchunk) being consumed rejects with `CLIENT_CLOSED` too, after any chunk already delivered to you. A [`stream()`](#clientstream) can still hand you the rows of the chunk it was in after `close()` has resolved, and then rejects with `CLIENT_CLOSED`. A [`bulkWrite()`](#clientbulkwrite) or [`output()`](#clientoutput) load rejects the load's `close()` with `BULK_WRITE_FAILED`, whose `cause` is `CLIENT_CLOSED`. A [`transaction()`](#clienttransaction) is abandoned and rejects with `CLIENT_CLOSED`, as it is by any `close()`.
 
-**A write that was completed just before the interruption may reject although it landed.**<br>That is the misreport the default `close()` drains to avoid. Use `immediate` when the caller would rather lose that certainty than wait.
+**A write that was completed just before the interruption may reject although it landed.**<br>This is the false failure a default `close()` drains to avoid. Use `immediate` when the caller would rather lose that certainty than wait.
 
-**Where a statement cannot be stopped, its worker is terminated.**<br>That is the `sync` build without cross-origin isolation (see [Interrupting a call](#interrupting-a-call)). A write the worker was running is lost and rolled back at the next open, as for a tab that is closed. On Safari the terminated worker's statement keeps running to its end: a write rejected this way may still land after `close()` has resolved, and a client opened at once on the same database may fail.
+**Where a statement cannot be stopped, its worker is terminated.**<br>The `sync` build without cross-origin isolation is where this happens (see [Interrupting a call](#interrupting-a-call)). A write the worker was running is lost and rolled back at the next open, as for a tab that is closed. On Safari, on that build, the terminated worker's statement keeps running to its end: a write rejected this way may still land after `close()` has resolved, and a client opened at once on the same database may fail.
 
-**Calling it during a `close()` that is draining makes that close immediate.**<br>It returns the same promise. A default `close()` called during an immediate one changes nothing.
+**Calling `close({ immediate: true })` during a `close()` that is draining makes that close immediate.**<br>That call returns the same promise as the draining one. A default `close()` called during an immediate one changes nothing.
 
 ## deleteDatabase
 
@@ -603,7 +603,7 @@ await db.transaction(async (tx) => {
 
 **[`close()`](#clientclose) abandons the transaction the same way.**<br>It rejects with `CLIENT_CLOSED`, the callback runs on but can no longer reach the database, and the origin's write lock the transaction was holding is given back — otherwise a callback waiting on something that never arrives keeps every other writer in the origin waiting with it, in this tab and in others. **Attach a handler to a transaction you do not await**, or closing while one runs surfaces an unhandled rejection.
 
-**A statement in flight inside a transaction is abandoned; one outside is not.**<br>`close()` drains an ordinary write, unless it is [`close({ immediate: true })`](#immediate), because each is its own commit and rejecting it would report failure for a row that landed. Nothing inside a transaction is durable until its `COMMIT`, so there is nothing to misreport.
+**A statement in flight inside a transaction is abandoned; one outside is not.**<br>`close()` drains an ordinary write because each is its own commit and rejecting it would report failure for a row that landed, unless that close is [`close({ immediate: true })`](#immediate). Nothing inside a transaction is durable until its `COMMIT`, so there is nothing to misreport.
 
 **A statement waits for the connection before it resolves.**<br>Every statement in a transaction runs on the same connection, and one that ends early leaves it finishing behind: [`first()`](#clientfirst) stops at the first row, a [`chunk()`](#clientchunk) or [`stream()`](#clientstream) you `break` out of stops mid-result, an abort cuts a statement short. Each one waits for the connection to be free, so the next statement in the same callback runs normally. Any generator the callback leaves open is closed before the transaction commits or rolls back.
 
