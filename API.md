@@ -388,11 +388,18 @@ See [Debugging](#debugging).
 
 ## *client*.close
 
-Drains in-flight work, rejects queued work, closes each database connection, then terminates all workers.
+Drains in-flight work unless `immediate` is set, rejects queued work, closes each database connection, then terminates all workers.
 
 ```typescript
 await db.close();
+
+// Interrupts what is running instead of waiting for it.
+await db.close({ immediate: true });
 ```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `immediate` | `boolean` | `false` | Interrupts the statements in flight instead of waiting for them. [More info](#immediate) |
 
 **`close()` is async.**<br>Always `await db.close()`: the promise settles once every worker has closed and been terminated and the database is released — a [`deleteDatabase`](#deletedatabase) or a new client can take it at once — or once `drainTimeout` has elapsed, and discarding it means the caller cannot tell when teardown is complete. Calling it a second time returns the same promise — the operation runs exactly once.
 
@@ -413,6 +420,16 @@ window.addEventListener('pageshow', (event) => {
 ```
 
 `pagehide` fires where `unload` no longer does; `pageshow` with `persisted` set means the page was restored from the back/forward cache.
+
+#### `immediate`
+
+**`close({ immediate: true })` does not wait for the statements in flight.**<br>Each one is interrupted and its call rejects with `CLIENT_CLOSED`, and `close()` does not wait `drainTimeout` for them. A [`chunk()`](#clientchunk) being consumed rejects with `CLIENT_CLOSED` too, after any chunk already delivered to you. A [`stream()`](#clientstream) can still hand you the rows of the chunk it was in after `close()` has resolved, and then rejects with `CLIENT_CLOSED`. A [`bulkWrite()`](#clientbulkwrite) or [`output()`](#clientoutput) load rejects the load's `close()` with `BULK_WRITE_FAILED`, whose `cause` is `CLIENT_CLOSED`. A [`transaction()`](#clienttransaction) is abandoned and rejects with `CLIENT_CLOSED`, as it is by any `close()`.
+
+**A write that was completed just before the interruption may reject although it landed.**<br>This is the false failure a default `close()` drains to avoid. Use `immediate` when the caller would rather lose that certainty than wait.
+
+**Where a statement cannot be stopped, its worker is terminated.**<br>The `sync` build without cross-origin isolation is where this happens (see [Interrupting a call](#interrupting-a-call)). A write the worker was running is lost and rolled back at the next open, as for a tab that is closed. On Safari, on that build, the terminated worker's statement keeps running to its end: a write rejected this way may still land after `close()` has resolved, and a client opened at once on the same database may fail.
+
+**Calling `close({ immediate: true })` during a `close()` that is draining makes that close immediate.**<br>That call returns the same promise as the draining one. A default `close()` called during an immediate one changes nothing.
 
 ## deleteDatabase
 
@@ -586,7 +603,7 @@ await db.transaction(async (tx) => {
 
 **[`close()`](#clientclose) abandons the transaction the same way.**<br>It rejects with `CLIENT_CLOSED`, the callback runs on but can no longer reach the database, and the origin's write lock the transaction was holding is given back — otherwise a callback waiting on something that never arrives keeps every other writer in the origin waiting with it, in this tab and in others. **Attach a handler to a transaction you do not await**, or closing while one runs surfaces an unhandled rejection.
 
-**A statement in flight inside a transaction is abandoned; one outside is not.**<br>`close()` drains an ordinary write, because each is its own commit and rejecting it would report failure for a row that landed. Nothing inside a transaction is durable until its `COMMIT`, so there is nothing to misreport.
+**A statement in flight inside a transaction is abandoned; one outside is not.**<br>`close()` drains an ordinary write because each is its own commit and rejecting it would report failure for a row that landed, unless that close is [`close({ immediate: true })`](#immediate). Nothing inside a transaction is durable until its `COMMIT`, so there is nothing to misreport.
 
 **A statement waits for the connection before it resolves.**<br>Every statement in a transaction runs on the same connection, and one that ends early leaves it finishing behind: [`first()`](#clientfirst) stops at the first row, a [`chunk()`](#clientchunk) or [`stream()`](#clientstream) you `break` out of stops mid-result, an abort cuts a statement short. Each one waits for the connection to be free, so the next statement in the same callback runs normally. Any generator the callback leaves open is closed before the transaction commits or rolls back.
 
@@ -640,6 +657,8 @@ Serving the page **cross-origin isolated** is the first. Either header set below
 
 The second is a build other than `sync`: `jspi` where the browser has it, otherwise `async`, which is slower wherever a query walks rows.
 
+**[`close({ immediate: true })`](#immediate) interrupts the calls in flight the same way.**<br>Where the abort does not reach the statement, it terminates the worker instead of waiting for the statement to end.
+
 ## Error handling
 
 Errors raised by this library, and every statement SQLite refuses, are instances of `SQLiteError`, exported from the package entry point.
@@ -648,7 +667,7 @@ Errors raised by this library, and every statement SQLite refuses, are instances
 |------|------------------|
 | `NOT_A_READ_QUERY` | `first()` was called with a statement that writes. |
 | `MULTIPLE_STATEMENTS` | A SQL string held more than one statement. Raised before anything runs, by every method that takes SQL: send each statement in its own call. |
-| `CLIENT_CLOSED` | A query was queued after `close()` was called. |
+| `CLIENT_CLOSED` | A query was queued after `close()` was called, or was in flight when [`close({ immediate: true })`](#immediate) interrupted it. |
 | `WORKER_CRASHED` | A pool worker died and the supervisor decided not to restart it. All queued and in-flight work on that slot is rejected. When SQLite refused to open the database — a file that is not a database, a `pragmas` entry it rejected — `sqliteCode` carries its result code. When another context holds the database file — a page left without `close()`, another tab — the message says so; see [`close()`](#clientclose). |
 | `WORKER_ERROR` | A statement failed in its worker without SQLite reporting it — a JavaScript exception, kept as `cause`. It has no `sqliteCode`, and the worker keeps serving. |
 | `WORKER_TIMEOUT` | A worker of this library did not answer in time: a pool worker that did not post `ready` within `openTimeout` milliseconds — most often because another tab or client holds the database under an exclusive lock — or the worker of a [`deleteDatabase`](#deletedatabase) that did not complete within its `timeout`. |
