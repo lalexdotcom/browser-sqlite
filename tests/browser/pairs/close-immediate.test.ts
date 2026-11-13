@@ -230,6 +230,58 @@ describe('close({ immediate: true })', () => {
     expect(performance.now() - t0).toBeLessThan(scaled(5_000));
   });
 
+  /**
+   * The escalation meets a draining close in its last wait: the drain has run
+   * out its drainTimeout and posted `close` to a worker still inside a
+   * statement it cannot stop. The escalation cuts that worker, which also ends
+   * the wait for its answer; the close loop must not terminate it again.
+   */
+  // Falsifiable: drop the `cut.has(worker)` check after the worker.close()
+  // wait in close() — the trace then holds two terminations.
+  it('terminates once a worker cut while close() waits for its answer', {
+    tags: ['build:sync', 'excludes:interruptible'],
+  }, async () => {
+    const records = interceptWorkers();
+    // Short so that the drain gives the running query up and close() reaches
+    // its wait for the worker's answer; nothing below depends on its length.
+    const db = await createTestClient({
+      poolSize: 1,
+      debug: true,
+      drainTimeout: 200,
+    });
+    // Minutes long: it is still running when the escalation comes.
+    const sql = longQuery(2_000_000_000);
+    const long = db.all(sql);
+    let settled = false;
+    const markSettled = () => {
+      settled = true;
+    };
+    long.then(markSettled, markSettled);
+    await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
+
+    const draining = db.close();
+    await waitUntil(
+      () => records[0].log.includes('post:close'),
+      'close() to wait for the worker to answer',
+    );
+    const reached = !settled;
+    const again = db.close({ immediate: true });
+
+    expect(again).toBe(draining);
+    await again;
+    if (
+      !(await exercised(
+        reached,
+        'the statement still running when close() waited for the worker',
+      ))
+    )
+      return;
+    await expect(long).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
+    expect(
+      records[0].log.filter((entry) => entry === 'terminate'),
+    ).toHaveLength(1);
+  });
+
   // Falsifiable: merge immediateAbort at the call, in chunk() and stream() —
   // the caller's signal then carries a relay listener that a generator never
   // read never removes.
