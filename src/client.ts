@@ -1,6 +1,7 @@
 import type {
   SQLiteChunkOptions,
   SQLiteChunkStream,
+  SQLiteCloseOptions,
   SQLiteDB,
   SQLiteQueryOptions,
   SQLiteRunResult,
@@ -123,6 +124,13 @@ const DEFAULT_STATEMENT_CACHE_BYTES = 8 * 1024 * 1024;
  * reason.
  */
 const HELD_REPORT_MARGIN_MS = 1_000;
+
+/**
+ * What `close({ immediate: true })` waits for a worker it interrupted to give
+ * its statement up, then to close its connection, before terminating it: the
+ * place of `drainTimeout`, which a draining close waits out.
+ */
+const CLOSE_IMMEDIATE_GRACE_MS = 300;
 
 /**
  * The second sentence of an `openTimeout` failure, chosen by the roster.
@@ -872,6 +880,40 @@ export const createSQLiteClient = (
    */
   const closeAbort = new AbortController();
 
+  /**
+   * Aborted, with `CLIENT_CLOSED`, by `close({ immediate: true })` only and
+   * merged into the signal of every call (`callDeadline`): the statements in
+   * flight are interrupted as a caller's own `signal` interrupts them. Apart
+   * from `closeAbort`, which every close aborts and which must not interrupt a
+   * plain query under the default.
+   */
+  const immediateAbort = new AbortController();
+
+  /**
+   * `withDeadline`, plus `immediateAbort`. The release is owed as
+   * `withDeadline`'s is, and also happens when the merged signal fires, so a
+   * generator never read leaves nothing on `immediateAbort`.
+   */
+  const callDeadline = (
+    options: Parameters<typeof withDeadline>[0],
+    method: string,
+  ): ReturnType<typeof withDeadline> => {
+    const deadline = withDeadline(options, method);
+    const merged = mergeSignals(deadline.signal, immediateAbort.signal);
+    const release = () => {
+      deadline.release();
+      merged.release();
+    };
+    if (
+      merged.signal &&
+      merged.signal !== deadline.signal &&
+      merged.signal !== immediateAbort.signal
+    ) {
+      merged.signal.addEventListener('abort', release, { once: true });
+    }
+    return { signal: merged.signal, release };
+  };
+
   const epochs = epochsFor(vfs, dbFile, locks);
 
   /**
@@ -1529,7 +1571,7 @@ export const createSQLiteClient = (
    * `output`), never a caller's.
    */
   const readDirect = async (sql: string) => {
-    const { signal, release } = withDeadline(undefined, 'read');
+    const { signal, release } = callDeadline(undefined, 'read');
     try {
       return await readWithRetry(signal, (worker) =>
         readWorker(worker, sql, undefined, { signal }),
@@ -1613,7 +1655,7 @@ export const createSQLiteClient = (
           sql,
           bound,
           options,
-          withDeadline(options, 'chunk'),
+          callDeadline(options, 'chunk'),
           affected,
         ),
         affected,
@@ -1645,7 +1687,7 @@ export const createSQLiteClient = (
           sql,
           bound,
           options,
-          withDeadline(options, 'stream'),
+          callDeadline(options, 'stream'),
           affected,
         ),
         { affected: affected.promise },
@@ -1705,7 +1747,7 @@ export const createSQLiteClient = (
     const { sql, params, options } = queryArgs(input, second, third);
     assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
-    const { signal, release } = withDeadline(options, 'write');
+    const { signal, release } = callDeadline(options, 'write');
     try {
       return await runOnWriter<T>(sql, bound, options, signal);
     } finally {
@@ -1727,7 +1769,7 @@ export const createSQLiteClient = (
     const { sql, params, options } = queryArgs(input, second, third);
     assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
-    const { signal, release } = withDeadline(options, method);
+    const { signal, release } = callDeadline(options, method);
     try {
       // Not awaited when the verdict is known: the statement then joins its
       // queue in this tick.
@@ -1796,7 +1838,7 @@ export const createSQLiteClient = (
     const { sql, params, options } = queryArgs(input, second, third);
     assertStatementAllowed(vfs, sql);
     const bound = prepareParams(params);
-    const { signal, release } = withDeadline(options, 'first');
+    const { signal, release } = callDeadline(options, 'first');
     try {
       // The worker refuses a write before it steps: SQLite, not the text,
       // says whether this statement writes.
@@ -1883,10 +1925,14 @@ export const createSQLiteClient = (
   /**
    * Drains in-flight work, rejects queued work, closes each database
    * connection, then terminates all workers. Bounded by `drainTimeout`.
+   * Under `immediate` the statements in flight are interrupted instead, and
+   * every wait on a worker is bounded by `CLOSE_IMMEDIATE_GRACE_MS`.
    * A second call returns the same promise object — runs exactly once.
    */
-  const close = (): Promise<void> => {
+  const close = (options?: SQLiteCloseOptions): Promise<void> => {
     if (closing) return closing;
+    const immediate = options?.immediate === true;
+    const patience = immediate ? CLOSE_IMMEDIATE_GRACE_MS : drainTimeout;
     closing = (async () => {
       logger.info('client closing');
       // A client closed before worker 0 answered takes no lock (spec
@@ -1904,16 +1950,17 @@ export const createSQLiteClient = (
       // spec the signal cancels a pending request only. Those writes hold a
       // scheduler lease and are drained by shutdown() below.
       closeAbort.abort(closingError);
+      if (immediate) immediateAbort.abort(closingError);
       // Shutting the front door: queued scheduler waiters reject at once and
       // no new leases can be taken while in-flight work drains.
       const draining = scheduler.shutdown(closingError);
       // A transaction's lease is held by user code, so this wait is bounded like
       // the rest: a callback that never returns must not make close() hang.
-      await bounded(draining, drainTimeout);
+      await bounded(draining, patience);
       await Promise.all(
         pool.map(async (worker) => {
           if (!worker) return;
-          await bounded(worker.close(), drainTimeout);
+          await bounded(worker.close(), patience);
           // The reason in-flight and later requests reject with. Without it a
           // transaction's callback met a silent hang instead of an error.
           worker.terminate(closingError);

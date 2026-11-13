@@ -134,6 +134,16 @@ export type SQLiteTransactionOptions = Interruptible<{
   autoCommit?: boolean;
 }>;
 
+/** Options `close()` accepts. */
+export type SQLiteCloseOptions = {
+  /**
+   * Interrupts the statements in flight instead of waiting for them. Each
+   * interrupted call rejects with `CLIENT_CLOSED`, and `close()` does not wait
+   * `drainTimeout` for them. Defaults to false: `close()` drains.
+   */
+  immediate?: boolean;
+};
+
 /** Column definitions for `output()`. */
 export type Schema = Record<
   string,
@@ -502,6 +512,10 @@ export type SQLiteDB = SQLiteQueryAPI & {
    * comes first). Calling `close()` a second time returns the **same** promise
    * object — the operation runs exactly once.
    *
+   * `close({ immediate: true })` does not drain: it interrupts the statements in
+   * flight, which reject with `CLIENT_CLOSED`, and waits no `drainTimeout` for
+   * them.
+   *
    * @remarks
    * **Stored data is NOT deleted.** `close()` releases workers and
    * connections; it removes nothing.
@@ -511,7 +525,7 @@ export type SQLiteDB = SQLiteQueryAPI & {
    * is the only correct removal on `AccessHandlePoolVFS` and the IndexedDB
    * VFS. `db.files` lists the names its files may have.
    */
-  close: () => Promise<void>;
+  close: (options?: SQLiteCloseOptions) => Promise<void>;
 
   /** This client's UUID, unique across the origin. */
   readonly id: string;
