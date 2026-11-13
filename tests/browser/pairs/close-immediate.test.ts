@@ -3,6 +3,7 @@ import {
   createTestClient,
   exercised,
   interceptWorkers,
+  killedStatementRuns,
   longQuery,
   sharedDatabase,
   theQueryIsRunning,
@@ -36,7 +37,12 @@ const aRequestIsInFlight =
  */
 const UNREACHABLE = 3_600_000;
 
-/** Iterations enough to outlast any test's timeout when not cut. */
+/**
+ * Iterations enough to outlast any test's timeout when not cut. A test that
+ * terminates a `sync` worker running one skips where Safari runs it out after
+ * the termination, holding its OPFS files past the file's storage wipe
+ * (WebKit 328618, `killedStatementRuns`): every later file of the cell failed.
+ */
 const ENDLESS = 2_000_000_000;
 
 /** Rows enough for a stream to still have some after its first chunk. */
@@ -169,7 +175,9 @@ describe('close({ immediate: true })', () => {
   // posts `close` first, which the trace then holds.
   it('terminates a statement it cannot stop, without asking it to close', {
     tags: ['build:sync', 'excludes:interruptible'],
-  }, async () => {
+  }, async ({ skip }) => {
+    const webkit = killedStatementRuns();
+    if (webkit) return skip(webkit);
     const records = interceptWorkers();
     const db = await createTestClient({
       poolSize: 1,
@@ -196,7 +204,9 @@ describe('close({ immediate: true })', () => {
   // the journal at the next open.
   it('leaves no trace of a cut write', {
     tags: ['requires:shared-storage'],
-  }, async () => {
+  }, async ({ skip }) => {
+    const webkit = killedStatementRuns();
+    if (webkit) return skip(webkit);
     const shared = sharedDatabase();
     const db = shared.open({ poolSize: 1, debug: true });
     await db.run('CREATE TABLE t (a)');
@@ -223,7 +233,9 @@ describe('close({ immediate: true })', () => {
 
   // Falsifiable: return `closing` without escalating — the draining close
   // waits for the query past the test's timeout.
-  it('makes a draining close immediate', async () => {
+  it('makes a draining close immediate', async ({ skip }) => {
+    const webkit = killedStatementRuns();
+    if (webkit) return skip(webkit);
     const db = await createTestClient({
       poolSize: 1,
       debug: true,
@@ -254,7 +266,9 @@ describe('close({ immediate: true })', () => {
   // wait in close() — the trace then holds two terminations.
   it('terminates once a worker cut while close() waits for its answer', {
     tags: ['build:sync', 'excludes:interruptible'],
-  }, async () => {
+  }, async ({ skip }) => {
+    const webkit = killedStatementRuns();
+    if (webkit) return skip(webkit);
     const records = interceptWorkers();
     // Short so that the drain gives the running query up and close() reaches
     // its wait for the worker's answer; nothing below depends on its length.
@@ -350,7 +364,11 @@ describe('close({ immediate: true })', () => {
   });
 
   // Pins the outcome: a drain-mode call changes nothing of an immediate one.
-  it('ignores a draining close() called during an immediate one', async () => {
+  it('ignores a draining close() called during an immediate one', async ({
+    skip,
+  }) => {
+    const webkit = killedStatementRuns();
+    if (webkit) return skip(webkit);
     const db = await createTestClient({
       poolSize: 1,
       debug: true,

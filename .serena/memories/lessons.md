@@ -25,6 +25,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A fix round can move a test's only falsifier
 - A timeout test on a build that cannot interrupt measures the query's length
 - A test can pin a defect as the contract
+- A trace changes the rate it measures
 - A suite pinned to one VFS hides every defect in the VFS it does not run
 - `afterEach` registered from inside a test body NEVER RUNS in rstest
 - A falsifier claim written months ago is a claim, not a fact
@@ -39,6 +40,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A fixed sleep before reading state another task delivers loses the race when the main thread stalls (2026-10-14, `failed-client`)
 - A test that outlives its bound keeps running into the next test, and its result list dies with it (2026-10-16, `coopsync-handover` on Windows Firefox)
 - A test can pass on what its siblings left in the page: the planner moves it, and it fails (2026-10-26, `failed-client`)
+- A test that terminates a `sync` worker mid-statement skips on Safari from the day it is written (2026-11-13, `close-immediate`)
 
 ## `mem:lessons/debugging` — debugging, probes, measurement
 
