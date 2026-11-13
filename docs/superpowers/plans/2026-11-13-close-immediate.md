@@ -51,7 +51,7 @@
     - `close()` resolves within `scaled(5_000)` (a draining close would wait the paused consumer out for `drainTimeout`)
     - `await expect(iterator.next()).rejects.toMatchObject({ code: 'CLIENT_CLOSED' })`
   - `does not wait for a transaction that never finishes`, no tag: as `close.test.ts`'s `is bounded when a transaction never finishes`, with `drainTimeout` at its default and `close({ immediate: true })`: resolves within `scaled(5_000)`; the transaction rejects with `CLIENT_CLOSED`.
-  - `rejects a bulk load's close()`, no tag: `const load = db.bulkWrite('t', …)`, a few `enqueue()`, `await db.close({ immediate: true })`, `await expect(load.close()).rejects.toMatchObject({ code: 'CLIENT_CLOSED' })`. This pins the documented outcome; it does not discriminate the option from the default.
+  - `rejects a bulk load's close()`, no tag: `const load = db.bulkWrite('t', …)`, a few `enqueue()`, `await db.close({ immediate: true })`, `await expect(load.close()).rejects.toMatchObject({ code: 'BULK_WRITE_FAILED', cause: { code: 'CLIENT_CLOSED' } })` (ruling 2026-11-13: what the default close already does). This pins the documented outcome; it does not discriminate the option from the default.
 
 - [ ] **Step 2: Run them, see them fail**
 
@@ -143,6 +143,7 @@ test "$(git branch --show-current)" = feat/close-immediate && git commit -m "fea
   - what it does: interrupts the statements in flight, which reject with `CLIENT_CLOSED`, and does not wait `drainTimeout`;
   - where a statement cannot be stopped (the `sync` build without cross-origin isolation, link to § Interrupting a call), its worker is terminated: a write it was running is lost, and rolled back at the next open;
   - a write that completed just before may reject although it landed;
+  - a `bulkWrite()`/`output()` load's `close()` rejects with `BULK_WRITE_FAILED`, whose `cause` is `CLIENT_CLOSED`;
   - Safari keeps a terminated worker's statement running: on that build, a write rejected this way may still land after `close()` resolved, and a client opened at once on the same database may fail;
   - calling it during a draining `close()` makes that close immediate.
   Adjust the section's lead line ("Drains in-flight work…") to say it drains unless `immediate`. In § Interrupting a call and the error table's `CLIENT_CLOSED` row, one clause each pointing to `close({ immediate: true })`. In the transaction note, the "one outside is not" sentence gains "unless `close({ immediate: true })`".

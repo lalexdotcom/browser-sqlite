@@ -24,7 +24,7 @@ The user wants a **violent close the caller can choose**: an option under which 
 
 - `run` / `all` / `first`: reject with `CLIENT_CLOSED`.
 - `stream()` / `chunk()` being consumed: the pending or next `next()` rejects with `CLIENT_CLOSED`.
-- `bulkWrite()` / `output()`: their `close()` rejects with `CLIENT_CLOSED`; the batches already written stay, as for an abort (`output()`'s target untouched, staging dropped where the worker is still alive to drop it). An `enqueue()` after the client closed throws as it does today.
+- `bulkWrite()` / `output()`: their `close()` rejects with `BULK_WRITE_FAILED` (a `SQLiteBulkWriteError` whose `cause` has code `CLIENT_CLOSED`, carrying `rowsWritten`/`rowsNotWritten`) — what the default `close()` already does, kept so the default stays unchanged (ruling 2026-11-13, Task 1); the batches already written stay, as for an abort (`output()`'s target untouched, staging dropped where the worker is still alive to drop it). An `enqueue()` after the client closed throws as it does today.
 - `transaction()`: unchanged — it is already abandoned by `closeSignal` and rejects with `CLIENT_CLOSED`, and the default `close()` already interrupts the statement it has in flight (`closeSignal` feeds the transaction's signal; `closeOpenStatements` calls `worker.interrupt` then `quiesce()`). The only change under the option is on the non-interruptible path: the worker is terminated instead of waited on. No second client-wide signal goes into `transaction.ts`.
 
 ## Builder's latitude, with the calls already made (agent's calls, not the user's)
