@@ -25,6 +25,7 @@ The lessons live in the sub-memories below, by theme, each in the order it was w
 - A fix round can move a test's only falsifier
 - A timeout test on a build that cannot interrupt measures the query's length
 - A test can pin a defect as the contract
+- A trace changes the rate it measures
 - A suite pinned to one VFS hides every defect in the VFS it does not run
 - `afterEach` registered from inside a test body NEVER RUNS in rstest
 - A falsifier claim written months ago is a claim, not a fact

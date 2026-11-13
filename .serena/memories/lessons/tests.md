@@ -288,7 +288,13 @@ never saw (`mem:follow-ups`), while its multi-client and cross-tab suites ran on
 **When a test asserts a failure, ask whether the failure is the contract or the defect — and a
 promise made across VFS is tested across VFS.**
 
-\1
+## A trace changes the rate it measures — 2026-09-15
+
+The CoopSync probe's lock trace posts a message at every `jLock`; under it Chromium failed 4-5
+attempts in 20. The bare test failed three single runs of three, yet one whole-file run showed no
+`BUSY` at all. **Report a rate taken under instrumentation as such.** The reproduction that settles
+it is the one without the trace — and the one upstream needed came from its own suite, where the bare
+code failed 47 steps in 100.
 
 ## A suite pinned to one VFS hides every defect in the VFS it does not run — 2026-09-15
 
