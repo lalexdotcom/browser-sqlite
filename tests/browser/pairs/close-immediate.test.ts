@@ -4,7 +4,6 @@ import {
   exercised,
   interceptWorkers,
   longQuery,
-  scaled,
   sharedDatabase,
   theQueryIsRunning,
   waitUntil,
@@ -29,40 +28,49 @@ const aRequestIsInFlight =
         request.endTime === undefined,
     );
 
+/**
+ * Longer than any test's timeout. Handed to the client as `drainTimeout` (and
+ * the grace where it matters), it makes the draining path unreachable: an
+ * option that fails to cut it fails the test by its timeout, so no test here
+ * bets on how long the immediate path takes (`mem:follow-ups/time-based-tests`).
+ */
+const UNREACHABLE = 3_600_000;
+
+/** Iterations enough to outlast any test's timeout when not cut. */
+const ENDLESS = 2_000_000_000;
+
 /** Rows enough for a stream to still have some after its first chunk. */
 const ENDLESS_ROWS =
   'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 10000000) SELECT x FROM c';
 
 describe('close({ immediate: true })', () => {
   // Falsifiable: leave immediateAbort un-aborted in close() — the statement
-  // runs to its end (minutes), well past the bound.
+  // runs for minutes, and close() waits for it past the test's timeout.
   it('interrupts a running statement and closes the worker cleanly', {
     tags: ['requires:interruptible'],
   }, async () => {
     const records = interceptWorkers();
-    // drainTimeout left at its default: a drain would wait it out. The grace is
-    // raised: this test asserts the worker closed cleanly, which holds only
-    // while the grace outlasts the machine, and the grace is not its subject.
+    // Both unreachable: a drain, or a grace run out on a statement the
+    // interruption missed, fails the test by its timeout.
     const db = await createTestClient({
       poolSize: 1,
       debug: true,
-      closeImmediateGrace: scaled(10_000),
+      drainTimeout: UNREACHABLE,
+      closeImmediateGrace: UNREACHABLE,
     } as never);
     // Prime: cached, so the real run takes run(cached) and its step starts
     // before the interruption (as interrupt.test.ts's "frees the worker").
     await db.all(longQuery(1_000));
-    const long = db.all(longQuery(2_000_000_000));
+    const long = db.all(longQuery(ENDLESS));
     long.catch(() => {});
     await waitUntil(
-      theQueryIsRunning(db, longQuery(2_000_000_000)),
+      theQueryIsRunning(db, longQuery(ENDLESS)),
       'the query to be running',
     );
 
-    const t0 = performance.now();
     await db.close({ immediate: true });
 
     await expect(long).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
-    expect(performance.now() - t0).toBeLessThan(scaled(5_000));
     const trace = records[0].log;
     expect(trace).toContain('recv:closed');
     expect(trace.indexOf('terminate')).toBeGreaterThan(
@@ -70,35 +78,38 @@ describe('close({ immediate: true })', () => {
     );
   });
 
-  // Falsifiable: leave immediateAbort un-aborted — the paused consumer is
-  // waited out for drainTimeout (60 s) and the next() is never refused.
+  // Falsifiable: leave immediateAbort un-aborted AND give the immediate waits
+  // drainTimeout instead of the grace — close() then waits for the paused
+  // consumer past the test's timeout. Either alone still ends it: the abort
+  // through the signal its first next() merged, the grace by terminating.
   it('rejects a paused chunk() at once', async () => {
     // chunk(): the next() of a paused consumer meets the abort at once.
     // stream() below: it still hands the rows of the chunk it was in.
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: UNREACHABLE,
+    });
     const rows = db.chunk(ENDLESS_ROWS, [], { chunkSize: 10 });
     const iterator = rows[Symbol.asyncIterator]();
     await iterator.next();
 
-    const t0 = performance.now();
     await db.close({ immediate: true });
-    expect(performance.now() - t0).toBeLessThan(scaled(5_000));
     await expect(iterator.next()).rejects.toMatchObject({
       code: 'CLIENT_CLOSED',
     });
   });
 
-  // Falsifiable: leave immediateAbort un-aborted — the paused consumer is
-  // waited out for drainTimeout (60 s) and the iteration is never ended.
+  // Falsifiable: as the paused chunk() above — both mutations together.
   it('ends a paused stream() in CLIENT_CLOSED', async () => {
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: UNREACHABLE,
+    });
     const rows = db.stream(ENDLESS_ROWS, [], { chunkSize: 10 });
     const iterator = rows[Symbol.asyncIterator]();
     await iterator.next();
 
-    const t0 = performance.now();
     await db.close({ immediate: true });
-    expect(performance.now() - t0).toBeLessThan(scaled(5_000));
 
     // The rest of the chunk it was in may still arrive, then the rejection.
     let failure: unknown;
@@ -117,7 +128,10 @@ describe('close({ immediate: true })', () => {
   // already abandons the transaction through closeSignal (measured: the same
   // test passes without the option).
   it('does not wait for a transaction that never finishes', async () => {
-    const db = await createTestClient({ poolSize: 1 });
+    const db = await createTestClient({
+      poolSize: 1,
+      drainTimeout: UNREACHABLE,
+    });
     await db.run('CREATE TABLE t (a)');
     const entered = Promise.withResolvers<void>();
     const transaction = db.transaction(async () => {
@@ -130,9 +144,7 @@ describe('close({ immediate: true })', () => {
     );
     await entered.promise;
 
-    const t0 = performance.now();
     await db.close({ immediate: true });
-    expect(performance.now() - t0).toBeLessThan(scaled(5_000));
     await expect(settled).resolves.toBe('CLIENT_CLOSED');
   });
 
@@ -159,20 +171,21 @@ describe('close({ immediate: true })', () => {
     tags: ['build:sync', 'excludes:interruptible'],
   }, async () => {
     const records = interceptWorkers();
-    // drainTimeout left at its default: a drain would wait it out.
-    const db = await createTestClient({ poolSize: 1, debug: true });
-    const long = db.all(longQuery(20_000_000));
+    const db = await createTestClient({
+      poolSize: 1,
+      debug: true,
+      drainTimeout: UNREACHABLE,
+    });
+    const long = db.all(longQuery(ENDLESS));
     long.catch(() => {});
     await waitUntil(
-      theQueryIsRunning(db, longQuery(20_000_000)),
+      theQueryIsRunning(db, longQuery(ENDLESS)),
       'the query to be running',
     );
 
-    const t0 = performance.now();
     await db.close({ immediate: true });
 
     await expect(long).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
-    expect(performance.now() - t0).toBeLessThan(scaled(5_000));
     const trace = records[0].log;
     expect(trace).toContain('terminate');
     expect(trace).not.toContain('post:close');
@@ -209,25 +222,26 @@ describe('close({ immediate: true })', () => {
   });
 
   // Falsifiable: return `closing` without escalating — the draining close
-  // waits the query out (well past the bound, drainTimeout left at 60 s).
+  // waits for the query past the test's timeout.
   it('makes a draining close immediate', async () => {
-    // drainTimeout left at its default: a drain would wait it out.
-    const db = await createTestClient({ poolSize: 1, debug: true });
-    const long = db.all(longQuery(20_000_000));
+    const db = await createTestClient({
+      poolSize: 1,
+      debug: true,
+      drainTimeout: UNREACHABLE,
+    });
+    const long = db.all(longQuery(ENDLESS));
     long.catch(() => {});
     await waitUntil(
-      theQueryIsRunning(db, longQuery(20_000_000)),
+      theQueryIsRunning(db, longQuery(ENDLESS)),
       'the query to be running',
     );
 
     const draining = db.close();
-    const t0 = performance.now();
     const again = db.close({ immediate: true });
 
     expect(again).toBe(draining);
     await expect(long).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
     await again;
-    expect(performance.now() - t0).toBeLessThan(scaled(5_000));
   });
 
   /**
@@ -250,7 +264,7 @@ describe('close({ immediate: true })', () => {
       drainTimeout: 200,
     });
     // Minutes long: it is still running when the escalation comes.
-    const sql = longQuery(2_000_000_000);
+    const sql = longQuery(ENDLESS);
     const long = db.all(sql);
     let settled = false;
     const markSettled = () => {
@@ -337,21 +351,23 @@ describe('close({ immediate: true })', () => {
 
   // Pins the outcome: a drain-mode call changes nothing of an immediate one.
   it('ignores a draining close() called during an immediate one', async () => {
-    const db = await createTestClient({ poolSize: 1, debug: true });
-    const long = db.all(longQuery(20_000_000));
+    const db = await createTestClient({
+      poolSize: 1,
+      debug: true,
+      drainTimeout: UNREACHABLE,
+    });
+    const long = db.all(longQuery(ENDLESS));
     long.catch(() => {});
     await waitUntil(
-      theQueryIsRunning(db, longQuery(20_000_000)),
+      theQueryIsRunning(db, longQuery(ENDLESS)),
       'the query to be running',
     );
 
-    const t0 = performance.now();
     const immediate = db.close({ immediate: true });
     const draining = db.close();
 
     expect(draining).toBe(immediate);
     await immediate;
-    expect(performance.now() - t0).toBeLessThan(scaled(5_000));
     await expect(long).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
   });
 });
