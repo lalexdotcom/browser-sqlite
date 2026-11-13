@@ -24,11 +24,13 @@ describe('safariVersionOf', () => {
 
 describe('terminateRunsWasm', () => {
   // Falsifiable: an open-ended bound and the skip outlives the WebKit fix.
-  it('holds for every Safari measured, up to 27.0.1, and for no later one', () => {
+  it('holds for every Safari measured, up to 27.2, and for no later one', () => {
     expect(terminateRunsWasm(SAFARI('26.6.2'))).toBe(true);
     expect(terminateRunsWasm(SAFARI('27.0.1'))).toBe(true);
-    expect(terminateRunsWasm(SAFARI('27.0.2'))).toBe(false);
-    expect(terminateRunsWasm(SAFARI('27.1'))).toBe(false);
+    expect(terminateRunsWasm(SAFARI('27.1'))).toBe(true);
+    expect(terminateRunsWasm(SAFARI('27.2'))).toBe(true);
+    expect(terminateRunsWasm(SAFARI('27.2.1'))).toBe(false);
+    expect(terminateRunsWasm(SAFARI('27.3'))).toBe(false);
   });
 
   it('never holds off Safari', () => {

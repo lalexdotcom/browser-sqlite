@@ -21,7 +21,7 @@ describe('worker lifecycle — crash detection', () => {
     await db.run('CREATE TABLE t (a)');
 
     // Long enough to be in flight at the kill, short enough to end soon
-    // after: on Safari ≤ 27.0.1 a killed sync worker runs its statement out
+    // after: on Safari ≤ 27.2 a killed sync worker runs its statement out
     // holding its OPFS files (WebKit 328618), and 20M kept them past the
     // file's storage wipe on Safari 27 (2026-10-23).
     const sql = longQuery(2_000_000);

@@ -57,7 +57,7 @@ export const TEST_TARGET: TestTarget = (() => {
 
 /**
  * Why a test that kills a worker inside a long statement, then needs its file
- * back, cannot pass here — undefined where it can. On Safari ≤ 27.0.1 the
+ * back, cannot pass here — undefined where it can. On Safari ≤ 27.2 the
  * killed worker runs its statement to its end, holding its OPFS handles
  * (SAFARI-TERMINATE-WASM). Only on the `sync` build of an OPFS VFS: the
  * `async` and `jspi` builds return to JS while a statement runs, where
