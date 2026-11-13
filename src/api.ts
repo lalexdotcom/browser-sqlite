@@ -507,7 +507,7 @@ export type SQLiteDB = SQLiteQueryAPI & {
    * Drains in-flight work, rejects queued work, closes each database connection,
    * then terminates all workers in the pool.
    *
-   * The returned promise settles once every worker has posted `closed` and been
+   * The returned promise settles once every worker has posted `closed` or been
    * terminated, or once `drainTimeout` milliseconds have elapsed (whichever
    * comes first). Calling `close()` a second time returns the **same** promise
    * object — the operation runs exactly once.

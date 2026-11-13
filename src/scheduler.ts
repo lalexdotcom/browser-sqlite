@@ -57,6 +57,13 @@ export type InternalSQLiteClientOptions = CreateSQLiteClientOptions & {
    * never fires. Absent from the public options type on purpose.
    */
   __unsafeTestStatementCacheBytes?: number;
+  /**
+   * TEST-ONLY, UNSUPPORTED. How long `close({ immediate: true })` waits on a
+   * worker it interrupted, in milliseconds. A test that asserts a clean close
+   * under that grace raises it, since the grace is not its subject. Absent
+   * from the public options type on purpose.
+   */
+  closeImmediateGrace?: number;
 };
 
 export type Scheduler<W> = {

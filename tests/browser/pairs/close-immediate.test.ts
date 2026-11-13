@@ -40,8 +40,14 @@ describe('close({ immediate: true })', () => {
     tags: ['requires:interruptible'],
   }, async () => {
     const records = interceptWorkers();
-    // drainTimeout left at its default: a drain would wait it out.
-    const db = await createTestClient({ poolSize: 1, debug: true });
+    // drainTimeout left at its default: a drain would wait it out. The grace is
+    // raised: this test asserts the worker closed cleanly, which holds only
+    // while the grace outlasts the machine, and the grace is not its subject.
+    const db = await createTestClient({
+      poolSize: 1,
+      debug: true,
+      closeImmediateGrace: scaled(10_000),
+    } as never);
     // Prime: cached, so the real run takes run(cached) and its step starts
     // before the interruption (as interrupt.test.ts's "frees the worker").
     await db.all(longQuery(1_000));
@@ -66,10 +72,9 @@ describe('close({ immediate: true })', () => {
 
   // Falsifiable: leave immediateAbort un-aborted — the paused consumer is
   // waited out for drainTimeout (60 s) and the next() is never refused.
-  it('rejects a paused stream at once', async () => {
-    // chunk(), not stream(): stream() flattens the chunks and still yields the
-    // rows already delivered before the abort, so its consumer can receive
-    // buffered rows before CLIENT_CLOSED.
+  it('rejects a paused chunk() at once', async () => {
+    // chunk(): the next() of a paused consumer meets the abort at once.
+    // stream() below: it still hands the rows of the chunk it was in.
     const db = await createTestClient({ poolSize: 1 });
     const rows = db.chunk(ENDLESS_ROWS, [], { chunkSize: 10 });
     const iterator = rows[Symbol.asyncIterator]();
@@ -81,6 +86,31 @@ describe('close({ immediate: true })', () => {
     await expect(iterator.next()).rejects.toMatchObject({
       code: 'CLIENT_CLOSED',
     });
+  });
+
+  // Falsifiable: leave immediateAbort un-aborted — the paused consumer is
+  // waited out for drainTimeout (60 s) and the iteration is never ended.
+  it('ends a paused stream() in CLIENT_CLOSED', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    const rows = db.stream(ENDLESS_ROWS, [], { chunkSize: 10 });
+    const iterator = rows[Symbol.asyncIterator]();
+    await iterator.next();
+
+    const t0 = performance.now();
+    await db.close({ immediate: true });
+    expect(performance.now() - t0).toBeLessThan(scaled(5_000));
+
+    // The rest of the chunk it was in may still arrive, then the rejection.
+    let failure: unknown;
+    for (let i = 0; i < 1_000 && failure === undefined; i++) {
+      try {
+        const next = await iterator.next();
+        if (next.done) break;
+      } catch (error) {
+        failure = error;
+      }
+    }
+    expect(failure).toMatchObject({ code: 'CLIENT_CLOSED' });
   });
 
   // Pins the outcome; does not discriminate the option from the default, which
@@ -198,6 +228,59 @@ describe('close({ immediate: true })', () => {
     await expect(long).rejects.toMatchObject({ code: 'CLIENT_CLOSED' });
     await again;
     expect(performance.now() - t0).toBeLessThan(scaled(5_000));
+  });
+
+  // Falsifiable: merge immediateAbort at the call, in chunk() and stream() —
+  // the caller's signal then carries a relay listener that a generator never
+  // read never removes.
+  it('leaves nothing on the signal of a chunk() or stream() never read', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    const controller = new AbortController();
+    const added: string[] = [];
+    const original = controller.signal.addEventListener.bind(controller.signal);
+    controller.signal.addEventListener = ((
+      type: string,
+      ...rest: [unknown?, unknown?]
+    ) => {
+      added.push(type);
+      return (original as (...args: unknown[]) => void)(type, ...rest);
+    }) as typeof controller.signal.addEventListener;
+
+    db.chunk('SELECT 1', [], { signal: controller.signal });
+    db.stream('SELECT 1', [], { signal: controller.signal });
+
+    expect(added).toEqual([]);
+  });
+
+  // Falsifiable: assign `closing` after the body's first await again —
+  // closeAbort.abort() fires the transaction's signal synchronously, and the
+  // close() its listener makes starts a second close with its own promise.
+  it('returns the same promise to a close() made from an abort listener', async () => {
+    const db = await createTestClient({ poolSize: 1 });
+    await db.run('CREATE TABLE t (a)');
+    const entered = Promise.withResolvers<void>();
+    let fromListener: Promise<void> | undefined;
+    const transaction = db.transaction(async (tx) => {
+      tx.signal.addEventListener('abort', () => {
+        fromListener = db.close({ immediate: true });
+      });
+      entered.resolve();
+      await new Promise(() => {}); // never settles
+    });
+    transaction.catch(() => {});
+    await entered.promise;
+
+    const first = db.close();
+    await first;
+
+    if (
+      !(await exercised(
+        fromListener !== undefined,
+        "the transaction's signal was not aborted by close()",
+      ))
+    )
+      return;
+    expect(fromListener).toBe(first);
   });
 
   // Pins the outcome: a drain-mode call changes nothing of an immediate one.

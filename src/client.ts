@@ -16,7 +16,8 @@ import {
   missingFeature,
 } from './capabilities';
 import type { StatementKind } from './classify';
-import type { SQLiteBuild } from './const/builds';
+import { createCloseWaits } from './close-waits';
+import { BUILD_CAPABILITIES, type SQLiteBuild } from './const/builds';
 import type { PlatformFeature } from './const/platform';
 import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { createClientDebug, type RequestDebugHandle } from './debug';
@@ -542,6 +543,26 @@ export const createSQLiteClient = (
       ? testCacheBytes
       : DEFAULT_STATEMENT_CACHE_BYTES;
 
+  /**
+   * Whether a running statement can be told to stop on this build in this
+   * context: false only for the `sync` build outside cross-origin isolation,
+   * where `close({ immediate: true })` terminates the worker instead.
+   */
+  const interruptible = (
+    BUILD_CAPABILITIES[build].interruptibleWithout as readonly PlatformFeature[]
+  ).every((feature) => available.has(feature));
+
+  // TEST-ONLY, UNSUPPORTED. How long `close({ immediate: true })` waits on a
+  // worker it interrupted. A test that asserts a clean close under it raises
+  // the grace through `scaled()`: the grace is not that test's subject. See
+  // InternalSQLiteClientOptions in scheduler.ts.
+  const testCloseGrace = (clientOptions as InternalSQLiteClientOptions)
+    .closeImmediateGrace;
+  const closeImmediateGrace =
+    typeof testCloseGrace === 'number' && testCloseGrace >= 0
+      ? testCloseGrace
+      : CLOSE_IMMEDIATE_GRACE_MS;
+
   // ---------------------------------------------------------------------------
   // Startup state: the deferred first-settle verdict
   //
@@ -882,17 +903,20 @@ export const createSQLiteClient = (
 
   /**
    * Aborted, with `CLIENT_CLOSED`, by `close({ immediate: true })` only and
-   * merged into the signal of every call (`callDeadline`): the statements in
-   * flight are interrupted as a caller's own `signal` interrupts them. Apart
-   * from `closeAbort`, which every close aborts and which must not interrupt a
-   * plain query under the default.
+   * merged into the signal of every call (`callDeadline`, `chunkRows`): the
+   * statements in flight are interrupted as a caller's own `signal` interrupts
+   * them. Apart from `closeAbort`, which every close aborts and which must not
+   * interrupt a plain query under the default.
    */
   const immediateAbort = new AbortController();
 
   /**
    * `withDeadline`, plus `immediateAbort`. The release is owed as
-   * `withDeadline`'s is, and also happens when the merged signal fires, so a
-   * generator never read leaves nothing on `immediateAbort`.
+   * `withDeadline`'s is. For the calls that settle their own release in a
+   * `finally`; `chunk()` and `stream()` merge `immediateAbort` themselves, at
+   * their first `next()` (`chunkRows`), because a generator never read owes
+   * nothing and must not have listeners put on `immediateAbort` and on the
+   * caller's signal that nothing would remove.
    */
   const callDeadline = (
     options: Parameters<typeof withDeadline>[0],
@@ -900,18 +924,13 @@ export const createSQLiteClient = (
   ): ReturnType<typeof withDeadline> => {
     const deadline = withDeadline(options, method);
     const merged = mergeSignals(deadline.signal, immediateAbort.signal);
-    const release = () => {
-      deadline.release();
-      merged.release();
+    return {
+      signal: merged.signal,
+      release: () => {
+        deadline.release();
+        merged.release();
+      },
     };
-    if (
-      merged.signal &&
-      merged.signal !== deadline.signal &&
-      merged.signal !== immediateAbort.signal
-    ) {
-      merged.signal.addEventListener('abort', release, { once: true });
-    }
-    return { signal: merged.signal, release };
   };
 
   const epochs = epochsFor(vfs, dbFile, locks);
@@ -1598,7 +1617,15 @@ export const createSQLiteClient = (
     deadline: ReturnType<typeof withDeadline>,
     affected: AffectedSlot,
   ): AsyncGenerator<T[], void, unknown> {
-    const { signal, release } = deadline;
+    // Here, at the first `next()`, not at the call: a close made before is
+    // refused by `scheduler.acquire` with CLIENT_CLOSED, and a generator never
+    // read must leave nothing on `immediateAbort`.
+    const merged = mergeSignals(deadline.signal, immediateAbort.signal);
+    const signal = merged.signal;
+    const release = () => {
+      deadline.release();
+      merged.release();
+    };
     try {
       const known = kindFor(sql, signal);
       const kind = typeof known === 'string' ? known : await known;
@@ -1655,7 +1682,7 @@ export const createSQLiteClient = (
           sql,
           bound,
           options,
-          callDeadline(options, 'chunk'),
+          withDeadline(options, 'chunk'),
           affected,
         ),
         affected,
@@ -1687,7 +1714,7 @@ export const createSQLiteClient = (
           sql,
           bound,
           options,
-          callDeadline(options, 'stream'),
+          withDeadline(options, 'stream'),
           affected,
         ),
         { affected: affected.promise },
@@ -1886,21 +1913,6 @@ export const createSQLiteClient = (
       runTransaction((_db, internals) => fn(internals), options),
   });
 
-  /** Bounds any settlement that depends on a worker answering. */
-  const bounded = async (promise: Promise<unknown>, ms: number) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        promise,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, ms);
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-
   /**
    * Resolves once `bsq:init` is free, or after `drainTimeout`. A wait that runs
    * out is abandoned, not left to grant the lock to nobody.
@@ -1928,7 +1940,7 @@ export const createSQLiteClient = (
    * Drains in-flight work, rejects queued work, closes each database
    * connection, then terminates all workers. Bounded by `drainTimeout`.
    * Under `immediate` the statements in flight are interrupted instead, and
-   * every wait on a worker is bounded by `CLOSE_IMMEDIATE_GRACE_MS`.
+   * every wait on a worker is bounded by the immediate grace.
    * A second call returns the same promise object — runs exactly once. If it
    * asks for `immediate` while the first is draining, that close turns
    * immediate from there; a draining call never slows an immediate one.
@@ -1940,16 +1952,42 @@ export const createSQLiteClient = (
       if (options?.immediate === true) escalate?.();
       return closing;
     }
-    closing = (async () => {
+    // Assigned before anything runs: `closeAbort.abort()` below fires user
+    // listeners (a transaction's `signal`) synchronously, and a `close()` from
+    // one of them must find this close, not start a second.
+    const done = Promise.withResolvers<void>();
+    closing = done.promise;
+
+    const closingError = new SQLiteError(
+      'CLIENT_CLOSED',
+      'The SQLite client has been closed.',
+    );
+    // The steps `immediate` adds. One path for a close that starts
+    // immediate and one that is made so while it drains.
+    const cut = new Set<PoolWorker>();
+    const waits = createCloseWaits(drainTimeout, closeImmediateGrace);
+    escalate = () => {
+      if (!waits.escalate()) return;
+      immediateAbort.abort(closingError);
+      // A statement that cannot be stopped is cut now, not after a grace
+      // that could only watch it run: terminating poisons the transport, so
+      // the call rejects with CLIENT_CLOSED and its lease comes back to the
+      // drain below. An idle worker keeps its clean close.
+      if (!interruptible) {
+        for (const worker of pool) {
+          if (!worker?.serving()) continue;
+          worker.terminate(closingError);
+          cut.add(worker);
+        }
+      }
+    };
+
+    const run = async () => {
       logger.info('client closing');
       // A client closed before worker 0 answered takes no lock (spec
       // 2026-09-15, A3): settle the answer as "none" so connLockPromise, which
       // this function awaits below, cannot wait on a worker being closed.
       probeAnswer?.resolve(undefined);
-      const closingError = new SQLiteError(
-        'CLIENT_CLOSED',
-        'The SQLite client has been closed.',
-      );
       readyDeferred.reject(closingError);
       // Cancel every pending write-lock request (those still waiting for the
       // browser's lock manager to grant the lock). Writes that already hold
@@ -1957,56 +1995,20 @@ export const createSQLiteClient = (
       // spec the signal cancels a pending request only. Those writes hold a
       // scheduler lease and are drained by shutdown() below.
       closeAbort.abort(closingError);
-
-      // The steps `immediate` adds. One path for a close that starts
-      // immediate and one that is made so while it drains.
-      let immediate = false;
-      const cut = new Set<PoolWorker>();
-      const escalated = Promise.withResolvers<void>();
-      const goImmediate = () => {
-        if (immediate) return;
-        immediate = true;
-        immediateAbort.abort(closingError);
-        // A statement that cannot be stopped is cut now, not after a grace
-        // that could only watch it run: terminating poisons the transport, so
-        // the call rejects with CLIENT_CLOSED and its lease comes back to the
-        // drain below. An idle worker keeps its clean close.
-        if (build === 'sync' && abortSlots === undefined) {
-          for (const worker of pool) {
-            if (!worker?.serving()) continue;
-            worker.terminate(closingError);
-            cut.add(worker);
-          }
-        }
-        escalated.resolve();
-      };
-      escalate = goImmediate;
-      if (options?.immediate === true) goImmediate();
-
-      // Waits on a worker or on the drain: `drainTimeout` for a draining
-      // close, `CLOSE_IMMEDIATE_GRACE_MS` for an immediate one. A wait in
-      // progress when the close is made immediate is cut short and gets the
-      // grace from that moment.
-      const waitOn = async (promise: Promise<unknown>) => {
-        if (!immediate) {
-          await bounded(
-            Promise.race([promise, escalated.promise]),
-            drainTimeout,
-          );
-        }
-        if (immediate) await bounded(promise, CLOSE_IMMEDIATE_GRACE_MS);
-      };
+      if (options?.immediate === true) escalate?.();
 
       // Shutting the front door: queued scheduler waiters reject at once and
       // no new leases can be taken while in-flight work drains.
       const draining = scheduler.shutdown(closingError);
       // A transaction's lease is held by user code, so this wait is bounded like
       // the rest: a callback that never returns must not make close() hang.
-      await waitOn(draining);
+      await waits.waitOn(draining);
       await Promise.all(
         pool.map(async (worker) => {
           if (!worker || cut.has(worker)) return;
-          await waitOn(worker.close());
+          await waits.waitOn(worker.close());
+          // Cut during that wait: already terminated, once is enough.
+          if (cut.has(worker)) return;
           // The reason in-flight and later requests reject with. Without it a
           // transaction's callback met a silent hang instead of an error.
           worker.terminate(closingError);
@@ -2052,8 +2054,9 @@ export const createSQLiteClient = (
       if (connRelease !== undefined) {
         await new Promise<void>((r) => setTimeout(r, 0));
       }
-    })();
-    return closing;
+    };
+    run().then(done.resolve, done.reject);
+    return done.promise;
   };
 
   const openTimeout = clientOptions.openTimeout ?? 30_000;
