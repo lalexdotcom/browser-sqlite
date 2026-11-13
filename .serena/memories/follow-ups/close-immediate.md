@@ -1,21 +1,22 @@
 # Follow-up — an option for `close()` that interrupts everything at once
 
-**Status: OPEN** — 2026-11-09 (user): "il faut prévoir une option pour close qui interrompe tout immédiatement". Not designed.
+**Status: BUILT on `feat/close-immediate` (2026-11-13), closes at its merge.** Opened 2026-11-09 (user): "il faut prévoir une option pour close qui interrompe tout immédiatement". Designed 2026-11-12/13 with the user: spec `docs/superpowers/specs/2026-11-12-close-immediate-design.md`, plan `docs/superpowers/plans/2026-11-13-close-immediate.md`.
 
-Part of `mem:follow-ups`, opened 2026-11-09 from a question of the user: does `close()` stop the queries in flight cleanly?
+Part of `mem:follow-ups`.
 
-## What `close()` does today (read in `src/client.ts`, `createSQLiteClient/close`, 2026-11-09)
+## What was decided (user)
 
-- Queued work and pending write-lock requests reject at once with `CLIENT_CLOSED` (`scheduler.shutdown`, `closeAbort`).
-- A transaction is abandoned through `closeSignal` (`src/transaction.ts`, merged with its deadline): it rejects with `CLIENT_CLOSED`, its statements in flight see the abort, the origin's write lock is given back.
-- **A plain query in flight (`run`/`all`/`first`…) is not interrupted: it is drained**, bounded by `drainTimeout` (60 s by default), then each worker is closed (bounded the same way) and terminated.
-- Not checked: a `stream()`/`chunk()` being consumed when `close()` comes.
+- **Opt-in, per call:** `close({ immediate: true })`; `close()` without it drains as before (a plain query in flight is waited for, bounded by `drainTimeout`).
+- **Two steps:** interrupt every statement in flight where the interruption reaches SQLite (`async`, `jspi`, `sync` under cross-origin isolation), then close cleanly; a worker whose statement cannot be stopped (`sync` without isolation) is terminated at once. "Immediate everywhere, clean wherever possible."
+- **Interrupted calls reject with `CLIENT_CLOSED`**, like the queued ones — not with the abort's reason.
+- **Accepted costs, documented in `API.md` (§ close, `#### immediate`):** a write that completed just before may reject although it landed; a write cut by a termination is lost and rolled back at the next open; on Safari a terminated `sync` worker's statement runs on (WebKit 328618), so a rejected write may still land after `close()` resolved and a reopen at once may fail.
 
-## The idea
+## How it is built (what the code will not say on its own)
 
-An option (name and shape not decided) under which `close()` also interrupts the statements in flight instead of waiting for them, then closes and terminates the workers. What to settle when designing it:
-
-- where a statement can be stopped: the abort slot under cross-origin isolation, the `jspi`/`async` builds; the `sync` build without isolation cannot stop a running statement (`API.md`, § Interrupting a call) — terminate then is the only way, and on Safari a terminated worker's WASM keeps running (WebKit 328618, `mem:follow-ups/safari-suite`);
-- what the interrupted calls reject with (`CLIENT_CLOSED` like the queued ones, or the abort's reason);
-- whether `drainTimeout` still bounds anything under the option;
-- the current release allows fine-tuning of the existing API, not a big feature (`mem:follow-ups`, user 2026-11-06): to weigh when scheduling it.
+- A client-wide `immediateAbort`, aborted with `closingError`, is merged into each call's signal: eagerly for `run`/`all`/`first` and the direct reads/writes, **lazily at the first `next()` for `chunk()`/`stream()`** — an eager merge left relay listeners behind for a generator created with a `signal` and never read (final review, 2026-11-13).
+- The waits of `close()` are a pure factory (`src/close-waits.ts`, `createCloseWaits`, unit-tested with fake timers): `drainTimeout` when draining, the grace (`CLOSE_IMMEDIATE_GRACE_MS`, 300 ms; internal option `closeImmediateGrace` for tests) when immediate, a fresh grace when a draining close is escalated mid-wait.
+- Whether a statement can be stopped comes from `BUILD_CAPABILITIES[build].interruptibleWithout`, not a hard-coded build test.
+- `closing` is assigned before the body runs: `closeAbort.abort()` fires user listeners synchronously (a transaction's `signal`), and a `close()` from one used to start a second close.
+- **`PoolWorker.terminate` must not return early once dead:** `handleDeath` calls it after `die()` already poisoned the worker, and it must still terminate the thread. A double terminate in `close` is avoided by re-checking the `cut` set instead.
+- **A bulk load's `close()` rejects with `BULK_WRITE_FAILED` whose `cause` is `CLIENT_CLOSED`**, under the option as under the default close — kept so the default does not change, and the error carries `rowsWritten`.
+- A `stream()` consumer can still receive rows of the chunk it was in, after `close()` resolved, then `CLIENT_CLOSED`; `chunk()`'s next `next()` rejects.
