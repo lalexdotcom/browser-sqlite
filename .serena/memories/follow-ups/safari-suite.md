@@ -16,6 +16,8 @@ Part of `mem:follow-ups`. **The wiring is done on `feat/safari-suite`** (spec `d
 
 `feat/safari-busy-terminate` (2026-10-23) stops a killed worker's statement through the abort slot under cross-origin isolation (`KILLED_SLOT`), and elsewhere lets the replacement wait for the held file up to `openTimeout`, then fail with a `WORKER_CRASHED` that names the cause. The four tests skipped for 328618 now skip only off isolation, and run green on isolated Safari 27. **What stays open is WebKit's**: the `sync` build without isolation cannot stop the statement. Tracked for consumers in [issue #10](https://github.com/lalexdotcom/browser-sqlite/issues/10) (user, 2026-10-23: a browser bug stays out of the README). When a Safari past 27.0.1 ships the fix, run the macOS workflows and close #10.
 
+**Still there in Safari 27.2 (2026-11-13).** GitHub's macOS 26 runner moved to Safari 27.2 (job log `Safari 27.2`, run 43462109531), past `terminateRunsWasm`'s bound of 27.0.1 (`tests/harness/webkit.ts`), so the 328618 skips did not apply there: `close-immediate.test.ts`'s terminate tests ran and Safari held `.wa-sqlite`/`.wa` past the file's wipe, then every later file of `safari · OPFSWriteAheadVFS/sync` failed — the bug, measured on 27.2. The macOS 27 runner was still on 27.0.1, where the skips applied and the four Safari `sync` OPFS pairs went green (run 43462115087, cancelled near its end). **Open, the user's call: raise the bound to 27.2** (`TERMINATE_RUNS_WASM` and its comment with it); until then the macOS 26 matrix is red on every Safari `sync` OPFS pair.
+
 ## Not seen on Safari in these runs
 
 The IndexedDB strand (`mem:follow-ups/safari-idb-stranded`, fixed) did not show: `IDBBatchAtomicVFS` cells green on both OS.
