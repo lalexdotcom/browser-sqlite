@@ -39,6 +39,7 @@ const tableCount = async (file: string, { vfs, build }: TestTarget) => {
 const deleteWithStandIn = async (
   script: string,
   run: () => Promise<void>,
+  onMessage?: (data: unknown) => void,
 ): Promise<{ created: Worker[]; terminated: Worker[] }> => {
   const Original = globalThis.Worker;
   const url = URL.createObjectURL(
@@ -50,6 +51,12 @@ const deleteWithStandIn = async (
     constructor(_url: string | URL, options?: WorkerOptions) {
       super(url, options);
       created.push(this);
+      // Registered before the library sets `onmessage`, so it runs first, and
+      // the library has handled the same message once the event is over.
+      if (onMessage)
+        this.addEventListener('message', (event: MessageEvent) =>
+          onMessage(event.data),
+        );
     }
     override terminate() {
       terminated.push(this);
@@ -126,16 +133,36 @@ describe('deleteDatabase', () => {
     await db.close();
 
     // Announces a step, then goes silent: what a worker stuck creating its
-    // VFS does (Firefox's IndexedDB on a Windows runner, 2026-11-14).
+    // VFS does (Firefox's IndexedDB on a Windows runner, 2026-11-14). The
+    // deadline's timer is faked and spent only once the step has arrived: a
+    // real one bet that the stand-in starts within it, and lost on a macOS 26
+    // runner (run 43639171418, "it never started").
+    let announced!: () => void;
+    const stageArrived = new Promise<void>((resolve) => {
+      announced = resolve;
+    });
     await deleteWithStandIn(
       `self.onmessage = () => self.postMessage({ type: 'delete-stage', callId: 0, stage: 'creating-vfs' });`,
-      () =>
-        expect(
-          deleteDatabase(database.name, { vfs, build, timeout: scaled(500) }),
-        ).rejects.toMatchObject({
-          code: 'WORKER_TIMEOUT',
-          message: expect.stringContaining('(stopped at creating-vfs)'),
-        }),
+      async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+          const rejected = expect(
+            deleteDatabase(database.name, { vfs, build, timeout: 1_000 }),
+          ).rejects.toMatchObject({
+            code: 'WORKER_TIMEOUT',
+            message: expect.stringContaining('(stopped at creating-vfs)'),
+          });
+          await stageArrived;
+          await vi.runAllTimersAsync();
+          await rejected;
+        } finally {
+          // Before the cleanup, whose deletion runs on real timers.
+          vi.useRealTimers();
+        }
+      },
+      (data) => {
+        if ((data as { type?: unknown })?.type === 'delete-stage') announced();
+      },
     );
   });
 
