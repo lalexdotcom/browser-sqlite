@@ -747,9 +747,10 @@ export const createPoolWorker = (deps: {
         // delete-worker path handled in src/delete.ts and cannot arrive here.
         break;
       }
-      case 'not-found': {
+      case 'not-found':
+      case 'delete-stage': {
         // Same as deleted: only the delete-worker path (src/delete.ts) receives
-        // this message. A connection worker never sends it.
+        // these messages. A connection worker never sends them.
         break;
       }
       case 'run': {

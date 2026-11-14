@@ -198,8 +198,16 @@ const cleanUp = async (
       { signal: AbortSignal.timeout(scaled(10_000)) },
       () => {},
     );
+    // The library's default timeout (30 s), stretched as every bound a test
+    // writes itself: this deletion is the cleanup's, not a test's subject. On
+    // a Windows runner Firefox took longer to delete an IndexedDB database
+    // (run 43613231041, `close.test.ts`).
     await withNativeWorker(() =>
-      deleteDatabase(name, { vfs: pair.vfs, build: pair.build }),
+      deleteDatabase(name, {
+        vfs: pair.vfs,
+        build: pair.build,
+        timeout: scaled(30_000),
+      }),
     ).catch((error: unknown) => {
       // DATABASE_NOT_FOUND only: the client never got as far as creating
       // the file, or the test deleted it itself. Anything else — a slot

@@ -31,6 +31,41 @@ const tableCount = async (file: string, { vfs, build }: TestTarget) => {
   return rows[0].n;
 };
 
+/**
+ * Runs `deleteDatabase` with every worker replaced by `script`, a worker that
+ * never answers unless the script does, and restores the real `Worker` before
+ * returning — before the cleanup, which deletes with a real one.
+ */
+const deleteWithStandIn = async (
+  script: string,
+  run: () => Promise<void>,
+): Promise<{ created: Worker[]; terminated: Worker[] }> => {
+  const Original = globalThis.Worker;
+  const url = URL.createObjectURL(
+    new Blob([script], { type: 'text/javascript' }),
+  );
+  const created: Worker[] = [];
+  const terminated: Worker[] = [];
+  class StandIn extends Original {
+    constructor(_url: string | URL, options?: WorkerOptions) {
+      super(url, options);
+      created.push(this);
+    }
+    override terminate() {
+      terminated.push(this);
+      super.terminate();
+    }
+  }
+  globalThis.Worker = StandIn as unknown as typeof Worker;
+  try {
+    await run();
+  } finally {
+    globalThis.Worker = Original;
+    URL.revokeObjectURL(url);
+  }
+  return { created, terminated };
+};
+
 describe('deleteDatabase', () => {
   // The deletion mechanism itself, on the pair the project runs: a delete that
   // finds a file to remove needs storage that outlives the client.
@@ -65,37 +100,93 @@ describe('deleteDatabase', () => {
     // out. A real one can answer first: on a VFS with a folder it deletes
     // without loading the engine, and nothing orders its reply after the
     // timer of a 1 ms deadline (seen on macOS Firefox, OPFSWriteAheadVFS).
-    const Original = globalThis.Worker;
-    const silentUrl = URL.createObjectURL(
-      new Blob(['self.onmessage = () => {};'], { type: 'text/javascript' }),
+    const { created, terminated } = await deleteWithStandIn(
+      'self.onmessage = () => {};',
+      () =>
+        expect(
+          deleteDatabase(database.name, { vfs, build, timeout: 1 }),
+        ).rejects.toMatchObject({
+          code: 'WORKER_TIMEOUT',
+          message: expect.stringContaining('(it never started)'),
+        }),
     );
-    const created: Worker[] = [];
-    const terminated: Worker[] = [];
-    class Silent extends Original {
-      constructor(_url: string | URL, options?: WorkerOptions) {
-        super(silentUrl, options);
-        created.push(this);
-      }
-      override terminate() {
-        terminated.push(this);
-        super.terminate();
-      }
-    }
-    globalThis.Worker = Silent as unknown as typeof Worker;
-    try {
-      await expect(
-        deleteDatabase(database.name, { vfs, build, timeout: 1 }),
-      ).rejects.toMatchObject({ code: 'WORKER_TIMEOUT' });
-    } finally {
-      // Before the cleanup, which deletes what this test left with a real
-      // worker.
-      globalThis.Worker = Original;
-      URL.revokeObjectURL(silentUrl);
-    }
 
     // The deadline gives up on the worker it started.
     expect(created).toHaveLength(1);
     expect(terminated).toEqual(created);
+  });
+
+  it('names the step a deletion past its timeout stopped at', {
+    tags: ['requires:shared-storage'],
+  }, async () => {
+    const { vfs, build } = TEST_TARGET;
+    const database = sharedDatabase();
+    const db = database.open();
+    await db.run('CREATE TABLE t (a INTEGER)');
+    await db.close();
+
+    // Announces a step, then goes silent: what a worker stuck creating its
+    // VFS does (Firefox's IndexedDB on a Windows runner, 2026-11-14).
+    await deleteWithStandIn(
+      `self.onmessage = () => self.postMessage({ type: 'delete-stage', callId: 0, stage: 'creating-vfs' });`,
+      () =>
+        expect(
+          deleteDatabase(database.name, { vfs, build, timeout: scaled(500) }),
+        ).rejects.toMatchObject({
+          code: 'WORKER_TIMEOUT',
+          message: expect.stringContaining('(stopped at creating-vfs)'),
+        }),
+    );
+  });
+
+  // The real worker, listened to: what a timeout would name, step by step.
+  const stagesOfADeletion = async (): Promise<string[]> => {
+    const { vfs, build } = TEST_TARGET;
+    const database = sharedDatabase();
+    const db = database.open();
+    await db.run('CREATE TABLE t (a INTEGER)');
+    await db.close();
+
+    const Original = globalThis.Worker;
+    const stages: string[] = [];
+    class Listened extends Original {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        this.addEventListener('message', (event: MessageEvent) => {
+          if (event.data?.type === 'delete-stage')
+            stages.push(event.data.stage);
+        });
+      }
+    }
+    globalThis.Worker = Listened as unknown as typeof Worker;
+    try {
+      await deleteDatabase(database.name, { vfs, build });
+    } finally {
+      globalThis.Worker = Original;
+    }
+    return stages;
+  };
+
+  // Placed apart from the folder case: the planner would otherwise run it only
+  // on its start pairs, both VFS with a folder.
+  it('announces each step of a deletion that loads the engine', {
+    tags: ['requires:shared-storage', 'excludes:opfs-file'],
+  }, async () => {
+    expect(await stagesOfADeletion()).toEqual([
+      'loading-build',
+      'instantiating-wasm',
+      'loading-vfs-module',
+      'creating-vfs',
+      'probing-database',
+      'deleting-files',
+      'closing-vfs',
+    ]);
+  });
+
+  it('announces its one step where the database is its files', {
+    tags: ['requires:shared-storage', 'requires:opfs-file'],
+  }, async () => {
+    expect(await stagesOfADeletion()).toEqual(['deleting-files']);
   });
 
   // The deletion tests below follow their pair through TEST_TARGET, and
