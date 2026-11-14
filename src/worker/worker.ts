@@ -193,7 +193,7 @@ const OPEN_RETRY_BUDGET_MS = 2_500;
 class HeldByKilledStatement extends Error {
   constructor(file: string) {
     super(
-      `Could not reopen '${file}': the worker it replaces was terminated mid-statement and still holds the file. Some engines (Safari up to 27.0.1, WebKit #328618) cannot stop it. Use the async or jspi build, or cross-origin isolation, so the library can interrupt the statement.`,
+      `Could not reopen '${file}': the worker it replaces was terminated mid-statement and still holds the file. Some engines (Safari, WebKit #328618) cannot stop it. Use the async or jspi build, or cross-origin isolation, so the library can interrupt the statement.`,
     );
     this.name = 'HeldByKilledStatement';
   }
@@ -223,8 +223,7 @@ class HeldByKilledStatement extends Error {
  *
  * **Two budgets.** The predecessor of an `idle` death was doing nothing: a
  * corpse that lets go within `OPEN_RETRY_BUDGET_MS`. A `busy` one was
- * terminated inside a statement, which Safari up to 27.0.1 cannot stop (WebKit
- * #328618) — the thread keeps running, and the file with it, until the
+ * terminated inside a statement, which Safari cannot stop (WebKit #328618) — the thread keeps running, and the file with it, until the
  * statement ends. That wait is as long as the statement, so the open waits
  * until `openDeadline` (never less than the idle budget), and when it still
  * fails on a held file says why instead of passing the engine's bare error on.
