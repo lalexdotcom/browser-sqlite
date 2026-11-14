@@ -23,7 +23,7 @@ been work on nothing.
 | `multi-client-bulkwrite-interleave` | `multi-client` bulkWrite interleave failure, chromium `IDBMirrorVFS/async` | OPEN — seen once, not reproducible; act at the next sighting |
 | `debug-run-stage` | A `run` sub-status of a busy worker (debug-only, on the model of `boot`); `BootStage` as codes, not text | CLOSED 2026-11-05 — `feat/debug-run-stage` merged |
 | `debug-verdict-visibility` | A first `all()`/`run()`/`chunk()`/`stream()` compiles in its verdict, outside any debug query: its wait and compile show in no stage | CLOSED 2026-11-05 — merged with `feat/debug-run-stage` (a request `kind: 'verdict'`) |
-| `delete-timeout-test-bet` | `delete.test.ts`'s `WORKER_TIMEOUT` test (`timeout: 1`) passed the deletion through on macOS 26 Firefox, `OPFSWriteAheadVFS/sync` — a duration bet | OPEN — seen 2026-11-13 |
+| `delete-timeout-test-bet` | `delete.test.ts`'s `WORKER_TIMEOUT` test (`timeout: 1`) passed the deletion through on macOS 26 Firefox, `OPFSWriteAheadVFS/sync` — a duration bet | CLOSED 2026-11-14 — a worker message against a page timer, unordered; the test now uses a worker that never answers (`test/delete-timeout-deterministic` merged) |
 | `close-immediate` | An option for `close()` that interrupts the statements in flight instead of draining them (up to `drainTimeout`, 60 s) | CLOSED 2026-11-13 — `close({ immediate: true })`, `feat/close-immediate` merged |
 | `upstream-delete-api` | Ask wa-sqlite whether a VFS should offer a database deletion, or list a database's resources, instead of the library duplicating that knowledge | OPEN — posted 2026-11-12 as wa-sqlite Discussion #395; sgbeal commented (sqlite.org did it, narrowly), replied the same day; waiting for rhashimoto's answer |
 

@@ -61,11 +61,41 @@ describe('deleteDatabase', () => {
     await db.run('CREATE TABLE t (a INTEGER)');
     await db.close();
 
-    // One millisecond: less than starting the worker that deletes it. The
-    // cleanup deletes what this one left.
-    await expect(
-      deleteDatabase(database.name, { vfs, build, timeout: 1 }),
-    ).rejects.toMatchObject({ code: 'WORKER_TIMEOUT' });
+    // A worker that starts and never answers, so the deadline is the only way
+    // out. A real one can answer first: on a VFS with a folder it deletes
+    // without loading the engine, and nothing orders its reply after the
+    // timer of a 1 ms deadline (seen on macOS Firefox, OPFSWriteAheadVFS).
+    const Original = globalThis.Worker;
+    const silentUrl = URL.createObjectURL(
+      new Blob(['self.onmessage = () => {};'], { type: 'text/javascript' }),
+    );
+    const created: Worker[] = [];
+    const terminated: Worker[] = [];
+    class Silent extends Original {
+      constructor(_url: string | URL, options?: WorkerOptions) {
+        super(silentUrl, options);
+        created.push(this);
+      }
+      override terminate() {
+        terminated.push(this);
+        super.terminate();
+      }
+    }
+    globalThis.Worker = Silent as unknown as typeof Worker;
+    try {
+      await expect(
+        deleteDatabase(database.name, { vfs, build, timeout: 1 }),
+      ).rejects.toMatchObject({ code: 'WORKER_TIMEOUT' });
+    } finally {
+      // Before the cleanup, which deletes what this test left with a real
+      // worker.
+      globalThis.Worker = Original;
+      URL.revokeObjectURL(silentUrl);
+    }
+
+    // The deadline gives up on the worker it started.
+    expect(created).toHaveLength(1);
+    expect(terminated).toEqual(created);
   });
 
   // The deletion tests below follow their pair through TEST_TARGET, and
