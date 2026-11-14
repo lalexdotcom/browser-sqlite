@@ -1,6 +1,7 @@
 import { posix, win32 } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  driverLostLine,
   namedTestFiles,
   retryUnconnectedSession,
 } from '../../../scripts/plan-io.ts';
@@ -115,5 +116,62 @@ describe('retryUnconnectedSession', () => {
       ),
     ).toEqual(['a']);
     expect(retried).toBe(false);
+  });
+});
+
+describe('driverLostLine', () => {
+  // What Vitest raises when a cell's browser session drops mid-run (macOS 26,
+  // run 40344020443): the cause carries VITEST_BROWSER_CONNECTION_CLOSED.
+  const closed = new Error(
+    'Failed to run the test /repo/tests/browser/pairs/tx-quiesce.test.ts.',
+    {
+      cause: Object.assign(new Error('the browser connection was closed'), {
+        code: 'VITEST_BROWSER_CONNECTION_CLOSED',
+      }),
+    },
+  );
+
+  it('names a session that dropped mid-run', () => {
+    expect(driverLostLine([closed], 0)).toBe(
+      'browser connection closed: Failed to run the test /repo/tests/browser/pairs/tx-quiesce.test.ts.',
+    );
+  });
+
+  it('names a session the driver never opened', () => {
+    const unconnected = new Error(
+      'Unable to connect to "http://localhost:49348/", make sure browser driver is running on that address.\nIt seems like the service failed to start or is rejecting any connections.',
+    );
+    expect(driverLostLine([new Error('other'), unconnected], 0)).toBe(
+      'Unable to connect to "http://localhost:49348/", make sure browser driver is running on that address.',
+    );
+  });
+
+  it('reads an error that is a plain object, as a serialised one is', () => {
+    expect(
+      driverLostLine(
+        [
+          {
+            message:
+              'Failed to connect to the browser session "e5b2" within the timeout.',
+          },
+        ],
+        0,
+      ),
+    ).toBe(
+      'Failed to connect to the browser session "e5b2" within the timeout.',
+    );
+  });
+
+  // Falsifiable: ignore the failed count, and a test that failed for a reason
+  // of its own before the session dropped gets a second chance.
+  it('says nothing when a test failed of its own', () => {
+    expect(driverLostLine([closed], 1)).toBeUndefined();
+  });
+
+  it('says nothing of any other error', () => {
+    expect(
+      driverLostLine([new Error('AssertionError: expected 1 to be 2')], 0),
+    ).toBeUndefined();
+    expect(driverLostLine([], 0)).toBeUndefined();
   });
 });

@@ -175,6 +175,48 @@ export async function retryUnconnectedSession<T>(
   }
 }
 
+/** Vitest's code for a browser session that dropped while tests ran. */
+const CONNECTION_CLOSED = 'VITEST_BROWSER_CONNECTION_CLOSED';
+
+/**
+ * Why a cell's run lost its browser, when the browser driver is all that
+ * failed: a session that dropped mid-run (`CONNECTION_CLOSED` anywhere in an
+ * error's causes), or one that never opened (UNCONNECTED_SESSION). Undefined
+ * when any test failed of its own (`failedTests`): a cell red for a reason of
+ * the library is never run a second time. Errors may be plain objects, as
+ * Vitest serialises some.
+ */
+export function driverLostLine(
+  errors: readonly unknown[],
+  failedTests: number,
+): string | undefined {
+  if (failedTests > 0) return undefined;
+  for (const error of errors) {
+    const top = messageOf(error);
+    for (let e: unknown = error; e !== undefined && e !== null; ) {
+      if ((e as { code?: unknown }).code === CONNECTION_CLOSED) {
+        return `browser connection closed: ${top.split('\n')[0]}`;
+      }
+      const unconnected = messageOf(e)
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) =>
+          UNCONNECTED_SESSION.some((start) => line.startsWith(start)),
+        );
+      if (unconnected !== undefined) return unconnected;
+      e = typeof e === 'object' ? (e as { cause?: unknown }).cause : undefined;
+    }
+  }
+  return undefined;
+}
+
+const messageOf = (error: unknown): string =>
+  typeof error === 'object' &&
+  error !== null &&
+  typeof (error as { message?: unknown }).message === 'string'
+    ? (error as { message: string }).message
+    : '';
+
 /**
  * probeFeatures, retried once when it never got a browser session. The retry runs
  * in a Vitest of its own: in the same one the failed session's late page
