@@ -136,9 +136,24 @@ export async function probeFeatures(
 }
 
 /**
- * A probe whose page never reached Vitest within `connectTimeout`, as on a
- * Windows runner (run 42215479058): one more attempt, through `retry`.
- * Any other failure, and a failed retry, are thrown as they are.
+ * How a probe that never got a browser session begins its error line. No test
+ * ran, so retrying it hides nothing of the library.
+ */
+const UNCONNECTED_SESSION = [
+  // The page never reached Vitest within `connectTimeout` (a Windows runner,
+  // run 42215479058).
+  'Failed to connect to the browser session',
+  // The driver WebdriverIO started never accepted a connection: safaridriver
+  // on a macOS 27 runner, for the isolated Safari probe right after the other
+  // one (run 43613237206, twice; run 40359426948 before). A fresh Vitest
+  // starts a fresh driver.
+  'Unable to connect to "http',
+];
+
+/**
+ * A probe that never got a browser session (UNCONNECTED_SESSION): one more
+ * attempt, through `retry`. Any other failure, and a failed retry, are thrown
+ * as they are.
  */
 export async function retryUnconnectedSession<T>(
   attempt: () => Promise<T>,
@@ -152,7 +167,7 @@ export async function retryUnconnectedSession<T>(
       .split('\n')
       .map((line) => line.trim())
       .find((line) =>
-        line.startsWith('Failed to connect to the browser session'),
+        UNCONNECTED_SESSION.some((start) => line.startsWith(start)),
       );
     if (unconnected === undefined) throw error;
     log(`test-plan: retrying in a Vitest of its own — ${unconnected}`);
@@ -161,7 +176,7 @@ export async function retryUnconnectedSession<T>(
 }
 
 /**
- * probeFeatures, retried once when its page never connected. The retry runs
+ * probeFeatures, retried once when it never got a browser session. The retry runs
  * in a Vitest of its own: in the same one the failed session's late page
  * holds the project's only orchestrator and the retry waits forever
  * (measured 2026-11-10).

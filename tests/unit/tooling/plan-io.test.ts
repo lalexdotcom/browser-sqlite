@@ -54,6 +54,24 @@ describe('retryUnconnectedSession', () => {
     ]);
   });
 
+  it('retries once when the browser driver never accepted a connection', async () => {
+    // macOS 27 runner, run 43613237206: the isolated Safari probe's
+    // safaridriver never came up, in two cells of one matrix.
+    const driverDown = new Error(
+      'PLAN_PROBE: probe isolated safari reported no features (no test)\n  Unable to connect to "http://localhost:49348/", make sure browser driver is running on that address.\nIt seems like the service failed to start or is rejecting any connections.',
+    );
+    const lines: string[] = [];
+    const result = await retryUnconnectedSession(
+      () => Promise.reject(driverDown),
+      () => Promise.resolve(['f']),
+      (line) => lines.push(line),
+    );
+    expect(result).toEqual(['f']);
+    expect(lines).toEqual([
+      'test-plan: retrying in a Vitest of its own — Unable to connect to "http://localhost:49348/", make sure browser driver is running on that address.',
+    ]);
+  });
+
   it('does not retry any other failure', async () => {
     // Falsifiable: retry every error and a probe that ran and found nothing is hidden.
     let retried = false;
