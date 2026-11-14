@@ -39,6 +39,9 @@ export type Failure = {
   notExercised?: true;
 };
 
+/** A line of an events file: a failure, or the withdrawal of its job's earlier ones (applyEvents). */
+export type ProgressEvent = Failure | { job: string; retract: true };
+
 export type Conclusion = 'success' | 'failure';
 
 export type ProgressState = {
@@ -243,9 +246,9 @@ function checkRuns(config: Api, fetchImpl: typeof fetch, timeoutMs: number) {
 export function readEvents(
   eventsDir: string,
   offsets: Map<string, number>,
-): Failure[] {
+): ProgressEvent[] {
   if (!existsSync(eventsDir)) return [];
-  const failures: Failure[] = [];
+  const events: ProgressEvent[] = [];
   const files = readdirSync(eventsDir).filter((n) => n.endsWith('.ndjson'));
   for (const name of files.sort()) {
     const file = join(eventsDir, name);
@@ -258,14 +261,15 @@ export function readEvents(
     for (const line of bytes.subarray(from, end).toString('utf8').split('\n')) {
       if (line === '') continue;
       try {
-        const {
-          file: path,
-          test,
-          message,
-          retried,
-          notExercised,
-        } = JSON.parse(line) as Omit<Failure, 'job'>;
-        failures.push({
+        const parsed = JSON.parse(line) as Omit<Failure, 'job'> & {
+          retract?: true;
+        };
+        if (parsed.retract) {
+          events.push({ job, retract: true });
+          continue;
+        }
+        const { file: path, test, message, retried, notExercised } = parsed;
+        events.push({
           job,
           file: path,
           test,
@@ -278,7 +282,26 @@ export function readEvents(
       }
     }
   }
-  return failures;
+  return events;
+}
+
+/**
+ * Adds `events` to `failures`, in order. A retraction withdraws everything its
+ * job reported until then: scripts/run-cell.ts writes one before running a
+ * cell again whose first run lost its browser driver, so that run's failures
+ * leave the summary and the `retried` event after it stays.
+ */
+export function applyEvents(
+  failures: Failure[],
+  events: readonly ProgressEvent[],
+): void {
+  for (const event of events) {
+    if ('retract' in event) {
+      for (let i = failures.length - 1; i >= 0; i--) {
+        if (failures[i]?.job === event.job) failures.splice(i, 1);
+      }
+    } else failures.push(event);
+  }
 }
 
 export interface Progress {
@@ -355,7 +378,7 @@ export async function startProgress(options: {
   const collect = () => {
     const fresh = readEvents(eventsDir, offsets);
     if (fresh.length > 0) {
-      state.failures.push(...fresh);
+      applyEvents(state.failures, fresh);
       dirty = true;
     }
   };

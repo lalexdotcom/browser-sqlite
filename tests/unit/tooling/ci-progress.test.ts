@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  applyEvents,
   checkRunName,
   closeOpen,
   type Failure,
@@ -462,5 +463,42 @@ describe('closeOpen, a failing request', () => {
       'https://api.github.com/repos/o/r/check-runs/2',
     ]);
     expect(failed).toEqual(['1: 502']);
+  });
+});
+
+describe('a cell run again after its browser driver failed', () => {
+  // scripts/run-cell.ts appends `{"retract":true}` before running the cell
+  // again: what its first run reported is withdrawn, the job's other events
+  // and every other job's are kept.
+  it('withdraws what the job reported before, and only that', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ci-events-'));
+    try {
+      const cell = join(dir, 'safari__X.ndjson');
+      writeFileSync(
+        join(dir, 'chrome__X.ndjson'),
+        '{"file":"c","test":"t","message":"kept"}\n',
+      );
+      writeFileSync(cell, '{"file":"f","test":"(file)","message":"lost"}\n');
+      const failures: Failure[] = [];
+      const offsets = new Map<string, number>();
+      applyEvents(failures, readEvents(dir, offsets));
+      appendFileSync(
+        cell,
+        '{"retract":true}\n{"file":"(cell)","test":"(browser driver)","message":"cell run again: x","retried":true}\n',
+      );
+      applyEvents(failures, readEvents(dir, offsets));
+      expect(failures).toEqual([
+        { job: 'chrome__X', file: 'c', test: 't', message: 'kept' },
+        {
+          job: 'safari__X',
+          file: '(cell)',
+          test: '(browser driver)',
+          message: 'cell run again: x',
+          retried: true,
+        },
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

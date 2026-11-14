@@ -513,6 +513,16 @@ async function main() {
         console.log(`  ${inFlight}`);
         progress.line(inFlight);
       }
+      // A cell run again after its browser driver failed (run-cell.ts) passes
+      // with nothing in the merged report to say so: said here.
+      const rerun = output
+        .split('\n')
+        .find((l) => l.startsWith('run-cell: retrying '));
+      if (rerun) {
+        const said = `${job.id}: ${rerun.slice('run-cell: '.length)}`;
+        console.log(`  ${said}`);
+        progress.line(said);
+      }
       return { job, timedOut, error, blob: state, exitCode };
     },
     (job) =>

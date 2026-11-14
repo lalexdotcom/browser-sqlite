@@ -136,9 +136,24 @@ export async function probeFeatures(
 }
 
 /**
- * A probe whose page never reached Vitest within `connectTimeout`, as on a
- * Windows runner (run 42215479058): one more attempt, through `retry`.
- * Any other failure, and a failed retry, are thrown as they are.
+ * How a probe that never got a browser session begins its error line. No test
+ * ran, so retrying it hides nothing of the library.
+ */
+const UNCONNECTED_SESSION = [
+  // The page never reached Vitest within `connectTimeout` (a Windows runner,
+  // run 42215479058).
+  'Failed to connect to the browser session',
+  // The driver WebdriverIO started never accepted a connection: safaridriver
+  // on a macOS 27 runner, for the isolated Safari probe right after the other
+  // one (run 43613237206, twice; run 40359426948 before). A fresh Vitest
+  // starts a fresh driver.
+  'Unable to connect to "http',
+];
+
+/**
+ * A probe that never got a browser session (UNCONNECTED_SESSION): one more
+ * attempt, through `retry`. Any other failure, and a failed retry, are thrown
+ * as they are.
  */
 export async function retryUnconnectedSession<T>(
   attempt: () => Promise<T>,
@@ -152,7 +167,7 @@ export async function retryUnconnectedSession<T>(
       .split('\n')
       .map((line) => line.trim())
       .find((line) =>
-        line.startsWith('Failed to connect to the browser session'),
+        UNCONNECTED_SESSION.some((start) => line.startsWith(start)),
       );
     if (unconnected === undefined) throw error;
     log(`test-plan: retrying in a Vitest of its own — ${unconnected}`);
@@ -160,8 +175,50 @@ export async function retryUnconnectedSession<T>(
   }
 }
 
+/** Vitest's code for a browser session that dropped while tests ran. */
+const CONNECTION_CLOSED = 'VITEST_BROWSER_CONNECTION_CLOSED';
+
 /**
- * probeFeatures, retried once when its page never connected. The retry runs
+ * Why a cell's run lost its browser, when the browser driver is all that
+ * failed: a session that dropped mid-run (`CONNECTION_CLOSED` anywhere in an
+ * error's causes), or one that never opened (UNCONNECTED_SESSION). Undefined
+ * when any test failed of its own (`failedTests`): a cell red for a reason of
+ * the library is never run a second time. Errors may be plain objects, as
+ * Vitest serialises some.
+ */
+export function driverLostLine(
+  errors: readonly unknown[],
+  failedTests: number,
+): string | undefined {
+  if (failedTests > 0) return undefined;
+  for (const error of errors) {
+    const top = messageOf(error);
+    for (let e: unknown = error; e !== undefined && e !== null; ) {
+      if ((e as { code?: unknown }).code === CONNECTION_CLOSED) {
+        return `browser connection closed: ${top.split('\n')[0]}`;
+      }
+      const unconnected = messageOf(e)
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) =>
+          UNCONNECTED_SESSION.some((start) => line.startsWith(start)),
+        );
+      if (unconnected !== undefined) return unconnected;
+      e = typeof e === 'object' ? (e as { cause?: unknown }).cause : undefined;
+    }
+  }
+  return undefined;
+}
+
+const messageOf = (error: unknown): string =>
+  typeof error === 'object' &&
+  error !== null &&
+  typeof (error as { message?: unknown }).message === 'string'
+    ? (error as { message: string }).message
+    : '';
+
+/**
+ * probeFeatures, retried once when it never got a browser session. The retry runs
  * in a Vitest of its own: in the same one the failed session's late page
  * holds the project's only orchestrator and the retry waits forever
  * (measured 2026-11-10).
