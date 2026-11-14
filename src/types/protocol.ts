@@ -219,6 +219,20 @@ export type BootStage =
   | 'applying-pragmas';
 
 /**
+ * The step a delete worker has reached, posted as each one begins, so a
+ * deletion past its `timeout` names where it stopped. Internal: only the
+ * error message carries it.
+ */
+export type DeleteStage =
+  | 'loading-build'
+  | 'instantiating-wasm'
+  | 'loading-vfs-module'
+  | 'creating-vfs'
+  | 'probing-database'
+  | 'deleting-files'
+  | 'closing-vfs';
+
+/**
  * The stage a query is in, posted as a `run` message only to a debug client.
  * Public as the type of `WorkerDebugState.run`.
  */
@@ -232,6 +246,7 @@ export type RunStage =
 export type WorkerMessageData =
   | { type: 'ready'; callId: number }
   | { type: 'boot'; callId: number; stage: BootStage }
+  | { type: 'delete-stage'; callId: number; stage: DeleteStage }
   /**
    * A query entered `stage`. `elapsed` is the milliseconds spent in the stage
    * it leaves, absent on the query's first stage.

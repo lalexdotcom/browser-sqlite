@@ -9,7 +9,7 @@ import { type SQLiteVFS, VFS_CAPABILITIES } from './const/vfs';
 import { connectionLockName, createLocks, initLockName } from './locks';
 import { spawnWorker, startupError } from './pool';
 import { SQLiteError } from './types/errors';
-import type { WorkerMessageData } from './types/protocol';
+import type { DeleteStage, WorkerMessageData } from './types/protocol';
 import { resolveDatabase, resolveWasmLocation } from './utils';
 
 export type DeleteDatabaseOptions = {
@@ -185,13 +185,16 @@ const runDelete = (
 ): Promise<void> =>
   new Promise<void>((resolve, reject) => {
     const worker = spawnWorker(`SQLite delete / ${name}`);
+    // The step the worker last announced, so a deletion past its deadline
+    // says where it stopped; none yet means it never started running.
+    let stage: DeleteStage | undefined;
 
     const timer = setTimeout(
       () => {
         settle(
           new SQLiteError(
             'WORKER_TIMEOUT',
-            `deleting ${name} did not complete within ${deadline.budget} ms: the worker deleting it did not answer.`,
+            `deleting ${name} did not complete within ${deadline.budget} ms: the worker deleting it did not answer (${stage === undefined ? 'it never started' : `stopped at ${stage}`}).`,
           ),
         );
       },
@@ -207,6 +210,10 @@ const runDelete = (
 
     worker.onmessage = (event: MessageEvent<WorkerMessageData>) => {
       const data = event.data;
+      if (data.type === 'delete-stage') {
+        stage = data.stage;
+        return;
+      }
       if (data.type === 'deleted') return settle();
       if (data.type === 'not-found') {
         return settle(

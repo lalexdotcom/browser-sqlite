@@ -53,6 +53,7 @@ import type { SQLiteErrorCode } from '../types/errors';
 import {
   type BootStage,
   type ClientMessageData,
+  type DeleteStage,
   KILLED_SLOT,
   type ParamsBlock,
   type RefuseWrite,
@@ -1701,23 +1702,33 @@ const deleteFolderDatabase = async (
  * the pool, where deleting the OPFS file by name would match nothing, and an
  * IndexedDB VFS keeps no file at all.
  */
-const deleteDatabaseFiles = async (data: {
-  file: string;
-  vfs: SQLiteVFS;
-  build: SQLiteBuild;
-  wasm?: WasmLocation;
-}): Promise<boolean> => {
+const deleteDatabaseFiles = async (
+  data: {
+    file: string;
+    vfs: SQLiteVFS;
+    build: SQLiteBuild;
+    wasm?: WasmLocation;
+  },
+  stage: (stage: DeleteStage) => void,
+): Promise<boolean> => {
   const { file, vfs, build, wasm } = data;
 
   // A folder is the declaration that the database IS the OPFS entry at its path.
-  if (folderOf(vfs) !== undefined) return deleteFolderDatabase(file, vfs);
+  if (folderOf(vfs) !== undefined) {
+    stage('deleting-files');
+    return deleteFolderDatabase(file, vfs);
+  }
 
+  stage('loading-build');
   const { default: factory } = await WA_SQLITE_BUILDS[build]();
+  stage('instantiating-wasm');
   const module = await factory(wasmModuleArg(wasm));
+  stage('loading-vfs-module');
   const vfsModule = (await VFSConfigs[vfs].fs()) as unknown as Record<
     string,
     VFSClass
   >;
+  stage('creating-vfs');
   const vfsInstance = (await createVfsInstance(
     vfsModule[vfs],
     vfs,
@@ -1731,6 +1742,7 @@ const deleteDatabaseFiles = async (data: {
   // absence. Any other error is a genuine failure and must not be swallowed as
   // DATABASE_NOT_FOUND — a corrupt database returns SQLITE_CORRUPT, and a
   // WASM/VFS start-up failure throws before open_v2 is reached at all.
+  stage('probing-database');
   const sqlite = SQLite.Factory(module);
   sqlite.vfs_register(vfsInstance, true);
   try {
@@ -1742,6 +1754,7 @@ const deleteDatabaseFiles = async (data: {
   } catch (error: unknown) {
     // Closed on every outcome: the client terminates this worker on the
     // reply, and an IndexedDB VFS's close() waits for its transactions.
+    stage('closing-vfs');
     await vfsInstance.close?.();
     if ((error as { code?: unknown })?.code === SQLITE_CANTOPEN) {
       return false;
@@ -1750,6 +1763,7 @@ const deleteDatabaseFiles = async (data: {
   }
 
   try {
+    stage('deleting-files');
     // On AccessHandlePoolVFS each sibling also occupies its own pool slot.
     for (const suffix of DATABASE_FILE_SUFFIXES) {
       // Pass syncDir=1, not 0. IDBBatchAtomicVFS.jDelete (wa-sqlite
@@ -1793,6 +1807,7 @@ const deleteDatabaseFiles = async (data: {
       await vfsInstance.jAccess(`${file}`, 0, pResOut);
     }
   } finally {
+    stage('closing-vfs');
     await vfsInstance.close?.();
   }
 
@@ -1860,7 +1875,13 @@ self.onmessage = async (event: MessageEvent<ClientMessageData>) => {
       // Every outcome is answered with terminate(): deleteDatabaseFiles closes
       // its VFS first, which waits for the jAccess barrier's readonly
       // transaction, among others, on an IndexedDB VFS.
-      deleteDatabaseFiles(data)
+      deleteDatabaseFiles(data, (stage) =>
+        self.postMessage({
+          type: 'delete-stage',
+          callId: 0,
+          stage,
+        } satisfies WorkerMessageData),
+      )
         .then((found) => {
           if (found) {
             self.postMessage({ type: 'deleted', callId: 0 });
