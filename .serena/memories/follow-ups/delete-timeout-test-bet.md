@@ -1,6 +1,6 @@
 # Follow-up — `delete.test.ts`'s `WORKER_TIMEOUT` test bets on a duration
 
-**Status: FIXED on `test/delete-timeout-deterministic` (2026-11-14), not yet merged** — seen 2026-11-13.
+**Status: CLOSED 2026-11-14** — `test/delete-timeout-deterministic` merged; seen 2026-11-13. Not re-run on macOS since.
 
 Part of `mem:follow-ups`.
 
