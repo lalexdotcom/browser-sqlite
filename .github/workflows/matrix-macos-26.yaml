@@ -29,12 +29,16 @@ jobs:
       # 68): a hang is now cut far earlier (a test's timeout, a cell silent out
       # of every file), so the cell's bound is only the last resort.
       time-scale: '3'
-      # The planner bounds each cell at 900 s × 3 = 45 min and runs as many
-      # cells at once as the runner has cores less one (2 of 3 here), Safari.s
-      # one at a time: a pair of 6 cells takes at most three rounds, 135 min,
-      # and a cell run again after its browser failed takes a second bound
-      # (scripts/test-plan.ts), 180 min with one, plus the probes. Above that,
-      # a hang ends in the planner as a failure that uploads its report.
-      timeout-minutes: 240
+      # One cell at a time: on these 3 cores the pair's browsers slowed each
+      # other down to 130 times a local run while they overlapped, and to 5-15
+      # times once alone (Chrome, 2026-11-15, the slowdown ending with the
+      # pair's Firefox cell).
+      jobs: '1'
+      # The planner bounds each cell at 900 s × 3 = 45 min and, one at a time,
+      # a pair of 6 cells takes at most 270 min; in practice 15-20 min a cell.
+      # A cell run again after its browser failed takes a second bound
+      # (scripts/test-plan.ts). The limit is GitHub's maximum: a hang there
+      # ends the job without the planner's report.
+      timeout-minutes: 360
       # Probing three browsers in both modes, Safari's one at a time.
       plan-timeout-minutes: 30

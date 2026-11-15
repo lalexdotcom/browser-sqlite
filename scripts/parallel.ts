@@ -155,7 +155,10 @@ export function resolveConcurrency(
   env: string | undefined,
   cpus: number = availableParallelism(),
 ): number {
-  if (env === undefined) return Math.max(1, Math.min(6, cpus - 1));
+  // Empty is unset: a workflow passes an input it was not given as ''.
+  if (env === undefined || env === '') {
+    return Math.max(1, Math.min(6, cpus - 1));
+  }
   if (!/^[1-9]\d*$/.test(env)) {
     throw new Error(`BSQ_TEST_JOBS: "${env}" is not a positive integer`);
   }
