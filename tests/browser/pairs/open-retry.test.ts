@@ -2,6 +2,7 @@ import { createSQLiteClient } from 'browser-sqlite';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { databasePath } from '../../../src/utils';
 import {
+  exercised,
   interceptWorkers,
   killSilently,
   longQuery,
@@ -97,12 +98,17 @@ const exclusiveHolder = () => {
       self.postMessage('released');
     };
     step('booted');
+    let armNow = null;
     self.onmessage = async (event) => {
+      if (event.data?.type === 'release') {
+        armNow?.('page');
+        return;
+      }
       const {
         type,
         file,
         channelName,
-        lockSuffix,
+        manual,
         graceMs,
         timeoutMs,
         takeBudgetMs,
@@ -154,21 +160,9 @@ const exclusiveHolder = () => {
         }, graceMs);
       };
       if (channel) channel.onmessage = () => arm('channel');
-      if (lockSuffix) {
-        // Each attempt holds the lock only while it fails, so poll often; the
-        // replacement retries, so a missed attempt is followed by another.
-        (async () => {
-          while (!armed) {
-            const { held = [], pending = [] } = await navigator.locks.query();
-            if ([...held, ...pending].some((l) => l.name?.endsWith(lockSuffix))) {
-              arm('lock');
-              return;
-            }
-            await new Promise((r) => setTimeout(r, 2));
-          }
-        })();
-      }
-      setTimeout(() => arm('timeout'), timeoutMs);
+      // Or the page says when, having seen the replacement meet the file.
+      if (manual) armNow = arm;
+      if (!manual) setTimeout(() => arm('timeout'), timeoutMs);
       self.postMessage('taken');
     };
   `;
@@ -200,30 +194,32 @@ const exclusiveHolder = () => {
     steps,
     /**
      * `channel`: where the VFS announces that it wants the file —
-     * `OPFSCoopSyncVFS`'s by default. `lock`: instead, the end of the name of
-     * the Web Lock the VFS takes before opening it. `graceMs`: the pause
-     * between that signal and the release.
+     * `OPFSCoopSyncVFS`'s by default. `manual`: instead, the page says when,
+     * through `release()`. `graceMs`: the pause between that signal and the
+     * release.
      */
     take: async (
       file: string,
       {
         channel = `ahp:/${file}`,
-        lock,
+        manual = false,
         graceMs = GRACE_MS,
-      }: { channel?: string; lock?: string; graceMs?: number } = {},
+      }: { channel?: string; manual?: boolean; graceMs?: number } = {},
     ) => {
       const answer = once();
       worker.postMessage({
         type: 'take',
         file,
-        channelName: lock === undefined ? channel : undefined,
-        lockSuffix: lock,
+        channelName: manual ? undefined : channel,
+        manual,
         graceMs,
         timeoutMs: ANNOUNCE_TIMEOUT_MS,
         takeBudgetMs: TAKE_BUDGET_MS,
       });
       return answer;
     },
+    /** For `manual`: start the grace, then let go. */
+    release: () => worker.postMessage({ type: 'release' }),
     dispose: () => {
       worker.terminate();
       URL.revokeObjectURL(url);
@@ -456,11 +452,15 @@ describe('opening a database whose file another context holds', () => {
  * `RESTART_GRACE_MS` after the VFS announces it wants the file, on
  * `OPFSAdaptiveVFS`'s channel. `OPFSWriteAheadVFS` meets the same window on
  * Firefox: it opens the database and its two write-ahead files with an
- * exclusive handle there, kept for its life. It announces nothing, but takes
- * a Web Lock named `<path>#open` around each attempt: the holder lets go
- * `RESTART_GRACE_MS` after it sees that lock. Not after `ANNOUNCE_TIMEOUT_MS`:
- * `BSQ_TIME_SCALE` stretches it (4 s on Windows) past the replacement's
- * unscaled retry budget, 2.5 s, and the test went red there (2026-11-02).
+ * exclusive handle there, kept for its life. It announces nothing, so the
+ * page waits for the replacement's `awaiting-held-file` boot stage (its first
+ * attempt failed on the file, its retries begun) and tells the holder to let
+ * go `RESTART_GRACE_MS` later. Not on a polled Web Lock: each attempt holds
+ * `<path>#open` only while it fails, a poll paced by Firefox's 17-24 ms
+ * worker timers on GitHub's macOS runners missed every attempt, and the
+ * fallback, `ANNOUNCE_TIMEOUT_MS`, scaled past the replacement's unscaled
+ * 2.5 s retry budget at a time scale of 3 (red on both macOS runners,
+ * 2026-11-15) as at 4 on Windows (2026-11-02).
  *
  * Falsifiable: make `openWithRetry` return at once whatever `afterDeath` — the
  * restarted worker's open fails at once with WORKER_CRASHED, and the client
@@ -500,22 +500,49 @@ describe('reopening a database after its worker died', () => {
     // The pool learns of this death only from the ErrorEvent below, once the
     // holder has the file.
     if (first) killSilently(first.worker);
+    const announces = TEST_TARGET.vfs !== 'OPFSWriteAheadVFS';
     expect(
       await step(
         'holder.take',
         holder.take(
           path,
-          TEST_TARGET.vfs === 'OPFSWriteAheadVFS'
-            ? { lock: `${path}#open`, graceMs: RESTART_GRACE_MS }
-            : { channel: `OPFS:/${path}`, graceMs: RESTART_GRACE_MS },
+          announces
+            ? { channel: `OPFS:/${path}`, graceMs: RESTART_GRACE_MS }
+            : { manual: true, graceMs: RESTART_GRACE_MS },
         ),
       ),
     ).toBe('taken');
     first?.worker.dispatchEvent(new ErrorEvent('error'));
 
-    const rows = await step('db.read', db.all<{ n: number }>('SELECT 1 AS n'));
+    const read = step('db.read', db.all<{ n: number }>('SELECT 1 AS n'));
+    let met = announces;
+    if (!announces) {
+      // The replacement says it met the file once its first attempt failed;
+      // the holder lets go RESTART_GRACE_MS later, inside its retry budget.
+      // Or the read ends first, its first attempt not having met the file:
+      // the assertions below then say whether it was served.
+      await step(
+        'awaiting-held-file',
+        Promise.race([
+          waitUntil(
+            () => db.debug?.workers[0]?.boot === 'awaiting-held-file',
+            'the replacement to meet the held file',
+          ).then(() => {
+            met = true;
+          }),
+          read.then(
+            () => {},
+            () => {},
+          ),
+        ]),
+      );
+      holder.release();
+    }
+    const rows = await read;
     expect(rows[0]?.n).toBe(1);
     expect(records.length).toBe(2);
+    // Served without ever meeting the file proves nothing of the wait.
+    await exercised(met, 'the replacement never met the held file');
   });
 
   /**
