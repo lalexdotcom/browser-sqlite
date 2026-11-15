@@ -8,13 +8,14 @@
  * session, so its own browser profile (scripts/test-parallel.ts). The cell's
  * tests are given by id, which the CLI cannot do, hence the Node API.
  */
-import { spawnSync } from 'node:child_process';
-import { appendFileSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Vitest } from 'vitest/node';
 import type { Planned } from '../tests/harness/planner/guard.ts';
 import { ROOT } from './parallel.ts';
 import {
+  DRIVER_LOST_EXIT,
+  DRIVER_LOST_LINE,
   driverLostLine,
   openVitest,
   type PlannedRun,
@@ -114,38 +115,14 @@ const runOnce = async (): Promise<{ failed: boolean; driverLost?: string }> => {
 };
 
 // A cell whose only failure is its browser driver says nothing of the
-// library: it runs once more, whole, and the reports are the second run's.
-// In a process of its own: a second Vitest in this one inherits the dropped
-// session's server state and fails at once ("rpc is closed", measured
-// 2026-11-14 by killing a cell's Chrome mid-test). Never more than once
-// (BSQ_CELL_RETRY), and never when a test failed of its own (driverLostLine).
-// The events file is append-only (ci-progress reads it by offset): a
-// retraction withdraws what the first run reported, and a `retried` event
-// says why the cell ran again, so the summary lists it as passed on retry
-// rather than hiding it.
+// library: it says so with DRIVER_LOST_EXIT and the reason, and
+// scripts/test-plan.ts runs it once more, in a fresh process with a bound of
+// its own (cellRunAgainReason). Never when a test failed of its own
+// (driverLostLine).
 const outcome = await runOnce();
-if (outcome.driverLost !== undefined && process.env.BSQ_CELL_RETRY !== '1') {
-  console.warn(
-    `run-cell: retrying ${cell.project} in a process of its own — ${outcome.driverLost}`,
-  );
-  const events = process.env.BSQ_PROGRESS_EVENTS;
-  if (events) {
-    appendFileSync(
-      events,
-      `${JSON.stringify({ retract: true })}\n${JSON.stringify({
-        file: '(cell)',
-        test: '(browser driver)',
-        message: `cell run again: ${outcome.driverLost}`.slice(0, 300),
-        retried: true,
-      })}\n`,
-    );
-  }
-  const again = spawnSync(
-    process.execPath,
-    [...process.execArgv, ...process.argv.slice(1)],
-    { stdio: 'inherit', env: { ...process.env, BSQ_CELL_RETRY: '1' } },
-  );
-  process.exitCode = again.status === 0 ? 0 : 1;
+if (outcome.driverLost !== undefined) {
+  console.warn(`${DRIVER_LOST_LINE}${outcome.driverLost}`);
+  process.exitCode = DRIVER_LOST_EXIT;
 } else {
   process.exitCode = outcome.failed ? 1 : 0;
 }

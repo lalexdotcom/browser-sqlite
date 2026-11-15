@@ -21,6 +21,8 @@ export type BoundedResult = {
   /** The child's exit code; null when a signal ended it or it never started. */
   readonly exitCode: number | null;
   readonly error: (Error & { readonly code?: string }) | null;
+  /** Why the run was cut before its bound, when `stalled` said so. */
+  readonly stalled?: string;
 };
 
 /** Process groups of the runs in flight, so a signal to the launcher reaches them. */
@@ -77,10 +79,18 @@ export function runBounded(
     cwd,
     env,
     timeoutMs,
+    stalled,
+    stallPollMs = 10_000,
   }: {
     readonly cwd?: string;
     readonly env?: NodeJS.ProcessEnv;
     readonly timeoutMs: number;
+    /**
+     * Asked every `stallPollMs` (10 s): a reason cuts the run at once, as
+     * its bound would, and comes back as `stalled`.
+     */
+    readonly stalled?: () => string | undefined;
+    readonly stallPollMs?: number;
   },
 ): Promise<BoundedResult> {
   return new Promise((resolve) => {
@@ -93,16 +103,28 @@ export function runBounded(
     if (child.pid !== undefined) live.add(child.pid);
     let output = '';
     let timedOut = false;
+    let stalledFor: string | undefined;
     let settled = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    const kill = () => {
       if (child.pid === undefined) child.kill('SIGKILL');
       else killTree(child.pid);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill();
     }, timeoutMs);
+    const watch = stalled
+      ? setInterval(() => {
+          if (stalledFor !== undefined) return;
+          stalledFor = stalled();
+          if (stalledFor !== undefined) kill();
+        }, stallPollMs)
+      : undefined;
     const settle = (result: BoundedResult) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(watch);
       if (child.pid !== undefined) live.delete(child.pid);
       resolve(result);
     };
@@ -112,11 +134,12 @@ export function runBounded(
     child.stderr?.on('data', (d) => {
       output += String(d);
     });
+    const cut = () => (stalledFor === undefined ? {} : { stalled: stalledFor });
     child.on('error', (error) =>
-      settle({ output, timedOut, exitCode: null, error }),
+      settle({ output, timedOut, exitCode: null, error, ...cut() }),
     );
     child.on('close', (exitCode) =>
-      settle({ output, timedOut, exitCode, error: null }),
+      settle({ output, timedOut, exitCode, error: null, ...cut() }),
     );
   });
 }

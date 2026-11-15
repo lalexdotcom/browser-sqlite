@@ -210,6 +210,34 @@ export function driverLostLine(
   return undefined;
 }
 
+/** run-cell's exit code for a cell whose only failure is its browser driver. */
+export const DRIVER_LOST_EXIT = 3;
+
+/** How run-cell begins the line that names why its driver was lost. */
+export const DRIVER_LOST_LINE = 'run-cell: browser driver lost — ';
+
+/**
+ * Why scripts/test-plan.ts runs a cell once more, with a bound of its own:
+ * its browser driver was lost (DRIVER_LOST_EXIT, the reason on run-cell's
+ * DRIVER_LOST_LINE), or it stalled out of every file (`stalled`,
+ * stalledBetweenFiles). Undefined for any other end, a failed cell and one cut
+ * at its bound included: neither says the library is not at fault.
+ */
+export function cellRunAgainReason(result: {
+  readonly exitCode: number | null;
+  readonly output: string;
+  readonly stalled?: string;
+}): string | undefined {
+  if (result.stalled !== undefined) return `stalled: ${result.stalled}`;
+  if (result.exitCode !== DRIVER_LOST_EXIT) return undefined;
+  const line = result.output
+    .split('\n')
+    .find((l) => l.startsWith(DRIVER_LOST_LINE));
+  return line === undefined
+    ? 'browser driver lost'
+    : line.slice(DRIVER_LOST_LINE.length).trim();
+}
+
 const messageOf = (error: unknown): string =>
   typeof error === 'object' &&
   error !== null &&
