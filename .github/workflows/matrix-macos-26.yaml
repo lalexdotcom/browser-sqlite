@@ -24,12 +24,17 @@ jobs:
       # On GitHub's macOS runners a setTimeout(0) takes 16-25 ms in Chrome and
       # Firefox started by their WebDriver, against 4.5-6 ms on Linux and on a
       # Mac's foreground tab: a test built on timers runs ~4 times slower here.
-      time-scale: '2'
-      # The planner bounds each cell at 900 s × 2 = 30 min and runs as many
+      # 3, not 2, since a slow runner took a Chrome cell past its bound
+      # (2026-11-15: 1414 s for 59 of 68 files, against 890-1182 s for all
+      # 68): a hang is now cut far earlier (a test's timeout, a cell silent out
+      # of every file), so the cell's bound is only the last resort.
+      time-scale: '3'
+      # The planner bounds each cell at 900 s × 3 = 45 min and runs as many
       # cells at once as the runner has cores less one (2 of 3 here), Safari.s
-      # one at a time: a pair of 6 cells takes at most three rounds, 90 min,
-      # plus the probes. Above that, a hang ends in the planner as a failure
-      # that uploads its report.
-      timeout-minutes: 120
+      # one at a time: a pair of 6 cells takes at most three rounds, 135 min,
+      # and a cell run again after its browser failed takes a second bound
+      # (scripts/test-plan.ts), 180 min with one, plus the probes. Above that,
+      # a hang ends in the planner as a failure that uploads its report.
+      timeout-minutes: 240
       # Probing three browsers in both modes, Safari's one at a time.
       plan-timeout-minutes: 30
