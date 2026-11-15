@@ -22,6 +22,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -61,6 +62,7 @@ import {
   runPool,
 } from './parallel.ts';
 import {
+  cellRunAgainReason,
   cellSpecs,
   collectFamily,
   loadPlanner,
@@ -71,7 +73,11 @@ import {
 } from './plan-io.ts';
 import { deadIsFatal } from './plan-report.ts';
 import { packageBin, timeScale } from './processes.ts';
-import { inFlightReport } from './progress-reporter.ts';
+import {
+  clearInFlight,
+  inFlightReport,
+  stalledBetweenFiles,
+} from './progress-reporter.ts';
 import { RECOMMENDED_VFS } from './recommended-vfs.ts';
 import {
   allPairs,
@@ -83,6 +89,10 @@ import {
 /** Vitest started through Node, not `pnpm exec`: no `.cmd` shim, no shell, on every OS. */
 const [NODE, VITEST] = packageBin('vitest', 'vitest');
 const JOB_TIMEOUT_MS = 900_000 * timeScale();
+// How long a cell may run no file before it counts as stalled: twice
+// Vitest's hookTimeout (tests/vitest.config.ts), so a file's last hook has
+// long had its own verdict. Measured stalls ran 18 to 53 min.
+const STALL_LIMIT_MS = 120_000 * timeScale();
 const KEEP_RUNS = 10;
 const TAIL_LINES = 60;
 
@@ -427,7 +437,30 @@ async function main() {
       const blob = join(blobs, `${job.id}.json`);
       const json = join(reports, `${job.id}.json`);
       const began = Date.now();
-      const { output, timedOut, exitCode, error } =
+      const eventsFile = join(events, `${job.id}.ndjson`);
+      const runCell = () =>
+        runBounded(
+          'node',
+          [
+            'scripts/run-cell.ts',
+            planFile,
+            String(job.cell),
+            String(job.shard),
+            String(job.shards),
+            blob,
+            json,
+          ],
+          {
+            cwd: ROOT,
+            env: jobEnvOf(job.id),
+            timeoutMs: JOB_TIMEOUT_MS,
+            // No code of the library runs out of every file: a silence there
+            // longer than any hook may take is the browser's or the runner's.
+            stalled: () =>
+              stalledBetweenFiles(eventsFile, Date.now(), STALL_LIMIT_MS),
+          },
+        );
+      const first =
         job.cell === null
           ? await runBounded(
               NODE,
@@ -450,27 +483,41 @@ async function main() {
                 timeoutMs: JOB_TIMEOUT_MS,
               },
             )
-          : await runBounded(
-              'node',
-              [
-                'scripts/run-cell.ts',
-                planFile,
-                String(job.cell),
-                String(job.shard),
-                String(job.shards),
-                blob,
-                json,
-              ],
-              {
-                cwd: ROOT,
-                env: jobEnvOf(job.id),
-                timeoutMs: JOB_TIMEOUT_MS,
-              },
-            );
+          : await runCell();
+      // A cell whose browser driver failed, and only it, runs once more with
+      // a bound of its own; its reports are the second run's. Never silent:
+      // a retraction withdraws the first run's events from the CI summary, a
+      // `retried` event names why, and the line goes beside the job's.
+      const again = job.cell === null ? undefined : cellRunAgainReason(first);
+      let last = first;
+      if (again !== undefined) {
+        const said = `${job.id}: run again — ${again}`;
+        console.log(`  ${said}`);
+        progress.line(said);
+        appendFileSync(
+          eventsFile,
+          `${JSON.stringify({ retract: true })}\n${JSON.stringify({
+            file: '(cell)',
+            test: '(browser driver)',
+            message: `cell run again: ${again}`.slice(0, 300),
+            retried: true,
+          })}\n`,
+        );
+        clearInFlight(eventsFile);
+        rmSync(blob, { force: true });
+        rmSync(json, { force: true });
+        last = await runCell();
+      }
+      const { timedOut, exitCode, error, stalled } = last;
+      const output =
+        again === undefined
+          ? last.output
+          : `${first.output}\n--- ${job.id}: run again — ${again}\n${last.output}`;
       // A job cut at its bound says what it was running (progress-reporter.ts).
-      const inFlight = timedOut
-        ? `${job.id}: ${inFlightReport(join(events, `${job.id}.ndjson`), Date.now())}`
-        : undefined;
+      const inFlight =
+        timedOut || stalled !== undefined
+          ? `${job.id}: ${inFlightReport(eventsFile, Date.now())}`
+          : undefined;
       writeFileSync(
         join(logs, `${job.id}.log`),
         error
@@ -503,25 +550,17 @@ async function main() {
       }
       const ended = timedOut
         ? 'timed out'
-        : error
-          ? `error ${error.message}`
-          : `exit ${exitCode}`;
+        : stalled !== undefined
+          ? `stalled (${stalled})`
+          : error
+            ? `error ${error.message}`
+            : `exit ${exitCode}`;
       const line = `[${++done}/${jobs.length}] ${job.id}: ${ended} in ${Math.round((Date.now() - began) / 1000)}s${state === 'ok' ? '' : ' (NO BLOB)'}`;
       console.log(line);
       progress.line(line);
       if (inFlight) {
         console.log(`  ${inFlight}`);
         progress.line(inFlight);
-      }
-      // A cell run again after its browser driver failed (run-cell.ts) passes
-      // with nothing in the merged report to say so: said here.
-      const rerun = output
-        .split('\n')
-        .find((l) => l.startsWith('run-cell: retrying '));
-      if (rerun) {
-        const said = `${job.id}: ${rerun.slice('run-cell: '.length)}`;
-        console.log(`  ${said}`);
-        progress.line(said);
       }
       return { job, timedOut, error, blob: state, exitCode };
     },

@@ -9,6 +9,7 @@ import ProgressReporter, {
   inFlightReport,
   notExercisedEvent,
   retriedEvent,
+  stalledBetweenFiles,
 } from '../../../scripts/progress-reporter.ts';
 
 /**
@@ -293,6 +294,31 @@ describe('ProgressReporter, what a job is doing when it is cut', () => {
     expect(cutAt(3600)).toBe(
       'in flight: no file running; last ended: tests/browser/close.test.ts, 3540s before the cut',
     );
+  });
+
+  // A job silent between two files, or after its last, longer than any hook
+  // may take is not in the library's code (scripts/test-plan.ts cuts and
+  // reruns it): Windows Chrome and macOS 27 Safari, 2026-11-15, both after
+  // wasm-url.test.ts.
+  it('calls a job stalled once no file has run for longer than the limit', () => {
+    const reporter = new ProgressReporter();
+    reporter.onTestModuleStart(testModule('wasm-url.test.ts'));
+    at(10);
+    reporter.onTestModuleEnd(testModule('wasm-url.test.ts'));
+    expect(stalledBetweenFiles(file, 130_000, 120_000)).toBeUndefined();
+    expect(stalledBetweenFiles(file, 131_000, 120_000)).toBe(
+      'no file running for 121s; last ended: tests/browser/wasm-url.test.ts',
+    );
+  });
+
+  // Falsifiable: watch a file in flight too, and a long test (whose own
+  // timeout is the library's verdict) is cut as a stall.
+  it('never calls a job stalled while a file runs, or before one ended', () => {
+    expect(stalledBetweenFiles(file, 10_000_000, 1)).toBeUndefined();
+    const reporter = new ProgressReporter();
+    reporter.onTestModuleStart(testModule('slow.test.ts'));
+    reporter.onTestCaseReady(testCase('pending') as unknown as TestCase);
+    expect(stalledBetweenFiles(file, 10_000_000, 1)).toBeUndefined();
   });
 
   it('names a file that started and has run no test yet', () => {

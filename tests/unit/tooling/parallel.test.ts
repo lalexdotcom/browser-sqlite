@@ -386,6 +386,32 @@ describe('runBounded', () => {
     expect(result.timedOut).toBe(true);
     expect(elapsed).toBeLessThan(4000);
   });
+
+  it('cuts a child its stall check calls stalled, and says why', async () => {
+    // Falsifiable: drop the kill on a stall and `sleep 5` runs out its 5 s.
+    const started = Date.now();
+    let asked = 0;
+    const result = await runBounded('sleep', ['5'], {
+      env: process.env,
+      timeoutMs: 10_000,
+      stalled: () => (++asked >= 2 ? 'silent' : undefined),
+      stallPollMs: 50,
+    });
+    expect(result.stalled).toBe('silent');
+    expect(result.timedOut).toBe(false);
+    expect(Date.now() - started).toBeLessThan(4000);
+  });
+
+  it('says nothing of a stall when its check never finds one', async () => {
+    const result = await runBounded('true', [], {
+      env: process.env,
+      timeoutMs: 5000,
+      stalled: () => undefined,
+      stallPollMs: 10,
+    });
+    expect(result.stalled).toBeUndefined();
+    expect(result.exitCode).toBe(0);
+  });
 });
 
 describe('findFailedJobs', () => {

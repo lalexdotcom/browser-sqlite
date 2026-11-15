@@ -8,7 +8,7 @@
  * variable it does nothing. A test that passed on a retry (`timeoutRetry`,
  * scripts/processes.ts) is reported once, as retried, never as failed.
  */
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { relative } from 'node:path';
 import type { Reporter, TestCase, TestModule, TestSuite } from 'vitest/node';
 import { ROOT } from './parallel.ts';
@@ -133,6 +133,35 @@ export function inFlightReport(eventsFile: string, now: number): string {
   return last
     ? `in flight: no file running; ${last}`
     : 'in flight: nothing reported, no file started';
+}
+
+/**
+ * Why a job counts as stalled at `now`: no file has run for longer than
+ * `limitMs` since one ended. Undefined while a file runs (its tests and hooks
+ * have their own timeouts, which are the library's verdict) and before any
+ * file ended (the browser session's connect timeout covers the start). Out of
+ * every file, no code of the library runs, so a silence there is the
+ * browser's or the runner's.
+ */
+export function stalledBetweenFiles(
+  eventsFile: string,
+  now: number,
+  limitMs: number,
+): string | undefined {
+  let state: InFlight;
+  try {
+    state = JSON.parse(readFileSync(inFlightFile(eventsFile), 'utf8'));
+  } catch {
+    return undefined;
+  }
+  const { file, ended } = state;
+  if (file || !ended || now - ended.at <= limitMs) return undefined;
+  return `no file running for ${Math.round((now - ended.at) / 1000)}s; last ended: ${ended.name}`;
+}
+
+/** Forgets what a job was running, before it runs again. */
+export function clearInFlight(eventsFile: string): void {
+  rmSync(inFlightFile(eventsFile), { force: true });
 }
 
 export default class ProgressReporter implements Reporter {

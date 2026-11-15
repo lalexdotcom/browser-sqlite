@@ -1,6 +1,8 @@
 import { posix, win32 } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  cellRunAgainReason,
+  DRIVER_LOST_EXIT,
   driverLostLine,
   namedTestFiles,
   retryUnconnectedSession,
@@ -173,5 +175,35 @@ describe('driverLostLine', () => {
       driverLostLine([new Error('AssertionError: expected 1 to be 2')], 0),
     ).toBeUndefined();
     expect(driverLostLine([], 0)).toBeUndefined();
+  });
+});
+
+describe('cellRunAgainReason', () => {
+  it('runs a cell again whose browser driver was lost, and says why', () => {
+    expect(
+      cellRunAgainReason({
+        exitCode: DRIVER_LOST_EXIT,
+        output:
+          'x\nrun-cell: browser driver lost — browser connection closed: Failed to run the test a.test.ts.\ny',
+      }),
+    ).toBe('browser connection closed: Failed to run the test a.test.ts.');
+  });
+
+  it('runs a cell again that stalled out of every file', () => {
+    expect(
+      cellRunAgainReason({
+        exitCode: null,
+        output: '',
+        stalled: 'no file running for 130s; last ended: a.test.ts',
+      }),
+    ).toBe('stalled: no file running for 130s; last ended: a.test.ts');
+  });
+
+  // Falsifiable: run every failed cell again and a library red gets a second
+  // chance.
+  it('never runs again a cell that failed, or one cut at its bound', () => {
+    expect(cellRunAgainReason({ exitCode: 1, output: '' })).toBeUndefined();
+    expect(cellRunAgainReason({ exitCode: null, output: '' })).toBeUndefined();
+    expect(cellRunAgainReason({ exitCode: 0, output: '' })).toBeUndefined();
   });
 });
