@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   wa-sqlite@1.2.0:
-    hash: 9213bc33fd3717c740389068bb6a1acaaee78436c653d4bb53519d98308b9ea8
+    hash: 24ece5dd5667e37ed04e9b0db334d12b0e8c73c0d73d27593d5b2cd305773717
     path: patches/wa-sqlite@1.2.0.patch
 
 importers:
@@ -59,8 +59,8 @@ importers:
         specifier: 5.0.3
         version: 5.0.3(@types/node@24.12.0)(@vitest/browser-webdriverio@5.0.0)(@vitest/ui@5.0.3)(vite@8.3.4(@types/node@24.12.0)(jiti@2.7.0)(yaml@2.8.3))
       wa-sqlite:
-        specifier: github:rhashimoto/wa-sqlite#4631745762f5e24d226254158e5ceada2d5fbe1e
-        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/4631745762f5e24d226254158e5ceada2d5fbe1e(patch_hash=9213bc33fd3717c740389068bb6a1acaaee78436c653d4bb53519d98308b9ea8)
+        specifier: github:rhashimoto/wa-sqlite#90b356fba0af532db976d0cad0cd83acf4dec490
+        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/90b356fba0af532db976d0cad0cd83acf4dec490(patch_hash=24ece5dd5667e37ed04e9b0db334d12b0e8c73c0d73d27593d5b2cd305773717)
       webdriverio:
         specifier: 10.0.2
         version: 10.0.2
@@ -1795,8 +1795,8 @@ packages:
       jsdom:
         optional: true
 
-  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/4631745762f5e24d226254158e5ceada2d5fbe1e:
-    resolution: {tarball: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/4631745762f5e24d226254158e5ceada2d5fbe1e}
+  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/90b356fba0af532db976d0cad0cd83acf4dec490:
+    resolution: {tarball: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/90b356fba0af532db976d0cad0cd83acf4dec490}
     version: 1.2.0
 
   wait-port@1.1.0:
@@ -3411,7 +3411,7 @@ snapshots:
     transitivePeerDependencies:
       - msw
 
-  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/4631745762f5e24d226254158e5ceada2d5fbe1e(patch_hash=9213bc33fd3717c740389068bb6a1acaaee78436c653d4bb53519d98308b9ea8): {}
+  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/90b356fba0af532db976d0cad0cd83acf4dec490(patch_hash=24ece5dd5667e37ed04e9b0db334d12b0e8c73c0d73d27593d5b2cd305773717): {}
 
   wait-port@1.1.0:
     dependencies:
