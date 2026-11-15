@@ -28,6 +28,10 @@ on:
         description: The bound of the plan job.
         default: 15
         type: number
+      jobs:
+        description: How many browser processes a pair's job runs at once (BSQ_TEST_JOBS); empty for the planner's default, every core but one.
+        default: ''
+        type: string
       fail-fast:
         description: Whether one red pair cancels the others; the callers that gate pass true.
         default: false
@@ -94,6 +98,7 @@ jobs:
       checks: write
     env:
       BSQ_TIME_SCALE: ${{ inputs.time-scale }}
+      BSQ_TEST_JOBS: ${{ inputs.jobs }}
       BROWSERS: ${{ inputs.browsers }}
     defaults:
       run:

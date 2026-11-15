@@ -54,13 +54,18 @@ describe('resolveConcurrency', () => {
     expect(resolveConcurrency(undefined, 4)).toBe(3);
   });
 
+  // matrix.yaml passes its `jobs` input as is, '' when a caller gives none.
+  it('takes an empty BSQ_TEST_JOBS as unset', () => {
+    expect(resolveConcurrency('', 16)).toBe(6);
+  });
+
   it('never goes below 1', () => {
     expect(resolveConcurrency(undefined, 2)).toBe(1);
     expect(resolveConcurrency(undefined, 1)).toBe(1);
   });
 
   it('rejects anything but a positive integer, naming the variable', () => {
-    for (const bad of ['0', '-3', '2.5', 'abc', '', ' ', '3x', '1e1']) {
+    for (const bad of ['0', '-3', '2.5', 'abc', ' ', '3x', '1e1']) {
       expect(() => resolveConcurrency(bad, 16), bad).toThrow(/BSQ_TEST_JOBS/);
     }
   });
