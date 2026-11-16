@@ -50,8 +50,16 @@ export type FamilyInput = Family & {
   readonly tests: readonly CollectedTest[];
 };
 
+/**
+ * `complement`: `pnpm test`, the start pairs and the fewest cells that give
+ * every other test a run. `all-pairs`: the matrix, every eligible pair, the
+ * standalone tests left out. `standalone`: those alone, once per browser, in
+ * their representative pair — the step beside the matrix in CI.
+ */
+export type PlanMode = 'complement' | 'all-pairs' | 'standalone';
+
 export type PlanOptions = {
-  readonly mode: 'complement' | 'all-pairs';
+  readonly mode: PlanMode;
   /** Isolated contexts run every eligible test, not only those isolation makes eligible (a mode asked for explicitly). */
   readonly fullIsolation: boolean;
   /** Complement mode: the start contexts' VFS, each on its default build here. */
@@ -105,7 +113,7 @@ export const plan = (
   if (Array.isArray(options.pairs)) options.pairs.forEach(assertDeclared);
   // Dead and not-applicable mean something only when every pair was a candidate.
   const complete =
-    options.mode === 'complement' || !Array.isArray(options.pairs);
+    options.mode !== 'all-pairs' || !Array.isArray(options.pairs);
   const cells = new Map<
     string,
     Family &
@@ -181,11 +189,23 @@ export const plan = (
         // never hosts it, so it is placed only by a non-isolated family.
         if (options.mode === 'all-pairs') entry.placed = true;
         if (options.mode === 'all-pairs' || family.isolated) continue;
-        const host = starts[0] ?? canonical[0];
-        if (host && representative(need, family.browser, features)) {
-          add(host, starts[0] ? 'start' : 'complement', test);
-          placed = true;
+        if (options.mode === 'standalone') {
+          const pair = representative(need, family.browser, features);
+          if (pair) {
+            add({ vfs: pair.vfs, build: pair.build }, 'pair', test);
+            placed = true;
+          }
+        } else {
+          const host = starts[0] ?? canonical[0];
+          if (host && representative(need, family.browser, features)) {
+            add(host, starts[0] ? 'start' : 'complement', test);
+            placed = true;
+          }
         }
+      } else if (options.mode === 'standalone') {
+        // A pair test: the matrix's, not this mode's subject.
+        entry.placed = true;
+        continue;
       } else if (options.mode === 'all-pairs') {
         for (const pair of starts) {
           if (runs(pair, need)) {

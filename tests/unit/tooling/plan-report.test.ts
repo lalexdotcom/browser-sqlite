@@ -20,6 +20,12 @@ describe('deadIsFatal', () => {
     expect(deadIsFatal(complement, false)).toBe(false);
   });
 
+  it('fails a full standalone run in CI only, as a complement run', () => {
+    const standalone = { ...full, mode: 'standalone' } as const;
+    expect(deadIsFatal(standalone, true)).toBe(true);
+    expect(deadIsFatal(standalone, false)).toBe(false);
+  });
+
   it('never fails a run narrowed to some pairs, browsers or modes', () => {
     expect(deadIsFatal({ ...full, explicitPairs: true }, true)).toBe(false);
     expect(deadIsFatal({ ...full, browsers: ['chrome'] }, true)).toBe(false);

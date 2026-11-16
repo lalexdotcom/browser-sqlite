@@ -1,8 +1,9 @@
-name: Tests
+name: Standalone
 
-# The suites a platform runs. ci.yaml calls this for Linux beside its checks
-# that do not depend on the OS (lint, docs, typecheck); each tests-<os>.yaml
-# calls it by hand with its runner.
+# What runs once per browser outside the matrix, on the given runner: the
+# standalone tests, which the matrix leaves out (`test-plan.ts --mode
+# standalone`, spec 2026-10-12 § 3), and conformance. A module: platform.yaml
+# calls it beside matrix.yaml.
 on:
   workflow_call:
     inputs:
@@ -10,21 +11,24 @@ on:
         description: The runner label, e.g. windows-latest.
         required: true
         type: string
+      browsers:
+        description: The browsers to install and test, comma-separated; safari only when named, on macOS.
+        default: chrome,firefox
+        type: string
       time-scale:
         description: How many times Linux's bounds this platform needs (BSQ_TIME_SCALE).
         default: '1'
         type: string
       timeout-minutes:
-        description: The job's bound.
-        default: 90
+        description: The job's bound, above its steps' own (bounded.ts, scaled).
+        default: 60
         type: number
-      browsers:
-        description: The browsers to install and test, comma-separated; safari only when named, on macOS.
-        default: chrome,firefox
-        type: string
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  standalone:
     runs-on: ${{ inputs.runs-on }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     # checks: write lets each planner publish its live progress check run
@@ -43,61 +47,51 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           browsers: ${{ inputs.browsers }}
-      - run: pnpm build
 
-      # `pnpm test` is the test planner (scripts/test-plan.ts) in complement
-      # mode: the unit project, then each browser in both modes (not isolated
-      # and cross-origin isolated), on the start pairs plus the cells that
-      # complete them. Firefox needs no step and no environment variable of its
-      # own. It was a separate step until 2026-09-03, which meant a developer's
-      # local run covered Chromium alone while CI covered both: the exact path
-      # by which a Firefox-only failure arrived late. Under CI=true a test that
-      # no selected browser can run fails the step. Firefox has been a gate
-      # since 2026-08-28 and still is — it is the only engine here that runs
-      # the pool against a rotating exclusive OPFS handle, so a reduced-mode
-      # regression lands there first and a single failure is signal, not noise.
-      - name: Test
-        # The live progress check run: its link is printed at the top of the
-        # step. On a pull request it goes on the head, the commit the PR shows.
+      # The tests that use no VFS of their own, or compare VFS through a
+      # constant: once per browser, non-isolated, in the pair their need takes.
+      # Under CI=true a standalone test that no browser can run fails the step.
+      - name: Standalone tests
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BSQ_PROGRESS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          BSQ_PROGRESS_LABEL: ${{ inputs.runs-on }}
+          BSQ_PROGRESS_LABEL: standalone · ${{ inputs.runs-on }}
         run: |
           IFS=, read -ra list <<< "$BROWSERS"
           args=()
           for browser in "${list[@]}"; do args+=(--browser "$browser"); done
-          pnpm test "${args[@]}"
+          node scripts/bounded.ts 900 node scripts/test-plan.ts --mode standalone "${args[@]}"
 
-      # Conformance is deliberately out of `pnpm test`: eight VFS through the
-      # invariants start workers and open real storage, which is too slow for
-      # the suite a developer runs on every change. One run covers every
-      # browser — a VFS can be sound on one engine and broken on another, which
-      # is how HANDLE-1 was found. `pnpm test:conformance` selects Chrome's and
-      # Firefox's projects, so the list is given here, under its same bound.
+      # Every VFS through the invariants, in one project per browser: a VFS can
+      # be sound on one engine and broken on another, which is how HANDLE-1 was
+      # found. Its tests loop over the VFS themselves, so the planner does not
+      # cut them into cells.
       - name: Conformance
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BSQ_PROGRESS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          BSQ_PROGRESS_LABEL: ${{ inputs.runs-on }}
+          BSQ_PROGRESS_LABEL: conformance · ${{ inputs.runs-on }}
         run: |
           IFS=, read -ra list <<< "$BROWSERS"
           args=()
           for browser in "${list[@]}"; do args+=(--project "conformance $browser"); done
           node scripts/bounded.ts 1800 node scripts/test-parallel.ts "${args[@]}"
+
       # The step log keeps only the last 60 lines of a red job; every job's
-      # whole log and report is in .work/.
+      # whole log and report is in .work/. Named after the runner: a release
+      # calls this module once per platform in one run.
       - name: Test logs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: test-logs-${{ runner.os }}
+          name: standalone-logs-${{ inputs.runs-on }}
           path: .work/
           retention-days: 14
           # .work is a dotted path, excluded by default: the step would then
           # succeed having uploaded nothing.
           include-hidden-files: true
           if-no-files-found: error
+
       # A cancelled or timed-out job, or a planner killed by bounded.ts, leaves
       # its progress check run open: close it as the job ended.
       - name: Close progress

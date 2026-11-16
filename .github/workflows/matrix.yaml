@@ -2,9 +2,8 @@ name: Matrix
 
 # Every declared VFS/build pair through every column of the given browsers
 # (each browser, not isolated and cross-origin isolated), one job per pair, on
-# the given runner. A module, as tests.yaml is: ci.yaml calls it on Linux
-# whenever CI runs (and so does the release, through ci.yaml), and each
-# matrix-<os>.yaml calls it by hand with its runner.
+# the given runner. A module: platform.yaml calls it beside standalone.yaml,
+# which runs the standalone tests this matrix leaves out.
 on:
   workflow_call:
     inputs:
@@ -141,7 +140,9 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: matrix-report-${{ strategy.job-index }}
+          # The runner in the name: a release calls this module once per
+          # platform in one run, and an artifact name is unique per run.
+          name: matrix-report-${{ inputs.runs-on }}-${{ strategy.job-index }}
           path: .matrix/
           retention-days: 14
           # .matrix is a dotted path, which v4 excludes by default — the step

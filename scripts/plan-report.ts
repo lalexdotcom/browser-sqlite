@@ -1,3 +1,4 @@
+import type { PlanMode } from '../tests/harness/planner/plan.ts';
 import type { BrowserName } from './browser-names.ts';
 
 /**
@@ -9,7 +10,7 @@ import type { BrowserName } from './browser-names.ts';
  */
 export const deadIsFatal = (
   run: {
-    mode: 'complement' | 'all-pairs';
+    mode: PlanMode;
     explicitPairs: boolean;
     browsers: readonly BrowserName[];
     modes: number;

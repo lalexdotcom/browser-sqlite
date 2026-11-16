@@ -85,6 +85,8 @@ A second client is exactly one of three things on a pair in a context — shared
 
 Standalone tests (`standalone` tag) run once per browser, non-isolated, outside the matrix, in `pnpm test` and in `verify`. Today: `realm` (4), `vfs is required` (2), `delete › rejects with INVALID_OPTION when vfs is missing`, `features › never reports what no page can probe`, `inspect-realm › is stable across calls`, and the init-lock BUSY test of `delete` once IndexedDB is required (§ 7). A standalone test that needs a VFS for a representative takes the first pair satisfying its need through the same resolver as the plan, never a hard-coded name.
 
+*Amended 2026-11-16:* CI no longer runs `pnpm test`; the standalone tests run there through `test-plan.ts --mode standalone` (only they, once per browser, in their representative pair), a step of `standalone.yaml` beside the matrix on every platform. `pnpm test` keeps them locally.
+
 `isolated/environment.test.ts` is not a test of the library: a project that declares itself isolated checks, at startup, that `crossOriginIsolated` is true and that a `SharedArrayBuffer` reaches a worker, and fails the run by name otherwise — the same footing as `TARGET_NOT_RUNNABLE` today.
 
 ## 4. The planner
