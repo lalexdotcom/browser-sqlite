@@ -3,7 +3,8 @@
  * The browser suite through the planner (spec 2026-10-12, § 4-5):
  *
  *   node scripts/test-plan.ts [--unit] [--browser chrome|firefox|safari]…
- *     [--modes not-isolated,isolated] [--full] [--mode complement|all-pairs]
+ *     [--modes not-isolated,isolated] [--full]
+ *     [--mode complement|all-pairs|standalone]
  *     [--pair vfs/build]… [--table] [--plan-only] [--pairs-out file] [file…]
  *
  * Probes each selected environment, parses the tests statically, plans
@@ -38,6 +39,7 @@ import type {
   FamilyInput,
   Pair,
   Plan,
+  PlanMode,
 } from '../tests/harness/planner/plan.ts';
 import {
   ALL_BROWSERS,
@@ -101,7 +103,7 @@ type Options = {
   browsers: BrowserName[];
   isolatedModes: boolean[];
   full: boolean;
-  mode: 'complement' | 'all-pairs';
+  mode: PlanMode;
   pairs: Pair[] | 'all' | null;
   table: boolean;
   /** Also write the merged report as Vitest JSON there (the coverage comparison of Task 12). */
@@ -166,9 +168,13 @@ function parseArgs(argv: readonly string[]): Options {
       ];
     } else if (arg === '--mode') {
       const mode = argv[++i];
-      if (mode !== 'complement' && mode !== 'all-pairs') {
+      if (
+        mode !== 'complement' &&
+        mode !== 'all-pairs' &&
+        mode !== 'standalone'
+      ) {
         throw new Error(
-          `test-plan: --mode "${mode}" is not complement or all-pairs`,
+          `test-plan: --mode "${mode}" is not complement, all-pairs or standalone`,
         );
       }
       options.mode = mode;
@@ -188,6 +194,12 @@ function parseArgs(argv: readonly string[]): Options {
       : env
         ? env.split(',').map((label) => parsePair(label.trim()))
         : null;
+  // A standalone test takes its representative pair, never one given.
+  if (options.mode === 'standalone' && options.pairs !== null) {
+    throw new Error(
+      'test-plan: --mode standalone takes no --pair nor BSQ_TEST_TARGETS',
+    );
+  }
   options.files = files.length ? files : null;
   return options;
 }

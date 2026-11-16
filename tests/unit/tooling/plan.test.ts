@@ -285,6 +285,50 @@ describe('all-pairs mode', () => {
   });
 });
 
+// The standalone tests outside the matrix, which leaves them out: a step of
+// their own beside it in CI (2026-11-16).
+describe('standalone mode', () => {
+  const STANDALONE: PlanOptions = { ...COMPLEMENT, mode: 'standalone' };
+
+  it('runs only the standalone tests, once per browser, in their representative pair', () => {
+    const p = plan(
+      families(
+        [test('alone', ['standalone']), test('plain')],
+        [test('isolated, untagged')],
+      ),
+      STANDALONE,
+    );
+    expect(layout(p)).toEqual([
+      'chrome · OPFSWriteAheadVFS/sync [pair]: alone',
+      'firefox · OPFSWriteAheadVFS/sync [pair]: alone',
+    ]);
+    expect(p.dead).toEqual([]);
+    expect(p.notApplicable).toEqual([]);
+  });
+
+  it('lists a standalone test whose need no pair admits as not applicable', () => {
+    const p = plan(
+      families([test('alone', ['standalone', 'requires:env-capped-pool'])]),
+      STANDALONE,
+    );
+    expect(p.notApplicable.map((u) => `${u.browser}: ${u.name}`)).toEqual([
+      'chrome: alone',
+    ]);
+    expect(p.cells.map((c) => c.project)).toEqual([
+      'firefox · OPFSWriteAheadVFS/sync',
+    ]);
+  });
+
+  it('calls a standalone test collected only in isolated families dead', () => {
+    const p = plan(
+      families([], [test('alone, isolated file', ['standalone'])]),
+      STANDALONE,
+    );
+    expect(p.cells).toEqual([]);
+    expect(p.dead.map((d) => d.name)).toEqual(['alone, isolated file']);
+  });
+});
+
 describe('what the planner refuses', () => {
   // Falsifiable: drop the dynamic check — its id would select another test.
   it('a test declared dynamically', () => {

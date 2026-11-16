@@ -8,9 +8,10 @@ on:
 
 jobs:
   # The push of `main` that carries the tagged commit has run CI on it — the
-  # checks, the tests and the matrix. Wait for that run and reuse it; anything
+  # checks and the Linux platform. Wait for that run and reuse it; anything
   # but a passing run — none, cancelled by a later push of `main`, failed —
-  # makes the release run its own.
+  # makes the release run its own. The other platforms run nowhere else, so
+  # `platforms` below always runs them.
   prior:
     permissions:
       contents: read
@@ -41,7 +42,7 @@ jobs:
             echo "ci.yaml: no passing run on $SHA (${ID:-none}), the release runs its own"
           fi
 
-  # CI on the tagged commit — the checks, the tests and the matrix — when the
+  # CI on the tagged commit — the checks and the Linux platform — when the
   # push of `main` left no passing run to reuse: the same verification.
   verify:
     needs: prior
@@ -51,6 +52,22 @@ jobs:
       contents: read
       checks: write
     uses: ./.github/workflows/ci.yaml
+
+  # Every platform but Linux, which CI checked above: the same module, so a
+  # release asks of Windows and macOS exactly what CI asks of Linux. Fail-fast
+  # within a platform and across them: one red refuses the release.
+  platforms:
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [windows, macos-26, macos-27]
+    permissions:
+      contents: read
+      checks: write
+    uses: ./.github/workflows/platform.yaml
+    with:
+      os: ${{ matrix.os }}
+      fail-fast: true
 
   # The packed tarball, statically (publint, Are the Types Wrong?) and through
   # five bundlers and a page with none. It proves the package is usable once
@@ -74,13 +91,13 @@ jobs:
   # could be published. A failure after npm publish is left alone: deleting the
   # tag there would orphan a published version.
   untag:
-    needs: [prior, verify, consumer-smoke]
+    needs: [prior, verify, platforms, consumer-smoke]
     if: failure()
     permissions:
       contents: write
     runs-on: ubuntu-latest
     steps:
-      - name: Delete the tag the matrix refused
+      - name: Delete the tag the checks refused
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -89,7 +106,7 @@ jobs:
           echo "::notice::${{ github.ref_name }} was deleted: the release checks did not pass."
 
   release:
-    needs: [prior, verify, consumer-smoke]
+    needs: [prior, verify, platforms, consumer-smoke]
     # A check reused from the push of main is skipped here, and a skipped need
     # would skip this job without the condition.
     if: ${{ !cancelled() && !failure() }}
