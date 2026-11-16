@@ -46,7 +46,7 @@ been work on nothing.
 |---|---|---|
 | `wa-sqlite-webdriver-pr` | wa-sqlite's suite on stock browsers (Discussion #373) | OPEN — accepted 2026-10-10; the PR is ours to send |
 | `wa-sqlite-386-coopsync-bfcache` | `OPFSCoopSyncVFS.create()` after a bfcache navigation (#362, PR #386) | CLOSED 2026-11-15 — merged upstream (`90b356fb`), repinned the same day (`build/repin-wa-sqlite-90b356f`), its hunk out of the patch |
-| `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | OPEN — reviewed 2026-11-15: rhashimoto asked for the offered `#getOldestTxInUse()` test (or would merge as is); added the same day (`ca54a2c4`), reply posted; waiting for the merge |
+| `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | CLOSED 2026-11-16 — the asked-for `#getOldestTxInUse()` test added (`ca54a2c4`), squash-merged 2026-11-15 (`ef1399ce`), repinned 2026-11-16 (`build/repin-wa-sqlite-ef1399c`) |
 | `safari-async-slowdown` | Safari's `async` build slows down after a few seconds of work | OPEN — cause: JSC's OMG tier on the Asyncify `sqlite3VdbeExec`. **Bug-gated: WebKit 329813**, last seen 2026-11-12: NEW, unassigned, InRadar since 2026-11-09 (rdar 192262404), no human comment |
 | `wa-sqlite-389-adaptive-journal` | `OPFSAdaptiveVFS` keeps its journal's access handle between transactions (PR #389) | OPEN — PR open, waiting for review |
 | `wa-sqlite-393-coopsync-hot-journal` | Carry PR #393 (not ours): `OPFSCoopSyncVFS` misses a hot journal left by a connection terminated mid-transaction, so another tab's open connection reads it half-applied (issue #392) | OPEN — 2026-11-06: to test, then carry in `patches/`; PR open, not reviewed |
@@ -55,6 +55,7 @@ been work on nothing.
 
 | Memory | Subject | Status |
 |---|---|---|
+| `sqlite-version-bump` | wa-sqlite builds SQLite 3.53.0; 3.54.1 is out (~4 % CPU on speedtest1 native, planner gains, 3.53.x fixes, a 32-bit heap overflow fix) | DEFERRED — 2026-11-16 (user): to look at after the v1 points; measure before an upstream PR |
 | `named-params` | Params as an object, bound by name | DEFERRED — 2026-11-02 (user): a new feature, after the bugfix release; not designed |
 | `bulkwrite-types` | More `types` values for `bulkWrite()` | DEFERRED — 2026-11-02 (user): a new feature, after the bugfix release; not designed |
 | `jspi-before-sync` | `jspi` before `sync` in the build order | DEFERRED — 2026-11-02 (user): a change of default, after the bugfix release; measurements owed |
