@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.0.0-rc.12] - 2026-11-17
+
 ### Added
 
 - **With `debug`, `db.debug.workers[i].run` says where a running query is, and each query's `stages` where its time went.** `run` is one of `'awaiting-turn'`, `'preparing'`, `'stepping'`, `'computing'` or `'awaiting-credit'` (the exported `RunStage` type), and `undefined` when the worker is idle; `stages` holds the milliseconds spent in each stage the query went through. `'computing'` needs the progress handler: the `async` and `jspi` builds, or `sync` under cross-origin isolation. The classification of a SQL text the client sees for the first time is now visible too: a request of `kind: 'verdict'` (its wait for a worker and its compile, with `stages`), or an `internal` query of the transaction's request when it is asked on the transaction's own worker.
@@ -899,7 +901,8 @@ with it.
 
 First published release line.
 
-[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.11...HEAD
+[Unreleased]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.12...HEAD
+[1.0.0-rc.12]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.11...v1.0.0-rc.12
 [1.0.0-rc.11]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.10...v1.0.0-rc.11
 [1.0.0-rc.10]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.9...v1.0.0-rc.10
 [1.0.0-rc.9]: https://github.com/lalexdotcom/browser-sqlite/compare/v1.0.0-rc.8...v1.0.0-rc.9
