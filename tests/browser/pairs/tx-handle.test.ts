@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { SQLiteTransactionDB } from '../../../src/api';
-import { createTestClient, exercised, scaled } from '../helpers';
+import {
+  abandonOnceRunning,
+  createTestClient,
+  exercised,
+  scaled,
+} from '../helpers';
 
 type Debuggable = { debug: { workers: { creationTime: number }[] } };
 const workerIdentity = (db: unknown) =>
@@ -16,17 +21,12 @@ const gate = () => {
 
 /**
  * One INSERT whose single step() runs for hundreds of milliseconds (Chromium)
- * to seconds (Firefox), so an abort at 30 ms lands inside it on a build that
- * can cut a running step. Copied from tests/browser/tx-abort.test.ts.
+ * to seconds (Firefox): long enough to be seen running and abandoned there.
+ * Finite, so a build that cannot cut it runs it to its end. Copied from
+ * tests/browser/tx-abort.test.ts.
  */
 const BIG_INSERT =
   'INSERT INTO big WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1000000) SELECT x FROM c';
-
-const abortAfter = (ms: number, reason: unknown) => {
-  const ctl = new AbortController();
-  setTimeout(() => ctl.abort(reason), ms);
-  return ctl.signal;
-};
 
 /**
  * Transaction B on a `poolSize: 1` client — so on the worker the previous
@@ -191,20 +191,34 @@ describe('tx.signal', () => {
   it(
     'aborts with the write reason when an abandoned write escapes the callback',
     async () => {
-      const db = await createTestClient({ poolSize: 1 });
+      const db = await createTestClient({ poolSize: 1, debug: true });
       try {
         await db.run('CREATE TABLE t (a INTEGER)');
         await db.run('CREATE TABLE big (x INTEGER)');
         const reason = new Error('abandon the write');
         let seen!: AbortSignal;
+        // Abandoned once seen running, not after a fixed 30 ms: the write had
+        // to outlast it, a bet on its length either way.
+        const { signal, abandonedRunning } = abandonOnceRunning(
+          db,
+          BIG_INSERT,
+          reason,
+        );
 
         const outcome = await db
           .transaction(async (tx) => {
             seen = tx.signal;
-            await tx.run(BIG_INSERT, [], { signal: abortAfter(30, reason) });
+            await tx.run(BIG_INSERT, [], { signal });
           })
           .catch((e) => e);
 
+        if (
+          !(await exercised(
+            abandonedRunning(),
+            'the write ended before it was seen running',
+          ))
+        )
+          return;
         expect(outcome).toBe(reason);
         expect(seen.aborted).toBe(true);
         expect(seen.reason).toBe(reason);
@@ -222,21 +236,31 @@ describe('tx.signal', () => {
   it(
     'does not abort when the callback catches an abandoned write',
     async () => {
-      const db = await createTestClient({ poolSize: 1 });
+      const db = await createTestClient({ poolSize: 1, debug: true });
       try {
         await db.run('CREATE TABLE t (a INTEGER)');
         await db.run('CREATE TABLE big (x INTEGER)');
         const reason = new Error('abandon the write');
         let seen!: AbortSignal;
+        const { signal, abandonedRunning } = abandonOnceRunning(
+          db,
+          BIG_INSERT,
+          reason,
+        );
 
         await db.transaction(async (tx) => {
           seen = tx.signal;
-          await tx
-            .run(BIG_INSERT, [], { signal: abortAfter(30, reason) })
-            .catch(() => {});
+          await tx.run(BIG_INSERT, [], { signal }).catch(() => {});
           await tx.run('INSERT INTO t VALUES (1)');
         });
 
+        if (
+          !(await exercised(
+            abandonedRunning(),
+            'the write ended before it was seen running',
+          ))
+        )
+          return;
         expect(seen.aborted).toBe(false);
         expect(await db.all('SELECT a FROM t')).toEqual([{ a: 1 }]);
         expect(await db.all('SELECT count(*) AS n FROM big')).toEqual([
