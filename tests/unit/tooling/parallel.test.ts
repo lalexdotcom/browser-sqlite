@@ -512,3 +512,39 @@ describe('planJobs', () => {
     );
   });
 });
+
+// A run that leaves a process behind in its group — run-cell giving up on a
+// lost session leaves its safaridriver, and Safari takes one WebDriver session
+// per machine, so the cell's run again could not start. POSIX only: the group
+// is what DETACHED gives a run.
+describe('runBounded', () => {
+  it.skipIf(process.platform === 'win32')(
+    'kills what the run left behind in its process group',
+    async () => {
+      // The child starts a grandchild that outlives it, prints its pid and exits.
+      const script = [
+        "const { spawn } = require('node:child_process');",
+        "const g = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+        'console.log(g.pid);',
+        'g.unref();',
+      ].join(' ');
+      const result = await runBounded(process.execPath, ['-e', script], {
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(0);
+      const pid = Number(result.output.trim());
+      expect(pid).toBeGreaterThan(0);
+      let alive = true;
+      for (let i = 0; i < 50 && alive; i++) {
+        try {
+          process.kill(pid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        } catch {
+          alive = false;
+        }
+      }
+      if (alive) process.kill(pid, 'SIGKILL');
+      expect(alive).toBe(false);
+    },
+  );
+});

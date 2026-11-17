@@ -125,7 +125,13 @@ export function runBounded(
       settled = true;
       clearTimeout(timer);
       clearInterval(watch);
-      if (child.pid !== undefined) live.delete(child.pid);
+      if (child.pid !== undefined) {
+        live.delete(child.pid);
+        // What the run left behind in its group: run-cell giving up on a lost
+        // session leaves its safaridriver, and Safari takes one WebDriver
+        // session per machine, so the cell's run again could not start.
+        if (DETACHED) killTree(child.pid);
+      }
       resolve(result);
     };
     child.stdout?.on('data', (d) => {
