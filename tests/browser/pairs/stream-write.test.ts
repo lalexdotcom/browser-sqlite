@@ -20,9 +20,14 @@ import { heldNamesIn } from '../helpers/realm';
 const ROWS = 2_000;
 const SEED = `INSERT INTO t (a) WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${ROWS}) SELECT x FROM c`;
 
-/** Runs for hundreds of milliseconds before it deletes anything. */
-const SLOW_DELETE =
-  'DELETE FROM t WHERE a IN (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 1000000) SELECT x FROM c) RETURNING a';
+/**
+ * Computes for minutes before it deletes anything: only an abort ends it, so
+ * it is cut, not finished, on any runner. A finite DELETE had to outlast a
+ * 1 ms deadline and a poll, a bet on its length. A scalar subquery, computed
+ * once: an `IN (…)` over the same CTE would build an index of every row.
+ */
+const ENDLESS_DELETE =
+  'DELETE FROM t WHERE (SELECT count(*) FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 2000000000) SELECT x FROM c)) > 0 RETURNING a';
 
 type Db = Awaited<ReturnType<typeof createTestClient>>;
 
@@ -186,9 +191,10 @@ describe('stream() and chunk() take a write', () => {
     expect(await count(db)).toBe(0);
   });
 
-  // The 1 ms deadline mostly lands during the verdict, before anything is
-  // posted: this pins the deadline on the whole call. The abort that reaches
-  // the drain itself is the next test's.
+  // The 1 ms deadline may land during the verdict, before anything is posted,
+  // or while the DELETE runs: either way only the deadline ends it, which
+  // pins the deadline on the whole call. The abort that reaches the drain
+  // itself is the next test's.
   // Falsifiable: in chunkRows in src/client.ts, hand the deadline's signal to
   // nothing — the DELETE then runs to its end and commits.
   it('an abort before affected leaves the table untouched', {
@@ -196,7 +202,7 @@ describe('stream() and chunk() take a write', () => {
     timeout: scaled(30_000),
   }, async () => {
     const db = await setUp();
-    const rows = db.stream(SLOW_DELETE, [], { timeout: 1 });
+    const rows = db.stream(ENDLESS_DELETE, [], { timeout: 1 });
     await expect(
       (async () => {
         for await (const _row of rows) {
@@ -219,13 +225,16 @@ describe('stream() and chunk() take a write', () => {
     const db = await setUp({ debug: true });
     const ctl = new AbortController();
     const reason = new Error('abort the drain');
-    const rows = db.stream(SLOW_DELETE, [], { signal: ctl.signal });
+    const rows = db.stream(ENDLESS_DELETE, [], { signal: ctl.signal });
     const outcome = (async () => {
       for await (const _row of rows) {
         // Never reached: the write is aborted before its first row.
       }
     })();
-    await waitUntil(theQueryIsRunning(db, SLOW_DELETE), 'the DELETE running');
+    await waitUntil(
+      theQueryIsRunning(db, ENDLESS_DELETE),
+      'the DELETE running',
+    );
     ctl.abort(reason);
     await expect(outcome).rejects.toBe(reason);
     await expect(rows.affected).rejects.toBe(reason);
