@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createTestClient,
+  killedStatementRuns,
   LONG_QUERY,
   longQuery,
   scaled,
@@ -176,19 +177,23 @@ describe('aborting a running statement', () => {
       drainTimeout: scaled(2_000),
     });
     try {
+      // Endless, so it is still stepping 300 ms after the abort on any runner
+      // — a finite one only bet on it. Not where a terminated worker runs its
+      // statement out (WebKit #328618): close() would leave it computing for
+      // minutes, so the finite 20 M rows stay there, seconds on Safari.
+      const sql = killedStatementRuns()
+        ? longQuery(20_000_000)
+        : longQuery(2_000_000_000);
       const controller = new AbortController();
-      const long = db.all(longQuery(20_000_000), [], {
+      const long = db.all(sql, [], {
         signal: controller.signal,
       });
       long.catch(() => {});
-      await waitUntil(
-        theQueryIsRunning(db, longQuery(20_000_000)),
-        'the query to be running',
-      );
+      await waitUntil(theQueryIsRunning(db, sql), 'the query to be running');
       controller.abort(new Error('cancelled'));
       await expect(long).rejects.toThrow('cancelled');
       // The statement is not cut: the pool asked it to stop and still waits
-      // for it, where the 20 M rows take seconds on either engine.
+      // for it.
       await sleep(300);
       expect(db.debug?.workers[0]?.status).toBe('ABORTING');
       // And the worker is still in the step. Not 'computing': a `sync` build
