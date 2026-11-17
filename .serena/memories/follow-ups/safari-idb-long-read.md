@@ -1,6 +1,6 @@
 # Follow-up — Safari 27: a read waited out another worker's long statement on `IDBBatchAtomicVFS/async` (2026-11-15)
 
-**Status: OPEN** — seen once, not reproduced, cause unknown.
+**Status: CLOSED (2026-11-17)** — reproduced on GitHub's Safari, explained as latency, not serialisation; the test no longer races two durations (`test/idb-long-read-no-race`). Investigation below, after the first sighting.
 
 Part of `mem:follow-ups`.
 
@@ -9,3 +9,11 @@ Part of `mem:follow-ups`.
 - **Its guard held:** `theQueryIsRunning(db, LONG)` before the race, and the long statement not settled at the race's start (`longSettled` false).
 - **Unknown:** whether the yield happened on Safari 27 that time (how the progress handler yields: a timer? Safari 27 runs an idle page's timers at 1 Hz, SAFARI27-TIMER-1HZ, `mem:measurements/ci-runners` — but the yield is in the worker, whose timers ran at 5 ms there), or whether Safari's IndexedDB queued the second connection's transaction behind the first's anyway; how often.
 - **Next:** read how the progress handler yields (`src/worker/`), loop the test on Safari 27 (a spike workflow on `xcode-27`), and, if it reproduces, trace the readwrite transaction's commit time against the yields.
+
+## Investigation (2026-11-17, user: "Enquêtons")
+
+- **The yield is not a timer:** the progress handler awaits `gate.tick()`, a `MessageChannel` task (`createMessageChannelTick`, `src/credits.ts`), every `PROGRESS_OPS` operations (`src/worker/worker.ts`) — the 1 Hz timer lead was wrong.
+- **Not reproduced locally** (Playwright 1.64.1's WebKit, UA Safari 27.2, a probe page over `dist/` in the session scratchpad `idbprobe/`): 90 rounds of the race, the read served in 15-26 ms while the self-join ran 0.4-2 s. One round at 30 000 rows set off WebKit 329813's slowdown (the self-join took **1 365 s** instead of ~8 s): the read was still served, in 188 ms.
+- **Reproduced on GitHub (spike `spike/idb-long-read`, run 44096686744, deleted afterwards):** the real test's race looped through the planner on `IDBBatchAtomicVFS/async`, 30 cold rounds and 6 rounds after a ~3 s warm-up per worker. `xcode-27` (Safari 27.0.1): **3 of 30 cold rounds lost**, read median 479 ms, max 918; `macos-26` (which has **Safari 27.2**, not 26): **1 of 30**; warm rounds 0 of 12. **In every lost round the read ended within 10 ms after the long statement** (637/628, 598/600, 606/589, 814/814 ms), and the long statement was a short one (0.6-0.8 s); every round where it ran 2-7 s, the read was served mid-statement, often after 500-900 ms. Reading: the yield works on Safari, but the long worker's readwrite IndexedDB transaction takes up to ~1 s to give way on those runners, so a read races a statement shorter than that and loses. Hypothesis, not measured: the commit's disk write in WebKit's IndexedDB backend on a loaded runner (`jLock` opens a readwrite transaction even for a read). No library defect of data; on Safari a read beside a long statement on this VFS may wait up to ~1 s.
+- **Fix (user: "On corrige ce test", and asked for a test that depends on no timing):** the long statement is endless (a recursive CTE whose step reads `t`, so it takes SHARED from its first step and holds it), carries no signal (the case the test guards), and is stopped by `close({ immediate: true })`; the read is awaited, then the statement is checked still running, then it rejects `CLIENT_CLOSED`. No race: the read is served while it runs or never. Green on Chrome and Firefox `async`/`jspi` in 0.3-0.4 s (it took ~5 s); **falsified**: with `yields = false` in `worker.ts` the read is never served and both browsers time out at 60 s, cleanup included. Not yet run on Safari (the platforms will).
+- **Follow-on (user):** audit every test that bets on a timing — the previous pass was not exhaustive (`mem:follow-ups/time-based-tests`).
