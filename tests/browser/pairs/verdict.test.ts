@@ -2,6 +2,7 @@ import { SQLiteError } from 'browser-sqlite';
 import { describe, expect, it } from 'vitest';
 import type { PoolWorker } from '../../../src/pool';
 import {
+  abandonOnceRunning,
   createTestClient,
   exercised,
   interceptWorkers,
@@ -210,14 +211,18 @@ describe('verdict', () => {
   // Falsifiable: leave pending verdicts out of poison(). The engine's kill
   // tells nothing: the death is learnt from a query's unanswered stop.
   it('rejects a verdict on a worker killed silently, once the death is learnt', async () => {
-    const { db, worker } = await setUp({ drainTimeout: 500 });
+    const { db, worker } = await setUp({ drainTimeout: 500, debug: true });
     killSilently(worker);
     const pending = worker.verdict('SELECT 1');
     pending.catch(() => {});
     await expect(
       // first(): a query is posted at once, and its unanswered stop is what
-      // tells of the death. all() would wait on the verdict instead.
-      db.first('SELECT 1', [], { signal: AbortSignal.timeout(200) }),
+      // tells of the death. all() would wait on the verdict instead. Stopped
+      // once seen posted, not after 200 ms: a deadline that expired before
+      // the post left no stop to go unanswered, and the test hung.
+      db.first('SELECT 1', [], {
+        signal: abandonOnceRunning(db, 'SELECT 1').signal,
+      }),
     ).rejects.toThrow();
     await expect(pending).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
     await expect(worker.verdict('SELECT 1')).rejects.toMatchObject({
