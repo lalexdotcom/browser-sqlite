@@ -14,13 +14,16 @@ import type { Vitest } from 'vitest/node';
 import type { Planned } from '../tests/harness/planner/guard.ts';
 import { ROOT } from './parallel.ts';
 import {
+  closeWithin,
   DRIVER_LOST_EXIT,
   DRIVER_LOST_LINE,
   driverLostLine,
+  LOST_CLOSE_MS,
   openVitest,
   type PlannedRun,
   projectNamed,
 } from './plan-io.ts';
+import { timeScale } from './processes.ts';
 
 const USAGE =
   'usage: node scripts/run-cell.ts <plan.json> <cell index> <shard> <shards> <blob> <json>';
@@ -43,6 +46,12 @@ const cell = run.cells[Number(index)];
 if (cell === undefined) throw new Error(`run-cell: no cell ${index}`);
 // Files go round-robin to the shards: each shard keeps whole files.
 const specs = cell.specs.filter((_, i) => i % shardCount === shardNumber - 1);
+
+/**
+ * Set when the lost session's close was given up on. Read after runOnce, not
+ * returned by it: its `finally` runs after the return value is taken.
+ */
+let closeAbandoned = false;
 
 /** One run of the cell's specs in a fresh Vitest: whether it failed, and why if only its browser driver did. */
 const runOnce = async (): Promise<{ failed: boolean; driverLost?: string }> => {
@@ -106,11 +115,30 @@ const runOnce = async (): Promise<{ failed: boolean; driverLost?: string }> => {
     console.error(error);
     return { failed: true, driverLost };
   } finally {
-    // A lost session also fails its close ("invalid session id"); any other
-    // close failure is the run's own and is thrown.
-    await vitest?.close().catch((error: unknown) => {
-      if (driverLostLine([error], 0) === undefined && !closingLost) throw error;
-    });
+    if (vitest !== undefined && closingLost) {
+      // A lost session's close may never settle (safaridriver leaving its
+      // DELETE unanswered): bounded, so the cell ends as lost, not at its job
+      // bound. The times say where a next sighting stopped.
+      const ms = LOST_CLOSE_MS * timeScale();
+      const open = vitest;
+      console.warn(
+        `run-cell: run ended at ${new Date().toISOString()}; closing the lost session`,
+      );
+      if (await closeWithin(() => open.close(), ms)) {
+        console.warn(`run-cell: closed at ${new Date().toISOString()}`);
+      } else {
+        console.warn(
+          `run-cell: the lost session's close did not settle within ${ms} ms; given up at ${new Date().toISOString()}`,
+        );
+        closeAbandoned = true;
+      }
+    } else {
+      // A lost session also fails its close ("invalid session id"); any other
+      // close failure is the run's own and is thrown.
+      await vitest?.close().catch((error: unknown) => {
+        if (driverLostLine([error], 0) === undefined) throw error;
+      });
+    }
   }
 };
 
@@ -122,6 +150,10 @@ const runOnce = async (): Promise<{ failed: boolean; driverLost?: string }> => {
 const outcome = await runOnce();
 if (outcome.driverLost !== undefined) {
   console.warn(`${DRIVER_LOST_LINE}${outcome.driverLost}`);
+  // A close given up on still holds its request open, which would keep this
+  // process alive: exit now. scripts/parallel.ts kills what is left in the
+  // group, the driver included.
+  if (closeAbandoned) process.exit(DRIVER_LOST_EXIT);
   process.exitCode = DRIVER_LOST_EXIT;
 } else {
   process.exitCode = outcome.failed ? 1 : 0;

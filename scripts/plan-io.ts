@@ -217,6 +217,38 @@ export const DRIVER_LOST_EXIT = 3;
 export const DRIVER_LOST_LINE = 'run-cell: browser driver lost — ';
 
 /**
+ * Closes a run within `ms`: whether the close settled, resolved or rejected
+ * (`true`), or the bound came first (`false`). For a run whose browser driver
+ * is already lost: on the macOS 27 release run 44041533589 (2026-11-17) Safari
+ * dropped its page and safaridriver never answered the lost session's DELETE,
+ * so an unbounded close held the cell to its job bound, where it counts as
+ * timed out and is not run again.
+ */
+export const closeWithin = async (
+  close: () => Promise<unknown>,
+  ms: number,
+): Promise<boolean> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  try {
+    return await Promise.race([
+      close().then(
+        () => true,
+        () => true,
+      ),
+      bound,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/** How long run-cell waits for a lost session to close, before `BSQ_TIME_SCALE`. */
+export const LOST_CLOSE_MS = 60_000;
+
+/**
  * Why scripts/test-plan.ts runs a cell once more, with a bound of its own:
  * its browser driver was lost (DRIVER_LOST_EXIT, the reason on run-cell's
  * DRIVER_LOST_LINE), or it stalled out of every file (`stalled`,

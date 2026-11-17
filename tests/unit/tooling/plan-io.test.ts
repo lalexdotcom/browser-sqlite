@@ -1,7 +1,8 @@
 import { posix, win32 } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   cellRunAgainReason,
+  closeWithin,
   DRIVER_LOST_EXIT,
   driverLostLine,
   namedTestFiles,
@@ -205,5 +206,41 @@ describe('cellRunAgainReason', () => {
     expect(cellRunAgainReason({ exitCode: 1, output: '' })).toBeUndefined();
     expect(cellRunAgainReason({ exitCode: null, output: '' })).toBeUndefined();
     expect(cellRunAgainReason({ exitCode: 0, output: '' })).toBeUndefined();
+  });
+});
+
+// Release run 44041533589 (2026-11-17, macOS 27): Safari dropped its page,
+// and safaridriver never answered the lost session's DELETE, so run-cell sat
+// in vitest.close() until the cell's bound, which is not run again.
+describe('closeWithin', () => {
+  it('says the close settled when it resolves in time', async () => {
+    await expect(closeWithin(() => Promise.resolve(), 1_000)).resolves.toBe(
+      true,
+    );
+  });
+
+  it('says the close settled when it rejects in time: a lost session fails its close', async () => {
+    await expect(
+      closeWithin(() => Promise.reject(new Error('invalid session id')), 1_000),
+    ).resolves.toBe(true);
+  });
+
+  // Falsifiable: await the close unbounded, as before — this never resolves.
+  it('gives up on a close that never settles, once its bound has passed', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const outcome = closeWithin(() => new Promise<void>(() => {}), 60_000);
+      await vi.advanceTimersByTimeAsync(59_999);
+      let settled = false;
+      void outcome.then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(outcome).resolves.toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
