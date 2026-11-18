@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { terminateRunsWasm } from '../../harness/webkit';
 import {
   createTestClient,
-  killedStatementRuns,
   LONG_QUERY,
   longQuery,
   scaled,
@@ -179,9 +179,13 @@ describe('aborting a running statement', () => {
     try {
       // Endless, so it is still stepping 300 ms after the abort on any runner
       // — a finite one only bet on it. Not where a terminated worker runs its
-      // statement out (WebKit #328618): close() would leave it computing for
-      // minutes, so the finite 20 M rows stay there, seconds on Safari.
-      const sql = killedStatementRuns()
+      // statement out (WebKit #328618), whatever the VFS: close() terminates
+      // this one, and it would keep computing for minutes and starve the next
+      // files' workers (lifecycle and long-query timed out behind it on Safari
+      // 27.0.1 and 27.2 `MemoryVFS/sync`, 2026-11-18). The finite 20 M rows
+      // stay there, seconds on Safari. Not `killedStatementRuns()`, which is
+      // about held OPFS files and so says nothing for a memory VFS.
+      const sql = terminateRunsWasm(navigator.userAgent)
         ? longQuery(20_000_000)
         : longQuery(2_000_000_000);
       const controller = new AbortController();
