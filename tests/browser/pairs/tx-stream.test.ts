@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createTestClient,
+  exercised,
   scaled,
   theQueryIsRunning,
   waitUntil,
@@ -158,16 +159,36 @@ describe('tx.stream() takes a write (spec 2026-10-26, § Streaming a write)', ()
     const reason = new Error('abort before affected');
     let caught: unknown;
     let affected: unknown;
+    let seenRunning = false;
     await db.transaction(async (tx) => {
       await tx.run('INSERT INTO t VALUES (1)');
       const rows = tx.stream(SLOW_INSERT, [], { signal: ctl.signal });
       const pending = rows[Symbol.asyncIterator]().next();
-      await waitUntil(theQueryIsRunning(db, SLOW_INSERT), 'the INSERT running');
+      // Finite (an abandoned savepointed write runs on to its end), so it may
+      // end before it is seen running: RETURNING serves no row before the
+      // last insert, so a first row means it did.
+      seenRunning = await Promise.race([
+        waitUntil(
+          theQueryIsRunning(db, SLOW_INSERT),
+          'the INSERT running',
+        ).then(() => true),
+        pending.then(
+          () => false,
+          () => false,
+        ),
+      ]);
       ctl.abort(reason);
       caught = await pending.catch((e: unknown) => e);
       affected = await rows.affected.catch((e: unknown) => ({ rejected: e }));
       await tx.run('INSERT INTO t VALUES (2)');
     });
+    if (
+      !(await exercised(
+        seenRunning,
+        'the INSERT ended before it was seen running',
+      ))
+    )
+      return;
     expect(caught).toBe(reason);
     expect(affected).toEqual({ rejected: reason });
     expect(await bigCount(db)).toBe(0);

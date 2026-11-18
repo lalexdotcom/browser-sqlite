@@ -13,8 +13,8 @@
 // Measured under rstest (before the move to Vitest), when the file held the
 // two chunk() tests: 13/13 real (non-skipped) green runs, and, as the
 // falsifier, commenting out the `registry.watch(gen, held, token)` registration
-// in src/queries.ts makes both of them hard-time out at 60000 ms with all ten
-// retry rounds exhausted, rather than pass. The file now holds four tests, the
+// in src/queries.ts makes both of them hard-time out at 60000 ms, rather than
+// pass. The file now holds four tests, the
 // two chunk() ones and their stream() twins. Re-run under Vitest on
 // 2026-10-19 with BSQ_EXPOSE_GC=1: the four pass on Chrome and are skipped on
 // Firefox, which has no --expose-gc. The falsifier is what tells a future
@@ -47,10 +47,11 @@ describe('an abandoned generator is recovered at collection', () => {
           await nextTask();
         })();
 
-        // Bounded retry: one collection is not a guarantee, and a hang is not
-        // a report. Ten rounds, then a verdict either way.
+        // One collection is not a guarantee, and no number of rounds is a
+        // bound on when one reclaims: retried until served, the test's own
+        // timeout is the verdict on a generator never reclaimed.
         let served = false;
-        for (let round = 0; round < 10 && !served; round++) {
+        while (!served) {
           gc();
           await sleep(scaled(100));
           const read = db.all('SELECT 1 AS ok').then(() => true);
@@ -101,7 +102,7 @@ describe('an abandoned generator is recovered at collection', () => {
         })();
 
         let served = false;
-        for (let round = 0; round < 10 && !served; round++) {
+        while (!served) {
           gc();
           await sleep(scaled(100));
           const read = db.all('SELECT 1 AS ok').then(() => true);
@@ -139,10 +140,11 @@ describe('an abandoned generator is recovered at collection', () => {
           await nextTask();
         })();
 
-        // Bounded retry: one collection is not a guarantee, and a hang is not
-        // a report. Ten rounds, then a verdict either way.
+        // One collection is not a guarantee, and no number of rounds is a
+        // bound on when one reclaims: retried until served, the test's own
+        // timeout is the verdict on a generator never reclaimed.
         let served = false;
-        for (let round = 0; round < 10 && !served; round++) {
+        while (!served) {
           gc();
           await sleep(scaled(100));
           const read = db.all('SELECT 1 AS ok').then(() => true);
@@ -193,7 +195,7 @@ describe('an abandoned generator is recovered at collection', () => {
         })();
 
         let served = false;
-        for (let round = 0; round < 10 && !served; round++) {
+        while (!served) {
           gc();
           await sleep(scaled(100));
           const read = db.all('SELECT 1 AS ok').then(() => true);

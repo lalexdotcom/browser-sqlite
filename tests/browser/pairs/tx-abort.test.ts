@@ -16,6 +16,14 @@ import {
 const BIG_INSERT =
   'INSERT INTO big WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1000000) SELECT x FROM c';
 
+/**
+ * One INSERT that computes for minutes before it writes its one row: only an
+ * abandon or the transaction's death ends it, so it is running when abandoned
+ * on any runner — where a build can cut it (`requires:interruptible`).
+ */
+const ENDLESS_INSERT =
+  'INSERT INTO big SELECT count(*) FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 2000000000) SELECT x FROM c)';
+
 type Debuggable = { debug: { workers: { creationTime: number }[] } };
 
 /** The pool's workers by birth time: a change means one was evicted and respawned. */
@@ -50,8 +58,8 @@ describe('a write abandoned inside a transaction', () => {
       await expect(
         db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
-          await tx.run(BIG_INSERT, [], {
-            signal: abandonOnceRunning(db, BIG_INSERT, reason).signal,
+          await tx.run(ENDLESS_INSERT, [], {
+            signal: abandonOnceRunning(db, ENDLESS_INSERT, reason).signal,
           });
         }),
       ).rejects.toBe(reason);
@@ -75,16 +83,26 @@ describe('a write abandoned inside a transaction', () => {
       const before = workerIdentity(db);
       const reason = new Error('abandon the write');
       let caught: unknown;
+      // Finite: a caught abandoned write runs on to its end, then is undone —
+      // on every build, so an endless one would hold the next statement.
+      const { signal, abandonedRunning } = abandonOnceRunning(
+        db,
+        BIG_INSERT,
+        reason,
+      );
       await db.transaction(async (tx) => {
         await tx.run('INSERT INTO t VALUES (1)');
-        caught = await tx
-          .run(BIG_INSERT, [], {
-            signal: abandonOnceRunning(db, BIG_INSERT, reason).signal,
-          })
-          .catch((e) => e);
+        caught = await tx.run(BIG_INSERT, [], { signal }).catch((e) => e);
         await tx.run('INSERT INTO t VALUES (2)');
       });
 
+      if (
+        !(await exercised(
+          abandonedRunning(),
+          'the write ended before it was seen running',
+        ))
+      )
+        return;
       expect(caught).toBe(reason);
       expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
         { a: 0 },
@@ -106,15 +124,24 @@ describe('a write abandoned inside a transaction', () => {
       const db = await setUp();
       try {
         const reason = new Error('abandon the write');
+        // Finite: nothing can cut it on this build, it runs on to its end.
+        const { signal, abandonedRunning } = abandonOnceRunning(
+          db,
+          BIG_INSERT,
+          reason,
+        );
         await db.transaction(async (tx) => {
-          await tx
-            .run(BIG_INSERT, [], {
-              signal: abandonOnceRunning(db, BIG_INSERT, reason).signal,
-            })
-            .catch(() => {});
+          await tx.run(BIG_INSERT, [], { signal }).catch(() => {});
           await tx.run('INSERT INTO t VALUES (2)');
         });
 
+        if (
+          !(await exercised(
+            abandonedRunning(),
+            'the write ended before it was seen running',
+          ))
+        )
+          return;
         expect(await db.all('SELECT count(*) AS n FROM big')).toEqual([
           { n: 0 },
         ]);
@@ -180,6 +207,15 @@ describe('a write abandoned inside a transaction', () => {
           await tx.run('INSERT INTO t VALUES (2)');
         });
 
+        // A finite write (it runs on, abandoned, on every build) can also end
+        // before its 30 ms deadline on a fast runner: then it simply resolved.
+        if (
+          !(await exercised(
+            caught instanceof Error,
+            'the write ended before its 30 ms deadline',
+          ))
+        )
+          return;
         expect(caught).toMatchObject({
           code: 'OPERATION_TIMEOUT',
           timeout: 30,

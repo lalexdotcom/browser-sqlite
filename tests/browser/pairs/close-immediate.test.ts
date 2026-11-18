@@ -10,12 +10,15 @@ import {
   waitUntil,
 } from '../helpers';
 
-/** A write slow enough to still be running when close() looks at it. */
-const SLOW_INSERT_ROWS = 2_000_000;
-const SLOW_INSERT =
-  'INSERT INTO t (a) WITH RECURSIVE c(x) AS ' +
-  `(SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${SLOW_INSERT_ROWS}) ` +
-  'SELECT x FROM c';
+/**
+ * A write that computes for minutes before it writes its one row: only
+ * close() ends it, so it is in flight when close() looks, and cut, on any
+ * runner. A finite one (2 000 000 rows until 2026-11-17) could end between two
+ * polls, or commit before the interrupt arrived.
+ */
+const ENDLESS_INSERT =
+  'INSERT INTO t (a) SELECT count(*) FROM (WITH RECURSIVE c(x) AS ' +
+  '(SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 2000000000) SELECT x FROM c)';
 
 /** A request holds a worker it has not handed back — i.e. a write is live. */
 const aRequestIsInFlight =
@@ -210,7 +213,7 @@ describe('close({ immediate: true })', () => {
     const shared = sharedDatabase();
     const db = shared.open({ poolSize: 1, debug: true });
     await db.run('CREATE TABLE t (a)');
-    const write = db.run(SLOW_INSERT);
+    const write = db.run(ENDLESS_INSERT);
     const outcome = write.then(
       () => 'landed',
       (error: { code?: string }) => error.code ?? 'unknown',
@@ -225,8 +228,6 @@ describe('close({ immediate: true })', () => {
     );
     await again.close();
 
-    if (!(await exercised(result !== 'landed', 'the write was cut by close()')))
-      return;
     expect(result).toBe('CLIENT_CLOSED');
     expect(n).toBe(0);
   });

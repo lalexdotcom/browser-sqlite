@@ -610,8 +610,11 @@ describe('reopening a database after its worker died', () => {
   it('fails with the reason when a killed statement keeps the file', {
     tags: ['vfs:OPFSAdaptiveVFS', 'browser:firefox'],
   }, async () => {
-    // Never released within the test.
-    const { db, running, step } = await killMidStatement(60_000, 6_000);
+    // Never released within the test. `openTimeout` is not the subject here,
+    // only the replacement's bound: its boot must fit in it with a second to
+    // spare (client.ts) or WORKER_TIMEOUT wins, so it follows the platform's
+    // pace like any other bound — a fixed 6 s bet the boot under ~5 s.
+    const { db, running, step } = await killMidStatement(60_000, scaled(6_000));
 
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
     const failure = await step('db.read', db.all('SELECT 1')).catch(
@@ -633,7 +636,11 @@ describe('reopening a database after its worker died', () => {
   }, async () => {
     // The first replacement fails on the held file; its own restart must wait
     // as long, not fall back to the idle budget and a bare engine error.
-    const { db, running, step } = await killMidStatement(60_000, 6_000, 2);
+    const { db, running, step } = await killMidStatement(
+      60_000,
+      scaled(6_000),
+      2,
+    );
 
     await expect(running).rejects.toMatchObject({ code: 'WORKER_CRASHED' });
     const failure = await step('db.read', db.all('SELECT 1')).catch(

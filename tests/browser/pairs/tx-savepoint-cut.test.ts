@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { abandonOnceRunning, createTestClient, scaled } from '../helpers';
+import {
+  abandonOnceRunning,
+  createTestClient,
+  exercised,
+  scaled,
+} from '../helpers';
 
 /**
  * spec 2026-09-11 on the one configuration the ordinary projects cannot reach:
@@ -7,8 +12,19 @@ import { abandonOnceRunning, createTestClient, scaled } from '../helpers';
  * a running step — so a savepointed write must not be cut by its own signal,
  * and must be cut by the transaction's death.
  */
+/**
+ * Finite: a caught abandoned write runs on to its end before it is undone, so
+ * the next statement waits for it.
+ */
 const BIG_INSERT =
   'INSERT INTO big WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 1000000) SELECT x FROM c';
+
+/**
+ * Endless until something ends it: one that escapes the callback is cut by the
+ * transaction's death, so it is running when abandoned on any runner.
+ */
+const ENDLESS_INSERT =
+  'INSERT INTO big SELECT count(*) FROM (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 2000000000) SELECT x FROM c)';
 
 const setUp = async () => {
   const db = await createTestClient({
@@ -33,15 +49,19 @@ describe('a savepointed write on the sync isolated build (spec 2026-09-11)', {
     async () => {
       const db = await setUp();
       try {
+        const { signal, abandonedRunning } = abandonOnceRunning(db, BIG_INSERT);
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
-          await tx
-            .run(BIG_INSERT, [], {
-              signal: abandonOnceRunning(db, BIG_INSERT).signal,
-            })
-            .catch(() => {});
+          await tx.run(BIG_INSERT, [], { signal }).catch(() => {});
           await tx.run('INSERT INTO t VALUES (2)');
         });
+        if (
+          !(await exercised(
+            abandonedRunning(),
+            'the write ended before it was seen running',
+          ))
+        )
+          return;
         expect(await db.all('SELECT a FROM t ORDER BY a')).toEqual([
           { a: 0 },
           { a: 1 },
@@ -59,8 +79,8 @@ describe('a savepointed write on the sync isolated build (spec 2026-09-11)', {
 
   // Falsifiable: in `settled`, stop racing `running` against the own-abort
   // signal (`return await running;` unconditionally) — `tx.run` then waits
-  // for BIG_INSERT to finish instead of rejecting at its abort, nothing ever
-  // escapes the callback, and the transaction commits every abandoned row.
+  // for the endless write instead of rejecting at its abort, nothing ever
+  // escapes the callback, and the test runs out of time.
   it(
     'keeps nothing when the rejection escapes',
     async () => {
@@ -70,8 +90,8 @@ describe('a savepointed write on the sync isolated build (spec 2026-09-11)', {
         await expect(
           db.transaction(async (tx) => {
             await tx.run('INSERT INTO t VALUES (1)');
-            await tx.run(BIG_INSERT, [], {
-              signal: abandonOnceRunning(db, BIG_INSERT, reason).signal,
+            await tx.run(ENDLESS_INSERT, [], {
+              signal: abandonOnceRunning(db, ENDLESS_INSERT, reason).signal,
             });
           }),
         ).rejects.toBe(reason);

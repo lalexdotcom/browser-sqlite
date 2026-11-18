@@ -123,7 +123,9 @@ describe('query timeout', () => {
       // clock must run during the wait, which is what the assertion pins.
       const holder = new AbortController();
       let longSettled = false;
-      const long = db.all(longQuery(20_000_000), [], {
+      // Endless: the holder must outlast the call's 150 ms deadline, which a
+      // finite one only bet on. It is abandoned in the finally below.
+      const long = db.all(longQuery(2_000_000_000), [], {
         signal: holder.signal,
       });
       long.then(

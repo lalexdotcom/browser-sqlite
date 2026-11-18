@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, scaled, sharedDatabase } from '../helpers';
+import {
+  abandonOnceRunning,
+  createTestClient,
+  scaled,
+  sharedDatabase,
+} from '../helpers';
 
 /**
  * `poolSize: 1` throughout this file. At the default size two executions of
@@ -166,7 +171,6 @@ describe('statement cache', () => {
 
   it('an aborted query leaves its cached statement reusable', {
     tags: ['requires:interruptible'],
-    timeout: scaled(120_000),
   }, async () => {
     // Needs interruptible: on a sync build outside cross-origin isolation the
     // abort cannot cut the statement, so the read below waits the whole query
@@ -176,23 +180,21 @@ describe('statement cache', () => {
     await db.run('CREATE TABLE t (a INTEGER)');
     await db.run('INSERT INTO t VALUES (1)');
 
-    // Slow enough that the signal fires while `step()` is still running. This
-    // is the exit `first()` does not reach: there, the loop breaks after a row
-    // has been served; here the gate stops it mid-statement.
-    //
-    // 2M is deliberate, and the budget below is what pays for it. Shrinking it
-    // narrows the margin over the 100 ms signal on the FASTEST engine, which is
-    // the thing this test exists to exercise: measured here, 400k finishes
-    // before the signal on Chromium and the abort never happens, and 1M leaves
-    // only ~2.5x. At 2M the margin is ~24x on Chromium, and Firefox — 3.8x
-    // slower on this query — costs ~28 s, which is why the budget is explicit.
+    // One cached statement for every bound: the bound is a parameter. Small
+    // where it must run to its end, endless where it is abandoned once seen
+    // running — mid-statement, where `first()` never stops it. A fixed 2 M
+    // bound against `AbortSignal.timeout(100)` (until 2026-11-17) bet both
+    // ways: 400 k finished before the signal on Chromium, and the deadline
+    // could expire before the statement was posted.
     const sql =
-      'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 2000000) ' +
+      'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < ?) ' +
       'SELECT count(*) AS n FROM t CROSS JOIN (SELECT count(*) FROM c)';
 
-    await db.all(sql);
+    await db.all(sql, [2_000]);
     await expect(
-      db.all(sql, [], { signal: AbortSignal.timeout(100) }),
+      db.all(sql, [2_000_000_000], {
+        signal: abandonOnceRunning(db, sql).signal,
+      }),
     ).rejects.toThrow();
 
     // Falsifiability, verified by experiment: change `if (failed)` to
@@ -201,13 +203,10 @@ describe('statement cache', () => {
     // kept. What this test does NOT pin is that the abandoned statement left
     // no read transaction open; that half is not observable from JavaScript
     // and is recorded in `mem:follow-ups`.
-    await db.all(sql);
+    await db.all(sql, [2_000]);
     expect(runsOf(db, sql)[2]?.prepared).toBe(0);
 
     await db.close();
-    // Firefox runs this query 3.8x slower than Chromium and lands at ~28 s,
-    // which straddled the 30 s default: one CI run passed it at 27.6 and failed
-    // it at 31.7 on two pairs of the same suite.
   });
 });
 

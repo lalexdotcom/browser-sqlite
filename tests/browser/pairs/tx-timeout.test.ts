@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createTestClient, longQuery, scaled, sleep } from '../helpers';
+import {
+  createTestClient,
+  exercised,
+  longQuery,
+  scaled,
+  sleep,
+} from '../helpers';
 
 /**
  * A statement's own `timeout` inside a transaction, bounding it exactly like a
@@ -20,65 +26,91 @@ import { createTestClient, longQuery, scaled, sleep } from '../helpers';
  * Chromium, ~2.3 s Firefox, measured on `sync`) while staying well inside
  * each test's own timeout even when the statement is not actually cut.
  */
+// Only its timeout ends it, on a build that can cut a statement: no bet on
+// how long it runs (`mem:follow-ups/time-based-tests`, relative durations).
+const ENDLESS = longQuery(2_000_000_000);
+// A build that cannot cut one runs it to its end, so it must be finite — and
+// outlast the 200 ms deadline, a bet on its length. When it ends first, the
+// test says it was not exercised rather than going red: 2 000 000 did on a
+// starved Windows Firefox runner (2026-11-04, run 41847018002).
+const FINITE = longQuery(5_000_000);
+const UNCUT = 'the statement ended before its 200 ms timeout';
+
+const rejectsAndRollsBack = async (sql: string, cut: boolean) => {
+  const db = await createTestClient({ poolSize: 1 });
+  try {
+    await db.run('CREATE TABLE t (a INTEGER)');
+    const outcome = await db
+      .transaction(async (tx) => {
+        await tx.run('INSERT INTO t VALUES (1)');
+        await tx.all(sql, [], { timeout: 200 });
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    if (!cut && !(await exercised(outcome !== undefined, UNCUT))) return;
+    expect(outcome).toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 200 });
+    expect(await db.all('SELECT a FROM t')).toEqual([]);
+  } finally {
+    await db.close();
+  }
+};
+
+const catchesAndCommits = async (sql: string, cut: boolean) => {
+  const db = await createTestClient({ poolSize: 1 });
+  try {
+    await db.run('CREATE TABLE t (a INTEGER)');
+    let caughtCode: string | undefined;
+    // What a red must say: whether all() resolved or threw something without
+    // a code, and after how long.
+    let outcome = 'resolved';
+    let resolved = false;
+    await db.transaction(async (tx) => {
+      const started = performance.now();
+      try {
+        const rows = await tx.all(sql, [], { timeout: 200 });
+        resolved = true;
+        outcome = `resolved with ${rows.length} row(s)`;
+      } catch (error) {
+        caughtCode = (error as { code?: string }).code;
+        outcome = `threw ${String(error)}`;
+      } finally {
+        outcome += ` after ${Math.round(performance.now() - started)} ms`;
+      }
+      await tx.run('INSERT INTO t VALUES (1)');
+    });
+    if (!cut && !(await exercised(!resolved, `${UNCUT} (${outcome})`))) return;
+    expect(caughtCode, outcome).toBe('OPERATION_TIMEOUT');
+    expect(await db.all('SELECT a FROM t')).toEqual([{ a: 1 }]);
+  } finally {
+    await db.close();
+  }
+};
+
 describe('a statement timeout inside a transaction', () => {
   it(
     'rejects the transaction, uncaught, and rolls back an earlier write',
-    async () => {
-      const db = await createTestClient({ poolSize: 1 });
-      try {
-        await db.run('CREATE TABLE t (a INTEGER)');
+    { tags: ['requires:interruptible'], timeout: scaled(15000) },
+    () => rejectsAndRollsBack(ENDLESS, true),
+  );
 
-        await expect(
-          db.transaction(async (tx) => {
-            await tx.run('INSERT INTO t VALUES (1)');
-            await tx.all(longQuery(2_000_000), [], { timeout: 200 });
-          }),
-        ).rejects.toMatchObject({ code: 'OPERATION_TIMEOUT', timeout: 200 });
-
-        expect(await db.all('SELECT a FROM t')).toEqual([]);
-      } finally {
-        await db.close();
-      }
-    },
-    scaled(15000),
+  it(
+    'rejects the transaction, uncaught, and rolls back an earlier write, on a build that cannot cut it',
+    { tags: ['excludes:interruptible'], timeout: scaled(30000) },
+    () => rejectsAndRollsBack(FINITE, false),
   );
 
   it(
     'lets the callback catch the timeout and continue to COMMIT',
-    async () => {
-      const db = await createTestClient({ poolSize: 1 });
-      try {
-        await db.run('CREATE TABLE t (a INTEGER)');
+    { tags: ['requires:interruptible'], timeout: scaled(15000) },
+    () => catchesAndCommits(ENDLESS, true),
+  );
 
-        let caughtCode: string | undefined;
-        // What the next red must say (Windows Firefox, 2026-11-04, run
-        // 41847018002: `undefined`, nothing else known): whether all()
-        // resolved or threw something without a code, and after how long —
-        // a page timer fired late, or another error.
-        let outcome = 'resolved';
-        await db.transaction(async (tx) => {
-          const started = performance.now();
-          try {
-            const rows = await tx.all(longQuery(2_000_000), [], {
-              timeout: 200,
-            });
-            outcome = `resolved with ${rows.length} row(s)`;
-          } catch (error) {
-            caughtCode = (error as { code?: string }).code;
-            outcome = `threw ${String(error)}`;
-          } finally {
-            outcome += ` after ${Math.round(performance.now() - started)} ms`;
-          }
-          await tx.run('INSERT INTO t VALUES (1)');
-        });
-
-        expect(caughtCode, outcome).toBe('OPERATION_TIMEOUT');
-        expect(await db.all('SELECT a FROM t')).toEqual([{ a: 1 }]);
-      } finally {
-        await db.close();
-      }
-    },
-    scaled(15000),
+  it(
+    'lets the callback catch the timeout and continue to COMMIT, on a build that cannot cut it',
+    { tags: ['excludes:interruptible'], timeout: scaled(30000) },
+    () => catchesAndCommits(FINITE, false),
   );
 
   it(

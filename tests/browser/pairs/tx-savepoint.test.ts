@@ -141,13 +141,22 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
       const db = await setUp();
       try {
         let runningAtRejection = false;
+        const { signal, abandonedRunning } = abandonOnceRunning(db, BIG_INSERT);
         await db.transaction(async (tx) => {
-          const { signal } = abandonOnceRunning(db, BIG_INSERT);
           await tx.run(BIG_INSERT, [], { signal }).catch(() => {});
           // Rejected at its abort: the write is still running.
           runningAtRejection = theQueryIsRunning(db, BIG_INSERT)();
           await tx.run('INSERT INTO t VALUES (1)');
         });
+        // A finite write (it runs on, abandoned, on every build) can end
+        // before it is seen running: nothing was abandoned then.
+        if (
+          !(await exercised(
+            abandonedRunning(),
+            'the write ended before it was seen running',
+          ))
+        )
+          return;
         expect(runningAtRejection).toBe(true);
         // And the next statement paid for the rest: it started once the
         // abandoned write had ended.
@@ -181,18 +190,37 @@ describe('a write the callback abandons by its own signal (spec 2026-09-11, R1-R
       const db = await setUp();
       try {
         let second: unknown;
+        let secondRan = false;
         let runningAtRejection = false;
+        const { signal, abandonedRunning } = abandonOnceRunning(db, BIG_INSERT);
         await db.transaction(async (tx) => {
           await tx.run('INSERT INTO t VALUES (1)');
-          const { signal } = abandonOnceRunning(db, BIG_INSERT);
           await tx.run(BIG_INSERT, [], { signal }).catch(() => {});
           second = await tx
             .run('INSERT INTO t VALUES (9)', [], { timeout: 20 })
-            .catch((e) => e);
+            .then(
+              (result) => {
+                secondRan = true;
+                return result;
+              },
+              (e) => e,
+            );
           // Rejected while the abandoned write still runs, alone.
           runningAtRejection = theQueryIsRunning(db, BIG_INSERT)();
           await tx.run('INSERT INTO t VALUES (2)');
         });
+        // The abandoned write is finite (it runs on, on every build): it may
+        // end before it is seen running, or before the 20 ms deadline — then
+        // the second statement simply runs. Not exercised either way; a
+        // second statement that timed out once the write had ended (the
+        // falsifier) stays red below.
+        if (
+          !(await exercised(
+            abandonedRunning() && !secondRan,
+            'the abandoned write ended before the second statement timed out',
+          ))
+        )
+          return;
         expect(second).toMatchObject({
           code: 'OPERATION_TIMEOUT',
           timeout: 20,

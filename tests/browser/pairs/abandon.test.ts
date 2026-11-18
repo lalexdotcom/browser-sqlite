@@ -4,6 +4,7 @@ import type { PoolWorker } from '../../../src/pool';
 import { databasePath } from '../../../src/utils';
 import {
   createTestClient,
+  exercised,
   nextTask,
   removeDatabaseFiles,
   scaled,
@@ -73,17 +74,28 @@ describe('an abandoned generator gives its worker back', () => {
       const db = await createTestClient({ poolSize: 1 });
       try {
         await seed(db);
+        const deadline = scaled(2000);
+        const called = performance.now();
         await abandon(() =>
           db.chunk('SELECT n FROM t', [], {
             chunkSize: 10,
-            timeout: scaled(2000),
+            timeout: deadline,
           }),
         );
 
         // poolSize 1: the only worker is leased and parked between two step()
         // calls. Before the deadline nothing may be served — this half is what
-        // proves the leak is real rather than assuming it.
-        expect(await servesWithin(db, 300)).toBe(false);
+        // proves the leak is real rather than assuming it. Only before it: the
+        // deadline runs from the call, so on a runner slow enough to spend it
+        // before the 300 ms are over, the window proves nothing.
+        const servedEarly = await servesWithin(db, 300);
+        if (
+          await exercised(
+            performance.now() - called < deadline,
+            'the deadline expired before the 300 ms window ended',
+          )
+        )
+          expect(servedEarly).toBe(false);
 
         // After it, the reclaim has run and the pool serves again.
         expect(await serves(db)).toBe(true);
