@@ -49,7 +49,7 @@ been work on nothing.
 | `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | CLOSED 2026-11-16 — the asked-for `#getOldestTxInUse()` test added (`ca54a2c4`), squash-merged 2026-11-15 (`ef1399ce`), repinned 2026-11-16 (`build/repin-wa-sqlite-ef1399c`) |
 | `safari-async-slowdown` | Safari's `async` build slows down after a few seconds of work | OPEN — cause: JSC's OMG tier on the Asyncify `sqlite3VdbeExec`. **Bug-gated: WebKit 329813**, last seen 2026-11-12: NEW, unassigned, InRadar since 2026-11-09 (rdar 192262404), no human comment |
 | `wa-sqlite-389-adaptive-journal` | `OPFSAdaptiveVFS` keeps its journal's access handle between transactions (PR #389) | OPEN — PR open, waiting for review |
-| `wa-sqlite-393-coopsync-hot-journal` | Carry PR #393 (not ours): `OPFSCoopSyncVFS` misses a hot journal left by a connection terminated mid-transaction, so another tab's open connection reads it half-applied (issue #392) | OPEN — merged upstream 2026-11-18 (`205eed58`), repinned 2026-11-19 on its branch, green locally; the OS matrices on the branch still owed (needs a push) |
+| `wa-sqlite-393-coopsync-hot-journal` | Carry PR #393 (not ours): `OPFSCoopSyncVFS` misses a hot journal left by a connection terminated mid-transaction, so another tab's open connection reads it half-applied (issue #392) | CLOSED 2026-11-19 — repinned to `205eed58` and merged, green locally; the OS matrices run at `main`'s next push |
 
 ## Deferred — a later version
 
