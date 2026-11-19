@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_CREDIT_WINDOW } from '../../../src/credits';
 import {
   createTestClient,
   interceptWorkers,
@@ -113,22 +114,53 @@ describe('back-pressure', () => {
       chunkSize: 1,
       signal: caller.signal,
     });
+    // The consumer pulls until it is told to hold, then stops pulling, so
+    // that no credit leaves while the worker is killed.
+    let holding = false;
+    let held = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const consuming = (async () => {
       for await (const _rows of streaming) {
-        await sleep(50); // long enough that the worker is waiting, not working
+        if (holding) {
+          held = true;
+          await gate;
+        }
+        await sleep(50);
       }
     })();
 
-    // The credit window full: the worker has sent all it may and waits for a
-    // credit, not inside a step. Its own stage says so.
     await waitUntil(
       () => db.debug?.workers[0]?.run === 'awaiting-credit',
       'the worker parked on a credit',
     );
-    killSilently(records[0].worker); // silent death: no event of any kind
+    holding = true;
+    await waitUntil(() => held, 'the consumer to hold');
+    // Parked for good: the worker has posted every chunk its window and the
+    // credits already sent allow, then stepped once more and reported its
+    // wait, last. A stage alone is not enough: a credit sent before the hold
+    // can still be on its way, and the worker steps again on it — reading
+    // the database. Killed inside that step on IndexedDB, it ends with a
+    // transaction live, and Safari then keeps its connection open for good
+    // (WebKit 324094): every later file of the cell fails its storage wipe
+    // (2 kills in 34 on Safari 27.2 `jspi`, 0 in 100 once parked for good).
+    const record = records[0];
+    await waitUntil(
+      () =>
+        record.received.filter((type) => type === 'chunk').length ===
+          DEFAULT_CREDIT_WINDOW +
+            record.posted.filter((type) => type === 'credit').length &&
+        record.received.at(-1) === 'run' &&
+        db.debug?.workers[0]?.run === 'awaiting-credit',
+      'the worker parked with no credit left',
+    );
+    killSilently(record.worker); // silent death: no event of any kind
     // Then the caller gives up, in that order: an abort on a timer could land
     // before the kill on a slow runner, and stop a live worker instead.
     caller.abort(new Error('the caller gives up'));
+    release();
 
     await expect(consuming).rejects.toThrow();
     // Past drainTimeout (500 ms), then the replacement's boot. Bounded as the
