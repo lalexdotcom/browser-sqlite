@@ -6,7 +6,16 @@ Part of `mem:stack-and-build`. Moved here from it on 2026-10-08; the chain of ea
 
 `wa-sqlite` is a devDependency only, vendored into `dist/worker/worker.js` at build time so it
 never reaches a consumer lockfile. **Pinned by commit SHA, not by tag, since 2026-09-15 (user)**:
-`github:rhashimoto/wa-sqlite#ef1399ce62018693b2303d7a187ab986c3b9b278` since 2026-11-16
+`github:rhashimoto/wa-sqlite#205eed588e60ac43401292df6583dbdc7c7fe966` since 2026-11-19
+(branch `build/repin-wa-sqlite-205eed5`), upstream `master` with #393 merged on 2026-11-18
+(justshrey's, not ours; the only commit since; version still `1.2.0`). **Unlike the three repins
+before it, this one changes what the library runs:** the installed package differs from the previous
+one by `src/examples/OPFSCoopSyncVFS.js` alone (byte for byte `205eed58`'s) and #393's test files;
+`dist/` identical. The patch (#389 alone) applied unchanged, lockfile hash still `a5a9ebfe…`; rspack
+caches cleared, `dist/worker/worker.js` carries the `getSize()` loop over `DB_RELATED_FILE_SUFFIXES`.
+CHANGELOG entry under *Fixed*. Local validation 2026-11-19: tsc, biome, lint clean; `pnpm test`
+423/423 files, 3 305 passed, 0 failed, 463 s; `pnpm test:conformance` 8/8 files, 168 passed / 32
+skipped. Before it, `ef1399ce62018693b2303d7a187ab986c3b9b278` since 2026-11-16
 (branch `build/repin-wa-sqlite-ef1399c`), upstream `master` with our #387 squash-merged on
 2026-11-15 (the only commit since; version still `1.2.0`). The patch lost #387's hunks (238 lines,
 `WebLocksMixin.js`, `IDBBatchAtomicVFS.js`, `IDBMirrorVFS.js`) and now carries #389 alone; the

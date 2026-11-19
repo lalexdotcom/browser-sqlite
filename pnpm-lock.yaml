@@ -59,8 +59,8 @@ importers:
         specifier: 5.0.3
         version: 5.0.3(@types/node@24.12.0)(@vitest/browser-webdriverio@5.0.0)(@vitest/ui@5.0.3)(vite@8.3.4(@types/node@24.12.0)(jiti@2.7.0)(yaml@2.8.3))
       wa-sqlite:
-        specifier: github:rhashimoto/wa-sqlite#ef1399ce62018693b2303d7a187ab986c3b9b278
-        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/ef1399ce62018693b2303d7a187ab986c3b9b278(patch_hash=a5a9ebfeb28f0bdcfb9577dcadfa09ef8f763a293e72d02a278e63e499e7d632)
+        specifier: github:rhashimoto/wa-sqlite#205eed588e60ac43401292df6583dbdc7c7fe966
+        version: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/205eed588e60ac43401292df6583dbdc7c7fe966(patch_hash=a5a9ebfeb28f0bdcfb9577dcadfa09ef8f763a293e72d02a278e63e499e7d632)
       webdriverio:
         specifier: 10.0.2
         version: 10.0.2
@@ -1795,8 +1795,8 @@ packages:
       jsdom:
         optional: true
 
-  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/ef1399ce62018693b2303d7a187ab986c3b9b278:
-    resolution: {tarball: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/ef1399ce62018693b2303d7a187ab986c3b9b278}
+  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/205eed588e60ac43401292df6583dbdc7c7fe966:
+    resolution: {tarball: https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/205eed588e60ac43401292df6583dbdc7c7fe966}
     version: 1.2.0
 
   wait-port@1.1.0:
@@ -3411,7 +3411,7 @@ snapshots:
     transitivePeerDependencies:
       - msw
 
-  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/ef1399ce62018693b2303d7a187ab986c3b9b278(patch_hash=a5a9ebfeb28f0bdcfb9577dcadfa09ef8f763a293e72d02a278e63e499e7d632): {}
+  wa-sqlite@https://codeload.github.com/rhashimoto/wa-sqlite/tar.gz/205eed588e60ac43401292df6583dbdc7c7fe966(patch_hash=a5a9ebfeb28f0bdcfb9577dcadfa09ef8f763a293e72d02a278e63e499e7d632): {}
 
   wait-port@1.1.0:
     dependencies:

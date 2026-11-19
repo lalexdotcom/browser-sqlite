@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **On `OPFSCoopSyncVFS`, a client no longer reads the unfinished transaction of a client terminated in the middle of a write on the same database,** as when another tab is closed during a large write: it rolls that transaction back, where it read it and could report `database disk image is malformed`, or write over it and leave the database unrecoverable. The fix is upstream's, in the bundled wa-sqlite, which is updated.
+
 ## [1.0.0-rc.12] - 2026-11-17
 
 ### Added
