@@ -49,7 +49,7 @@ been work on nothing.
 | `wa-sqlite-387-idb-factory` | `getIDBFactory` and `prefix` for the IndexedDB VFS (PR #387) | CLOSED 2026-11-16 — the asked-for `#getOldestTxInUse()` test added (`ca54a2c4`), squash-merged 2026-11-15 (`ef1399ce`), repinned 2026-11-16 (`build/repin-wa-sqlite-ef1399c`) |
 | `safari-async-slowdown` | Safari's `async` build slows down after a few seconds of work | OPEN — cause: JSC's OMG tier on the Asyncify `sqlite3VdbeExec`. **Bug-gated: WebKit 329813**, last seen 2026-11-12: NEW, unassigned, InRadar since 2026-11-09 (rdar 192262404), no human comment |
 | `wa-sqlite-389-adaptive-journal` | `OPFSAdaptiveVFS` keeps its journal's access handle between transactions (PR #389) | OPEN — PR open, waiting for review |
-| `wa-sqlite-393-coopsync-hot-journal` | Carry PR #393 (not ours): `OPFSCoopSyncVFS` misses a hot journal left by a connection terminated mid-transaction, so another tab's open connection reads it half-applied (issue #392) | OPEN — 2026-11-06: to test, then carry in `patches/`; PR open, not reviewed |
+| `wa-sqlite-393-coopsync-hot-journal` | Carry PR #393 (not ours): `OPFSCoopSyncVFS` misses a hot journal left by a connection terminated mid-transaction, so another tab's open connection reads it half-applied (issue #392) | OPEN — merged upstream 2026-11-18 (`205eed58`): repin wa-sqlite to it, with the full validation (it changes `OPFSCoopSyncVFS`) |
 
 ## Deferred — a later version
 
@@ -91,6 +91,7 @@ been work on nothing.
 | `wa-step-upstream` | A cheaper `step()` upstream (#383, PR #388) | CLOSED — 2026-11-02, `build/repin-wa-sqlite-e4f54a0`: #388 merged upstream (`e4f54a05`), repinned, dropped from the patch |
 | `firefox-opfs-fsync` | Firefox + OPFS metadata fsyncs; the 30 s default open timeout on Windows Firefox | CLOSED — 2026-10-30: the per-commit journal cycle fixed upstream (wa-sqlite #389, carried); the 30 s default open timeout kept, a second CoopSync client opening in 0.9-3.2 s on Windows Firefox |
 | `tx-abort-race-window` | An abort fired during a savepointed statement's post is missed (`makeAbortRace` never tests `aborted`) | CLOSED — 2026-10-29, `fix/tx-abort-race-window`: `makeAbortRace` rejects at once on a fired signal |
+| `wa-sqlite-397-398-writeahead` | Two `OPFSWriteAheadVFS` defects reported upstream as ISSUES (cdargel): #397 a failed write in `commit()` leaves `#txInProgress` set, #398 a passive checkpoint after an interrupted one can write older pages over newer | OPEN — no upstream fix; decision owed before 1.0.0 |
 | `safari-backpressure-idb-strand` | `backpressure` leaves IndexedDB open on Safari 27.2 `IDBBatchAtomicVFS`, and every later file of the cell fails its storage wipe (2026-11-18, macOS 26, 2 runs of 2) | OPEN — a chantier of its own before the next release (user) |
 | `test-hygiene-side-findings` | Side findings of the 2026-11-17 relative-duration audit: `scaled()` on library inputs, missing `killedStatementRuns` skips, a dead guard, stale comments | OPEN — kept aside (user, 2026-11-17) |
 | `time-based-tests` | Tests waiting on time where an event or a state would do; time only as a timeout (user) | CLOSED — 2026-10-29, `test/next-task-yields` and `test/time-based-a-b`: waits on states, time only as timeouts, each step re-falsified |

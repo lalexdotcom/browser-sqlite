@@ -1,6 +1,6 @@
 # Follow-up — carry wa-sqlite PR #393: `OPFSCoopSyncVFS` misses a hot journal left by a terminated connection (issue #392, 2026-11-06)
 
-**Status: OPEN** — to test, then carry in `patches/`; the PR is not ours (justshrey), open, not reviewed as of 2026-11-06.
+**Status: OPEN** — **merged upstream on 2026-11-18** (`205eed58`, "OPFSCoopSyncVFS: roll back a terminated connection's transaction on connections already open"); nothing to carry in `patches/` any more. Next: repin wa-sqlite to `205eed58`, as for #386/#387 — but unlike those this repin CHANGES what the library runs (`OPFSCoopSyncVFS`), so it owes the full validation, every platform through `platform.yaml` included. Until 2026-11-18: to test, then carry in `patches/`; the PR is not ours (justshrey).
 
 Part of `mem:follow-ups`.
 
