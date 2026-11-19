@@ -91,7 +91,7 @@
 		"typescript": "^7.0.2",
 		"vite": "8.3.4",
 		"vitest": "5.0.3",
-		"wa-sqlite": "github:rhashimoto/wa-sqlite#ef1399ce62018693b2303d7a187ab986c3b9b278",
+		"wa-sqlite": "github:rhashimoto/wa-sqlite#205eed588e60ac43401292df6583dbdc7c7fe966",
 		"webdriverio": "10.0.2"
 	},
 	"lint-staged": {
