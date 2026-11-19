@@ -1,11 +1,19 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "changelog-maintenance": {
       "source": "lalexdotcom/skills",
       "sourceType": "github",
       "skillPath": "skills/changelog-maintenance/SKILL.md",
-      "computedHash": "086152e658f70830397bec9f10d43e6655019041cd6440e17e5ef7262f511149"
+      "computedHash": ""
+    },
+    "handoff": {
+      "source": "lalexdotcom/skills",
+      "commit": "9d3dfac41e575027ad70a43d9a62a9608ecac8e5",
+      "sourceType": "github",
+      "skillPath": "skills/handoff/SKILL.md",
+      "computedHash": "c270f646e7aa174c17d1e96bac01da4048cb302029707caf229a0a789f02c617",
+      "installMode": "copy"
     }
   }
 }
