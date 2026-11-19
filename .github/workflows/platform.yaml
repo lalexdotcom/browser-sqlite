@@ -1,4 +1,5 @@
 name: Platform
+run-name: Platform · ${{ inputs.os }}
 
 # Everything a platform owes, in one place: the matrix (every pair through every
 # column of its browsers) and what runs outside it (the standalone tests and
