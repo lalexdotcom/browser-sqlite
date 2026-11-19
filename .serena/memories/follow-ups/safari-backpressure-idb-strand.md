@@ -1,6 +1,6 @@
 # Follow-up — `backpressure` leaves an IndexedDB connection open on Safari 27.2, and the whole cell fails behind it (2026-11-18)
 
-**Status: OPEN — cause found and fixed in the test (2026-11-19, branch `test/backpressure-kill-parked`, not merged: awaiting the user's go).** Was: seen twice, not investigated (user, 2026-11-18: a chantier of its own, before the next release). Would refuse a release (`untag`).
+**Status: CLOSED 2026-11-19 — cause found and fixed in the test (`test/backpressure-kill-parked`, merged on the user's "Ok enchaîne"; the four spike branches deleted, local and origin).** Left open, raised to the user and not decided: the amplification (one strand fails every later file of the cell); test 2's restart of 2026-11-18, never seen again. Was: seen twice, not investigated (user, 2026-11-18: a chantier of its own, before the next release). Would refuse a release (`untag`).
 
 Part of `mem:follow-ups`.
 
