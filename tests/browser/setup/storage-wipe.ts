@@ -1,4 +1,4 @@
-import { afterAll, inject } from 'vitest';
+import { afterAll, beforeAll, inject } from 'vitest';
 
 /**
  * Registered as a setup file by every browser project: after each test file's
@@ -73,24 +73,46 @@ function deleteIndexedDb(name: string): Promise<string | undefined> {
   });
 }
 
-async function wipeIndexedDb(problems: string[]): Promise<void> {
+async function wipeIndexedDb(
+  problems: string[],
+  inherited: ReadonlySet<string>,
+): Promise<void> {
   for (const { name } of await indexedDB.databases()) {
     if (name === undefined) continue;
     const problem = await deleteIndexedDb(name);
-    if (problem !== undefined) problems.push(problem);
+    // An earlier file left it and failed for it; this file is not charged.
+    if (problem !== undefined && !inherited.has(name)) problems.push(problem);
   }
 }
+
+/**
+ * The IndexedDB databases present before this file ran. The wipe after every
+ * file deletes them all, so one still present here is one an earlier file's
+ * wipe could not delete — and that file already failed for it. Safari keeps
+ * a connection open for the life of its process once a worker ended with a
+ * transaction live (WebKit 324094): failing every later file for the same
+ * database turned one fault into a whole red cell, its tests all green
+ * (2026-11-18, 64 files after `backpressure`).
+ */
+const inherited = new Set<string>();
+
+beforeAll(async () => {
+  for (const { name } of await indexedDB.databases()) {
+    if (name !== undefined) inherited.add(name);
+  }
+});
 
 afterAll(async () => {
   const problems: string[] = [];
   await removeOpfsEntries(problems, Date.now() + SETTLE_MS);
-  await wipeIndexedDb(problems);
+  await wipeIndexedDb(problems, inherited);
 
   // Verified, not assumed: whatever the removals did not take is a leak.
   const root = await navigator.storage.getDirectory();
   const left: string[] = [];
   for await (const name of root.keys()) left.push(`OPFS "${name}"`);
   for (const { name } of await indexedDB.databases()) {
+    if (name !== undefined && inherited.has(name)) continue;
     left.push(`IndexedDB "${name}"`);
   }
   if (problems.length > 0 || left.length > 0) {
