@@ -55,13 +55,49 @@ const CONCURRENT = 8;
 
 // The describe's `vfs:` tag names the subject, OPFSCoopSyncVFS's own handle
 // hand-over protocol; the build follows the cell's pair.
-const open = (file: string) =>
+const open = (file: string, debug = false) =>
   createSQLiteClient(file, {
     vfs: TEST_TARGET.vfs,
     build: TEST_TARGET.build,
+    debug,
   });
 
 const describeError = (e: any) => `${e?.code}: ${e?.message}`;
+
+/**
+ * The last status and boot stage seen on each client's workers, sampled while
+ * an attempt runs, so that a failure says where an open stalled. Observation
+ * only: nothing waits on it. On Windows Firefox a client once never got the
+ * handles back from another one opened at the same moment, `WORKER_TIMEOUT`
+ * after 120 s, twice in three `platform.yaml` runs and never in 88 dedicated
+ * ones (2026-11-20, `mem:follow-ups/coopsync-handover-windows-stall`); a lost
+ * worker can leave the debug list, hence the sampling.
+ */
+const watchBoot = (clients: Record<string, Client>) => {
+  const seen: Record<string, string> = {};
+  const sample = () => {
+    for (const [label, db] of Object.entries(clients)) {
+      for (const w of db.debug?.workers ?? []) {
+        seen[`${label} worker ${w.index}.${w.generation}`] =
+          `${w.status}/${w.boot ?? '-'}`;
+      }
+    }
+  };
+  const timer = setInterval(sample, 250);
+  return {
+    stop: () => clearInterval(timer),
+    /** Appends the last sample to every failure pushed since `from`. */
+    annotate: (failures: string[], from: number) => {
+      sample();
+      const where = Object.entries(seen)
+        .map(([worker, state]) => `${worker} ${state}`)
+        .join(', ');
+      for (let i = from; i < failures.length; i++) {
+        failures[i] = `${failures[i]} [last seen: ${where}]`;
+      }
+    },
+  };
+};
 
 const scrub = async (file: string) => {
   await removeDatabaseFiles(file, TEST_TARGET.vfs);
@@ -108,8 +144,10 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
         // Both built before A's CREATE TABLE: A prepares its barrier statement
         // on the empty schema, so its first barrier after B's first write must
         // be re-prepared inside one `step` — the inner unlock the bug released at.
-        const dbA = open(file);
-        const dbB = open(file);
+        const dbA = open(file, true);
+        const dbB = open(file, true);
+        const boot = watchBoot({ A: dbA, B: dbB });
+        const from = failures.length;
         try {
           await dbA.run('CREATE TABLE t (a INTEGER)');
           for (let round = 0; round < 3; round++) {
@@ -118,6 +156,8 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
         } catch (e) {
           failures.push(describeError(e));
         } finally {
+          boot.annotate(failures, from);
+          boot.stop();
           await dbB.close().catch(() => {});
           await dbA.close().catch(() => {});
           await scrub(file);
@@ -178,8 +218,10 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
           ),
         );
         const file = `cs-handover-${crypto.randomUUID()}`;
-        const dbA = open(file);
-        const dbB = open(file);
+        const dbA = open(file, true);
+        const dbB = open(file, true);
+        const boot = watchBoot({ A: dbA, B: dbB });
+        const from = failures.length;
         try {
           const settled = await Promise.allSettled([
             dbA.all('SELECT 1 AS one'),
@@ -189,6 +231,8 @@ describe('OPFSCoopSyncVFS hands the access handle over between calls only', {
             if (s.status === 'rejected') failures.push(describeError(s.reason));
           }
         } finally {
+          boot.annotate(failures, from);
+          boot.stop();
           await dbB.close().catch(() => {});
           await dbA.close().catch(() => {});
           await scrub(file);
