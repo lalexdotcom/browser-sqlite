@@ -22,6 +22,58 @@ const IDB_DELETE_MS = 5_000 * TIME_SCALE;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * The replies after which a worker holds no IndexedDB transaction: its VFS is
+ * closed (`closed`, `quiesced`), or the delete worker is done (`deleted`,
+ * `not-found`). The library waits for one of them before it terminates a
+ * worker, unless the worker cannot answer.
+ */
+const SETTLED = new Set(['closed', 'quiesced', 'deleted', 'not-found']);
+
+/** Workers this file terminated before they gave one of those replies. */
+let unanswered = 0;
+
+/**
+ * Counts the workers terminated unanswered. Installed before the file's own
+ * modules load, so the pool, `interceptWorkers` and `killSilently` all reach
+ * this terminate().
+ */
+const EngineWorker = globalThis.Worker;
+class WatchedWorker extends EngineWorker {
+  #settled = false;
+  constructor(url: string | URL, options?: WorkerOptions) {
+    super(url, options);
+    this.addEventListener('message', (event: MessageEvent) => {
+      const type = (event.data as { type?: unknown } | null)?.type;
+      if (typeof type === 'string' && SETTLED.has(type)) this.#settled = true;
+    });
+  }
+  override terminate(): void {
+    if (!this.#settled) unanswered += 1;
+    super.terminate();
+  }
+}
+globalThis.Worker = WatchedWorker;
+
+/**
+ * Safari keeps the IndexedDB connection of a worker terminated with a
+ * transaction live, for the life of the process (WebKit 324094). The library
+ * terminates a worker that cannot answer — stalled past `drainTimeout`, then
+ * past its quiesce grace — and a test may kill one on purpose: the database
+ * then cannot be deleted, with every behaviour of the library as intended.
+ * On Safari, after such a termination, an IndexedDB database still open is
+ * reported with this reason instead of failing the file. A database left
+ * open by a worker that did answer still fails it, on every engine: that is
+ * a close path keeping a transaction, the defect this wipe exists to catch.
+ */
+const ENGINE_KEEPS_KILLED_CONNECTIONS =
+  inject('bsqEnvironment')?.browser === 'safari';
+
+const STILL_OPEN = /^IndexedDB "(.*)" \(still open after/;
+
+/** The file's meta key the merged report reads (scripts/skip-notes.ts). */
+const STORAGE_NOTE = 'bsqStorageNote';
+
 const describeError = (error: unknown) =>
   error instanceof DOMException
     ? `${error.name}: ${error.message}`
@@ -102,7 +154,10 @@ beforeAll(async () => {
   }
 });
 
-afterAll(async () => {
+// Vitest parses the first argument for fixtures: it must be a destructuring
+// pattern, even an empty one.
+// biome-ignore lint/correctness/noEmptyPattern: required by Vitest, see above
+afterAll(async ({}, file) => {
   const problems: string[] = [];
   await removeOpfsEntries(problems, Date.now() + SETTLE_MS);
   await wipeIndexedDb(problems, inherited);
@@ -115,6 +170,22 @@ afterAll(async () => {
     if (name !== undefined && inherited.has(name)) continue;
     left.push(`IndexedDB "${name}"`);
   }
+
+  // WebKit 324094's signature: a database still open, on Safari, after a
+  // worker was terminated unanswered. Reported, not failed (see above).
+  const stranded = new Set(
+    problems.flatMap((problem) => STILL_OPEN.exec(problem)?.[1] ?? []),
+  );
+  if (ENGINE_KEEPS_KILLED_CONNECTIONS && unanswered > 0 && stranded.size > 0) {
+    const excused = (entry: string) =>
+      [...stranded].some((name) => entry.startsWith(`IndexedDB "${name}"`));
+    const names = [...stranded].map((name) => `"${name}"`).join(', ');
+    (file.meta as Record<string, unknown>)[STORAGE_NOTE] =
+      `IndexedDB ${names} still open after ${unanswered} worker(s) terminated unanswered: Safari keeps such a connection (WebKit 324094)`;
+    problems.splice(0, problems.length, ...problems.filter((p) => !excused(p)));
+    left.splice(0, left.length, ...left.filter((l) => !excused(l)));
+  }
+
   if (problems.length > 0 || left.length > 0) {
     throw new Error(
       `This file left storage behind that could not be wiped: ${[...new Set([...problems, ...left])].join('; ')}`,
