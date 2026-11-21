@@ -3,6 +3,7 @@ import {
   formatNotExercised,
   formatRetried,
   formatSkipNotes,
+  formatStorageNotes,
 } from '../../../scripts/skip-notes.ts';
 
 /**
@@ -152,6 +153,37 @@ describe('formatNotExercised', () => {
         '  the verdict was not parked',
         `    ${FILE} › d > t`,
         '      on chrome · A/x, firefox · A/x',
+        '',
+      ].join('\n'),
+    );
+  });
+});
+
+describe('formatStorageNotes', () => {
+  const NOTE =
+    'IndexedDB "IDBBatchAtomicVFS" still open after 1 worker(s) terminated unanswered: Safari keeps such a connection (WebKit 324094)';
+  const BP = 'tests/browser/pairs/backpressure.test.ts';
+
+  it('prints nothing when no file was excused', () => {
+    // Falsifiable: print the heading unconditionally and this goes red.
+    expect(formatStorageNotes([])).toBe('');
+  });
+
+  it('names each excused file with its cell and the reason', () => {
+    // Falsifiable: drop the section from the report and a strand the wipe
+    // excused passes unseen, which is the point of reporting it.
+    expect(
+      formatStorageNotes([
+        { file: BP, cell: 'safari · IDBBatchAtomicVFS/jspi', note: NOTE },
+        { file: BP, cell: 'safari · IDBBatchAtomicVFS/async', note: NOTE },
+      ]),
+    ).toBe(
+      [
+        '',
+        'Storage left by a browser defect (1 file) — not failed, look at it',
+        `  ${NOTE}`,
+        `    ${BP}`,
+        '      on safari · IDBBatchAtomicVFS/async, safari · IDBBatchAtomicVFS/jspi',
         '',
       ].join('\n'),
     );

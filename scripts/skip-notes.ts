@@ -123,6 +123,44 @@ export function formatNotExercised(outcomes: readonly TestOutcome[]): string {
   return `${lines.join('\n')}\n`;
 }
 
+/** The file meta key the storage wipe writes its note under. */
+const STORAGE_NOTE = 'bsqStorageNote';
+
+/** A file the storage wipe did not fail for a database a browser defect kept open. */
+export type StorageNote = { file: string; cell: string; note: string };
+
+/**
+ * The files whose storage a browser defect kept, by reason, each with its
+ * cells (tests/browser/setup/storage-wipe.ts): not a failure of the library,
+ * but not a clean pass either, so the report shows them.
+ */
+export function formatStorageNotes(notes: readonly StorageNote[]): string {
+  // reason → file → cells
+  const byNote = new Map<string, Map<string, string[]>>();
+  for (const { file, cell, note } of notes) {
+    const files = byNote.get(note) ?? new Map<string, string[]>();
+    byNote.set(note, files);
+    files.set(file, [...(files.get(file) ?? []), cell]);
+  }
+  if (byNote.size === 0) return '';
+  const count = new Set(notes.map(({ file }) => file)).size;
+  const lines = [
+    '',
+    `Storage left by a browser defect (${count} file${count > 1 ? 's' : ''}) — not failed, look at it`,
+  ];
+  for (const note of [...byNote.keys()].sort()) {
+    lines.push(`  ${note}`);
+    const files = byNote.get(note) as Map<string, string[]>;
+    for (const file of [...files.keys()].sort()) {
+      lines.push(
+        `    ${file}`,
+        `      on ${(files.get(file) as string[]).sort().join(', ')}`,
+      );
+    }
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 export default class SkipNotesReporter implements Reporter {
   private vitest: Vitest | undefined;
 
@@ -134,7 +172,16 @@ export default class SkipNotesReporter implements Reporter {
     if (this.vitest === undefined) return;
     const root = this.vitest.config.root;
     const outcomes: TestOutcome[] = [];
+    const storageNotes: StorageNote[] = [];
     for (const module of modules) {
+      const note = (module.meta() as Record<string, unknown>)[STORAGE_NOTE];
+      if (typeof note === 'string') {
+        storageNotes.push({
+          file: relative(root, module.moduleId),
+          cell: module.project.name,
+          note,
+        });
+      }
       for (const test of module.children.allTests()) {
         const result = test.result();
         const diagnostic = test.diagnostic();
@@ -153,7 +200,8 @@ export default class SkipNotesReporter implements Reporter {
     const text =
       formatSkipNotes(outcomes) +
       formatRetried(outcomes) +
-      formatNotExercised(outcomes);
+      formatNotExercised(outcomes) +
+      formatStorageNotes(storageNotes);
     if (text !== '') this.vitest.logger.log(text);
   }
 }

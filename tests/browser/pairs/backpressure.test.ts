@@ -66,11 +66,18 @@ describe('back-pressure', () => {
   // Falsifiable: remove the `stop` message from pool.ts's drain, or the wake
   // from the gate's stop(), and the worker stays parked on a credit until
   // drainTimeout, is presumed dead, and is replaced. Pins spec §5.1.
+  //
+  // drainTimeout bounds how long the worker may take to answer its stop, and
+  // a passing run never waits for it: the test goes on as soon as the worker
+  // is idle again. So it is sized on the slowest answer seen, not the usual
+  // one: Safari can stall a worker for seconds (see lifecycle.test.ts), and
+  // a 2 s bound saw this worker replaced on Safari 27.2 `async`, the test
+  // taking 9.4 s where it takes 0.5-1 s (2026-11-18, macOS 26).
   it('does not restart the worker when a stream is abandoned', async () => {
     const records = interceptWorkers();
     const db = await createTestClient({
       poolSize: 1,
-      drainTimeout: scaled(1000),
+      drainTimeout: scaled(15_000),
       debug: true,
     });
     await seed(db);
