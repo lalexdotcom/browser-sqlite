@@ -312,3 +312,10 @@ A diagnostic spike called Vitest directly instead of `scripts/test-plan.ts`, wit
 **Broken again on 2026-11-02 (`spike/windows-file-arg`, runs 41459385537 and 41467529756):** the spike changed `tests.yaml`'s Test step on the spike branch and dispatched `tests-windows.yaml` with `gh workflow run --ref`, exactly the repurposing this entry forbids; it worked, which is no excuse. Read this entry before any CI spike.
 
 **When a spike or a script goes around a helper, a planner or a wrapper of this project, first read what that tool takes care of** — its memory entry and its source, not only its command line — and carry each of those duties over, or say why it does not apply. Also: the browser suite's config has `silent: 'passed-only'`, so a passing test's `console.log` never prints; a spike that logs passes `--silent=false`.
+
+## Traps of the 2026-11-19/21 spikes, paid once each
+
+- **GitHub's `bash` runs with `-e`, and `set -uo pipefail` does not undo it**: a loop meant to survive a red planner run stopped at the first one (`set +e -uo pipefail` does). Worse, the check run it updated kept its last title ("running r9-t3"), read for 20 minutes as a hang.
+- **`/Applications/Safari.app/Contents/MacOS/Safari --version` on a macOS runner opens Safari's GUI and never returns**: a spike measured nothing for 3 h (`defaults read /Applications/Safari.app/Contents/Info CFBundleShortVersionString` instead).
+- **`pkill -f <pattern>` kills the calling shell when its own command line holds the pattern**: the cancellations that followed it never ran.
+- **A spike that drops part of the real context can miss the defect**: the first Windows A/B ran Firefox's cell alone where the matrix job runs Chrome's and Firefox's together; even matched exactly (31 runs), only whole `platform.yaml` runs reproduced it (`mem:follow-ups/coopsync-handover-windows-stall`). Say what the spike leaves out before reading a green.
